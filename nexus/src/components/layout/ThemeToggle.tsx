@@ -51,9 +51,7 @@ export function ThemeToggle({ collapsed = false }: ThemeToggleProps) {
       className="flex items-center justify-between gap-3 px-2 py-1.5 rounded-md"
       suppressHydrationWarning
     >
-      <div className="flex items-center gap-2 text-sm text-sidebar-foreground/80">
-        <span>Theme</span>
-      </div>
+      <span className="text-sm text-sidebar-foreground/80">Theme</span>
       <div className="flex items-center gap-2">
         <Sun
           className={cn(
