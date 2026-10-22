@@ -113,6 +113,12 @@ export function AppNav({
     }),
   })).filter((group) => group.items.length > 0);
 
+  // Highlight only the most specific match, so /receivables/invoices doesn't also light up /receivables.
+  const activeHref = navGroups
+    .flatMap((group) => group.items.map((item) => item.href))
+    .filter((href) => pathname === href || pathname.startsWith(`${href}/`))
+    .sort((a, b) => b.length - a.length)[0];
+
   return (
     <>
       {/* Mobile overlay backdrop */}
@@ -164,8 +170,7 @@ export function AppNav({
             )}
             <ul className="space-y-0.5">
               {group.items.map((item) => {
-                const isActive =
-                  item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+                const isActive = item.href === activeHref;
                 const Icon = item.icon;
                 return (
                   <li key={item.href}>

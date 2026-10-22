@@ -4,7 +4,24 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
 
 ## To do
 
-1. **Ship `feature/bc-customer-ar-sync`** — BC customer + AR read sync (pieces A+B). **Code complete and verified against the live BC TEST environment.** 188 tests, lint/tsc/build clean, full per-task + whole-branch review, all 14 tasks done.
+1. **Ship `feature/billcom-connector`** — Bill.com connector, piece D's plumbing slice. Code complete: 7 tasks, 18 tests, tsc/lint/build clean, per-task reviews plus a whole-branch review (verdict: **merge with fixes**, all applied and re-reviewed clean). Nothing has ever run against a database or against Bill.com.
+   - ~~**Apply migrations 045 and 046.**~~ — ✅ applied and verified 2026-09-05. Table present, RLS on with zero policies, all five functions exist, and `anon` cannot execute any of them.
+   - ~~**Verify `delete_billcom_secrets`**~~ — ✅ round-tripped against the live database 2026-09-05, all six checks passing: both secrets set and read back, rotation takes effect and reuses the existing Vault pointer, and `delete_billcom_secrets` removes both. This also confirmed `service_role` *can* execute the functions, which the `anon`-lockout check alone would not have caught. Incidentally reproduced the dangling-pointer state behind the partial-delete follow-up below: after deletion the pointer column survives while the Vault row is gone.
+   - **⚠️ A Bill.com sandbox account must exist** before anything can be verified. Self-service signup; this is the gating human step, the same class as publishing BC page 457 (which sat unnoticed for three weeks).
+   - **Task 8's first check must be the error envelope.** The client assumes Bill.com signals failure through HTTP status codes. Bill.com **v2 returns HTTP 200 with an error envelope in the body**, and the spike never recorded whether v3 kept that convention. If it did: `response.ok` is true for every error, `errorFor()` never runs, the rate-limit class never fires, the 401 re-login-and-retry never triggers, and `request()` returns the error envelope cast to `T`. No test can catch this — every test builds its own `Response` with a status the author chose. Verify this before trusting any of the error handling.
+   - ~~**Confirm the production hostname.**~~ — ✅ resolved 2026-09-05 against BILL's live docs. `gateway.prod.bill.com` was right, but **both base URLs were missing the `/connect` path segment** — the real login endpoint is `https://gateway.stage.bill.com/connect/v3/login`, so every login would have 404'd. Fixed in both the server allowlist and the UI.
+   - **A sandbox account is a separate signup from your production BILL account** — confirmed in BILL's docs ("create a new account in the Production BILL web app"; sandbox credentials do not work in production). Your existing company account is the production one; sandbox cannot be enabled on it. Sandbox base URL `https://gateway.stage.bill.com/connect`, production `https://gateway.prod.bill.com/connect`.
+   - Full plan: `docs/superpowers/plans/2026-09-04-billcom-connector.md` (Task 8 is the manual pass). Design: `docs/superpowers/specs/2026-09-03-billcom-connector-design.md`.
+2. **Bill.com connector follow-ups** (non-blocking; from the whole-branch review).
+   - **Partial delete is unrecoverable through the UI.** `deleteBillcomConnection` is not transactional: if the row delete fails after `delete_billcom_secrets` succeeds, the row survives with a dangling Vault pointer. `set_billcom_dev_key` then takes its "pointer is not null" branch and calls `vault.update_secret` on a deleted id, so **re-entering the key through Edit silently no-ops** while `hasCredentials` still renders true. The operator sees a connection that claims credentials, cannot fix it, and gets no error.
+   - `saveBillcomConnection` clears other defaults before writing the row; a failed write leaves the org with no default and no explanation. Also non-transactional.
+   - `request()` treats any 401 as session expiry before consulting `errorFor()`, and clears a valid `session_id` in the process — so a rate limit returned as 401 costs two logins, not one.
+   - `BillcomConnectionDisabledError` extends `Error` while the other three extend `BillcomApiError`; a consumer catching `BillcomApiError` silently misses the disabled case.
+   - `touch()` issues a read on every call even when it skips the write. Free today (nothing calls `request()` in production), real for piece E's bulk push.
+   - `billcom_connections` is absent from `types/database.ts`; `is_default`, `client.getSession()` and `client.request()` have no production consumer yet.
+3. **Bill.com pieces C, E and F** — not yet designed. Decomposition in `docs/superpowers/specs/2026-07-24-billcom-ar-sync-feasibility-spike.md`. C: customer write-back to BC · E: invoice push + payment status pull · F: payment posting into BC — **high risk, writes to the general ledger**. Piece E must also address Bill.com's 3-concurrent-request limit, which this slice did not need.
+
+4. **Ship `feature/bc-customer-ar-sync`** — BC customer + AR read sync (pieces A+B). **Code complete and verified against the live BC TEST environment.** 188 tests, lint/tsc/build clean, full per-task + whole-branch review, all 14 tasks done.
    - Verified in TEST: ~1,975 customers, ~412 posted sales invoices, 1,507 ledger entries, 1,806+ invoice lines. Aging buckets render, three customers reconcile against BC's own aged-AR report, and dates match BC.
    - Merge path is settled: `main` now carries item-creation and the categories page (PRs #2 and #3), so this branch targets `main` directly. Migration 040's `time_zone` column — its one dependency — is already in.
    - **On deploy: apply migrations 041, 042, 043.** 042 requires **Postgres 15+** (`security_invoker`) — it fails loudly, not silently, if older. **041 is not re-runnable:** `create policy` has no `IF NOT EXISTS`, so a partial apply then retry errors with `42710`. (This exact failure hit migration 039 on 2026-08-28; the recovery is to check whether the objects already exist rather than re-running blind.)
@@ -30,6 +47,22 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
    - No nav link to `/item-categories` — access is the items-page button by design. Revisit if that proves hard to find.
 7. **Bill.com integration — pieces C through F**, not yet designed. Decomposition and API research in `docs/superpowers/specs/2026-07-24-billcom-ar-sync-feasibility-spike.md`. Each piece warrants its own spec → plan → implementation cycle, and none should start until the AR sync branch lands.
    - C: customer write-back to BC · D: Bill.com connector (session auth, credential storage, toggle) · E: invoice push + payment status pull · F: payment posting into BC — **high risk, writes to the general ledger**.
+8. **The database cannot be rebuilt from migrations** — confirmed 2026-09-03, not yet fixed. A disaster-recovery hole, not a today-problem: every existing environment was built by applying migrations as they landed, so the live databases are fine. But nobody can stand up a new one from scratch.
+   - **Proven break:** `001_initial_schema.sql` creates **`packaging_items`**, and migrations 002–011 reference it. No migration ever renames it. Then `015_add_business_central_item_sync.sql:236` does `ALTER TABLE items` — so on an empty database the chain dies there with `relation "items" does not exist`. `027_scope_workspace_to_bc_environments.sql:11` and `036_add_bc_purchases_linking.sql:27` would fail the same way. The rename was done by hand against the live DB somewhere between 011 and 015 and never committed.
+   - **Proposed fix** (safe, and a no-op against every existing database because `items` already exists there). File it as `014a_rename_packaging_items_to_items.sql` so it sorts after 014 and before 015:
+     ```sql
+     DO $$
+     BEGIN
+       IF EXISTS (SELECT 1 FROM information_schema.tables
+                  WHERE table_schema='public' AND table_name='packaging_items')
+          AND NOT EXISTS (SELECT 1 FROM information_schema.tables
+                          WHERE table_schema='public' AND table_name='items') THEN
+         ALTER TABLE packaging_items RENAME TO items;
+       END IF;
+     END $$;
+     ```
+   - ⚠️ **That fixes only the one break that has been proven.** Whether 001→044 then runs clean on an empty database is unknown — this is untracked schema drift, and there is no reason to assume it happened exactly once. The only way to close the item honestly is to run the full chain against a scratch Supabase project and fix whatever else it hits.
+   - **Related, benign:** migration **034 is missing** from the sequence (001–044 is otherwise contiguous, no duplicates). It never existed in git — it was applied live and never committed — and `035_revert_po_items_catalog.sql` undoes it with `IF EXISTS` on every statement, so it is a no-op on a fresh database. Same root cause as above; no fix needed, worth a comment in 035 so the gap doesn't get re-investigated.
 
 ## Done
 
