@@ -52,15 +52,15 @@ export function ThemeToggle({ collapsed = false }: ThemeToggleProps) {
       suppressHydrationWarning
     >
       <div className="flex items-center gap-2 text-sm text-sidebar-foreground/80">
+        <span>Theme</span>
+      </div>
+      <div className="flex items-center gap-2">
         <Sun
           className={cn(
             'h-4 w-4 transition-colors',
             mounted && !isDark ? 'text-primary' : 'text-sidebar-foreground/50'
           )}
         />
-        <span>Theme</span>
-      </div>
-      <div className="flex items-center gap-2">
         <Switch
           checked={isDark}
           onCheckedChange={toggle}
