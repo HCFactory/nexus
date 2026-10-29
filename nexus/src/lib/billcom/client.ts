@@ -45,9 +45,13 @@ async function readErrorDetails(response: Response, url: string): Promise<Billco
   let code: string | undefined;
   let message: string | undefined;
   try {
-    const body = (await response.json()) as { error_code?: string; error_message?: string };
-    code = body.error_code;
-    message = body.error_message;
+    // v3 returns an array of errors: [{ code, message, severity, ... }].
+    const body = (await response.json()) as unknown;
+    const first = (Array.isArray(body) ? body[0] : body) as
+      | { code?: string; message?: string }
+      | undefined;
+    code = first?.code;
+    message = first?.message;
   } catch {
     // Non-JSON error bodies are expected; fall back to status text.
   }
