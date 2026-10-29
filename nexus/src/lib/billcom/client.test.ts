@@ -125,7 +125,7 @@ describe('Bill.com client', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         jsonResponse(
-          { error_code: 'BDC_1144', error_message: 'Rate limit exceeded' },
+          [{ code: 'BDC_1144', severity: 'ERROR', message: 'Rate limit exceeded' }],
           { status: 429, statusText: 'Too Many Requests' },
         ),
       );
@@ -140,12 +140,29 @@ describe('Bill.com client', () => {
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
         jsonResponse(
-          { error_code: 'BDC_1001', error_message: 'Invalid credentials' },
+          [{ code: 'BDC_1001', severity: 'ERROR', message: 'Invalid credentials' }],
           { status: 401, statusText: 'Unauthorized' },
         ),
       );
     const client = createBillcomClient({ ...config, sessionStore: memoryStore(null), fetchImpl });
 
     await expect(client.login()).rejects.toBeInstanceOf(BillcomAuthError);
+  });
+
+  it("surfaces Bill.com's own error message from the v3 error array", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse(
+          [{ code: 'BDC_1102', severity: 'ERROR', message: 'Developer key is invalid.' }],
+          { status: 400, statusText: 'Bad Request' },
+        ),
+      );
+    const client = createBillcomClient({ ...config, sessionStore: memoryStore(null), fetchImpl });
+
+    await expect(client.login()).rejects.toMatchObject({
+      message: 'Developer key is invalid.',
+      details: { code: 'BDC_1102' },
+    });
   });
 });
