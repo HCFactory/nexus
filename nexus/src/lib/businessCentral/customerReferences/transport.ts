@@ -98,13 +98,17 @@ export function createReferenceTransport(
     if (res.status === 412) throw new BcConflictError();
     let bcMessage = `${res.status} ${res.statusText}`;
     let rawBody = '';
+    let bcCode = '';
     try {
       rawBody = await res.text();
-      const body = JSON.parse(rawBody) as { error?: { message?: string } };
+      const body = JSON.parse(rawBody) as { error?: { code?: string; message?: string } };
       if (body?.error?.message) bcMessage = body.error.message;
+      bcCode = body?.error?.code ?? '';
     } catch {
       // non-JSON body: keep status text
     }
+    // BC answers a stale If-Match with 409 Request_EntityChanged rather than 412.
+    if (res.status === 409 && bcCode === 'Request_EntityChanged') throw new BcConflictError();
     if (res.status === 404 && source.kind === 'odata') {
       // A 404 on the collection means the page is not published. On a single
       // record URL BC also returns 404 for a missing record, so only treat it

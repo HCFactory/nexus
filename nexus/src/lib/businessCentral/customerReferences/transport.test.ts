@@ -78,6 +78,20 @@ describe('reference transport', () => {
     await expect(transport.patch(apiSource, { bcId: 'x' }, 'W/"1"', {})).rejects.toThrow(BcConflictError);
   });
 
+  it('409 Request_EntityChanged throws BcConflictError', async () => {
+    const body = JSON.stringify({ error: { code: 'Request_EntityChanged', message: 'Another user has already changed the record.' } });
+    const { transport } = setup([new Response(body, { status: 409, statusText: 'Conflict' })]);
+    await expect(transport.patch(apiSource, { bcId: 'x' }, 'W/"1"', {})).rejects.toThrow(BcConflictError);
+  });
+
+  it('other 409 throws BcReferenceError with BC message', async () => {
+    const body = JSON.stringify({ error: { code: 'Something_Else', message: 'Nope' } });
+    const { transport } = setup([new Response(body, { status: 409, statusText: 'Conflict' })]);
+    const err = await transport.patch(apiSource, { bcId: 'x' }, 'W/"1"', {}).catch((e) => e);
+    expect(err).toBeInstanceOf(BcReferenceError);
+    expect(err.bcMessage).toBe('Nope');
+  });
+
   it('404 on odata throws ReferencePageUnavailableError naming page and service', async () => {
     const { transport } = setup([new Response('Not Found', { status: 404, statusText: 'Not Found' })]);
     const err = await transport.list(odataSource).catch((e) => e);

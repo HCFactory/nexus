@@ -9,7 +9,7 @@ export class ReferencePageUnavailableError extends Error {
   }
 }
 
-/** HTTP 412: the record changed in Business Central since it was read. */
+/** HTTP 412 or 409 Request_EntityChanged: the record changed in Business Central since it was read. */
 export class BcConflictError extends Error {
   constructor(message = 'Record changed in Business Central (conflict)') {
     super(message);
