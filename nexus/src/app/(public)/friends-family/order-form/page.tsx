@@ -1,20 +1,9 @@
 import { getFriendsFamilyWorkspace } from '@/app/actions/friendsFamilyOrders';
-import { getCurrentUser } from '@/app/actions/users';
 import { FriendsFamilyOrderForm } from '@/components/friendsFamily/FriendsFamilyOrderForm';
 
 export const dynamic = 'force-dynamic';
 
 export default async function FriendsFamilyStandaloneOrderFormPage() {
-  const user = await getCurrentUser();
-
-  if (!user?.organization_id) {
-    return (
-      <main className="flex flex-1 items-center justify-center bg-background">
-        <p className="text-sm text-foreground-muted">An organization membership is required.</p>
-      </main>
-    );
-  }
-
   const workspace = await getFriendsFamilyWorkspace();
 
   return (

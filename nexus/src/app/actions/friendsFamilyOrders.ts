@@ -1,8 +1,8 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { requireOrganizationContext } from '@/lib/auth/currentUserAccess';
-import { createClient } from '@/lib/supabase/server';
+import { getCurrentUserAccessContext, requireOrganizationContext } from '@/lib/auth/currentUserAccess';
+import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type {
   FriendsFamilyFulfillmentStatus,
   FriendsFamilyOrder,
@@ -39,11 +39,55 @@ function requiredText(value: string, label: string) {
 
 function revalidateWorkspace() {
   revalidatePath('/friends-family');
+  revalidatePath('/friends-family/order-form');
+}
+
+async function getPublicFriendsFamilyOrganizationId(): Promise<string> {
+  const configuredOrganizationId = process.env.FRIENDS_FAMILY_ORGANIZATION_ID?.trim();
+  if (configuredOrganizationId) return configuredOrganizationId;
+
+  const serviceClient = createServiceClient();
+  const { data, error } = await serviceClient.from('organizations').select('id').limit(2);
+  if (error) throw error;
+  if (data?.length === 1) return data[0].id;
+
+  throw new Error(
+    'Set FRIENDS_FAMILY_ORGANIZATION_ID before using public Friends & Family pages in a multi-organization database'
+  );
+}
+
+async function getWorkspaceDataContext() {
+  const currentUser = await getCurrentUserAccessContext();
+  if (currentUser?.user.organization_id) {
+    return {
+      orgId: currentUser.user.organization_id,
+      supabase: await createClient(),
+      isAuthenticatedMember: true,
+    };
+  }
+
+  return {
+    orgId: await getPublicFriendsFamilyOrganizationId(),
+    supabase: createServiceClient(),
+    isAuthenticatedMember: false,
+  };
+}
+
+function validateOrderInput(input: CreateFriendsFamilyOrderInput) {
+  const orderedBy = requiredText(input.ordered_by, 'Ordered by');
+  const customerName = requiredText(input.customer_name, 'Customer name');
+  if (orderedBy.length > 200 || customerName.length > 200) {
+    throw new Error('Names must be 200 characters or fewer');
+  }
+  if (input.items.length > 50) throw new Error('Orders can contain at most 50 line items');
+  if (!input.items.length || input.items.some((item) => !item.product_id || !Number.isInteger(item.quantity) || item.quantity <= 0)) {
+    throw new Error('Every order line requires a product and a whole-number quantity greater than zero');
+  }
+  return { orderedBy, customerName };
 }
 
 export async function getFriendsFamilyWorkspace(): Promise<FriendsFamilyWorkspace> {
-  const { orgId } = await requireOrganizationContext();
-  const supabase = await createClient();
+  const { orgId, supabase } = await getWorkspaceDataContext();
   const [{ data: products, error: productError }, { data: orders, error: orderError }] = await Promise.all([
     supabase
       .from('friends_family_products')
@@ -81,22 +125,21 @@ export async function getFriendsFamilyWorkspace(): Promise<FriendsFamilyWorkspac
 }
 
 export async function createFriendsFamilyOrder(input: CreateFriendsFamilyOrderInput): Promise<string> {
-  await requireOrganizationContext();
-  const supabase = await createClient();
-  const orderedBy = requiredText(input.ordered_by, 'Ordered by');
-  const customerName = requiredText(input.customer_name, 'Customer name');
-  if (!input.items.length || input.items.some((item) => !item.product_id || !Number.isInteger(item.quantity) || item.quantity <= 0)) {
-    throw new Error('Every order line requires a product and a whole-number quantity greater than zero');
-  }
+  const { orderedBy, customerName } = validateOrderInput(input);
+  const { orgId, supabase, isAuthenticatedMember } = await getWorkspaceDataContext();
 
-  const { data, error } = await supabase.rpc('create_friends_family_order', {
-    p_ordered_by: orderedBy,
-    p_customer_name: customerName,
-    p_phone: input.phone?.trim() ?? '',
-    p_email: input.email?.trim() ?? '',
-    p_notes: input.notes?.trim() ?? '',
-    p_items: input.items,
-  });
+  const { data, error } = await supabase.rpc(
+    isAuthenticatedMember ? 'create_friends_family_order' : 'create_public_friends_family_order',
+    {
+      ...(isAuthenticatedMember ? {} : { p_organization_id: orgId }),
+      p_ordered_by: orderedBy,
+      p_customer_name: customerName,
+      p_phone: input.phone?.trim() ?? '',
+      p_email: input.email?.trim() ?? '',
+      p_notes: input.notes?.trim() ?? '',
+      p_items: input.items,
+    }
+  );
 
   if (error) throw error;
   revalidateWorkspace();
@@ -107,31 +150,34 @@ export async function updateFriendsFamilyOrder(
   orderId: string,
   input: CreateFriendsFamilyOrderInput
 ): Promise<void> {
-  await requireOrganizationContext();
-  const orderedBy = requiredText(input.ordered_by, 'Ordered by');
-  const customerName = requiredText(input.customer_name, 'Customer name');
-  if (!input.items.length || input.items.some((item) => !item.product_id || !Number.isInteger(item.quantity) || item.quantity <= 0)) {
-    throw new Error('Every order line requires a product and a whole-number quantity greater than zero');
-  }
-
-  const supabase = await createClient();
-  const { error } = await supabase.rpc('update_friends_family_order', {
-    p_order_id: orderId,
-    p_ordered_by: orderedBy,
-    p_customer_name: customerName,
-    p_phone: input.phone?.trim() ?? '',
-    p_email: input.email?.trim() ?? '',
-    p_notes: input.notes?.trim() ?? '',
-    p_items: input.items,
-  });
+  const { orderedBy, customerName } = validateOrderInput(input);
+  const { orgId, supabase, isAuthenticatedMember } = await getWorkspaceDataContext();
+  const { error } = await supabase.rpc(
+    isAuthenticatedMember ? 'update_friends_family_order' : 'update_public_friends_family_order',
+    {
+      ...(isAuthenticatedMember ? {} : { p_organization_id: orgId }),
+      p_order_id: orderId,
+      p_ordered_by: orderedBy,
+      p_customer_name: customerName,
+      p_phone: input.phone?.trim() ?? '',
+      p_email: input.email?.trim() ?? '',
+      p_notes: input.notes?.trim() ?? '',
+      p_items: input.items,
+    }
+  );
   if (error) throw error;
   revalidateWorkspace();
 }
 
 export async function deleteFriendsFamilyOrder(orderId: string): Promise<void> {
-  await requireOrganizationContext();
-  const supabase = await createClient();
-  const { error } = await supabase.rpc('delete_friends_family_order', { p_order_id: orderId });
+  const { orgId, supabase, isAuthenticatedMember } = await getWorkspaceDataContext();
+  const { error } = await supabase.rpc(
+    isAuthenticatedMember ? 'delete_friends_family_order' : 'delete_public_friends_family_order',
+    {
+      ...(isAuthenticatedMember ? {} : { p_organization_id: orgId }),
+      p_order_id: orderId,
+    }
+  );
   if (error) throw error;
   revalidateWorkspace();
 }
@@ -140,7 +186,7 @@ export async function updateFriendsFamilyOrderStatus(
   orderId: string,
   patch: Partial<Pick<FriendsFamilyOrder, 'fulfillment_status' | 'payment_status'>>
 ): Promise<void> {
-  const { orgId } = await requireOrganizationContext();
+  const { orgId, supabase } = await getWorkspaceDataContext();
   const update: Partial<Pick<FriendsFamilyOrder, 'fulfillment_status' | 'payment_status'>> = {};
   if (patch.fulfillment_status) {
     if (!FULFILLMENT_STATUSES.has(patch.fulfillment_status)) throw new Error('Invalid fulfillment status');
@@ -152,7 +198,6 @@ export async function updateFriendsFamilyOrderStatus(
   }
   if (!Object.keys(update).length) return;
 
-  const supabase = await createClient();
   const { error } = await supabase.from('friends_family_orders').update(update).eq('id', orderId).eq('organization_id', orgId);
   if (error) throw error;
   revalidateWorkspace();

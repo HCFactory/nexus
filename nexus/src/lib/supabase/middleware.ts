@@ -36,8 +36,11 @@ export async function updateSession(request: NextRequest) {
   const isAuthPage =
     request.nextUrl.pathname.startsWith('/login') ||
     request.nextUrl.pathname.startsWith('/register');
+  const isPublicFriendsFamilyPage =
+    request.nextUrl.pathname === '/friends-family' ||
+    request.nextUrl.pathname.startsWith('/friends-family/');
 
-  if (!user && !isAuthPage) {
+  if (!user && !isAuthPage && !isPublicFriendsFamilyPage) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
