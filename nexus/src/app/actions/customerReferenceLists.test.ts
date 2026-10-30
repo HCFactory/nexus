@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   createServiceClient: vi.fn(),
   createBcClientForOrg: vi.fn(),
   createTransport: vi.fn(),
+  getCompany: vi.fn(),
   createUsageCounter: vi.fn(),
   saveEntry: vi.fn(),
   deleteEntry: vi.fn(),
@@ -22,7 +23,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 vi.mock('@/lib/businessCentral/client', () => ({ createBcClientForOrg: mocks.createBcClientForOrg }));
 vi.mock('@/lib/businessCentral/customerReferences/transport', () => ({
-  createReferenceTransportForOrg: mocks.createTransport,
+  createReferenceTransport: mocks.createTransport,
 }));
 vi.mock('@/lib/businessCentral/customerReferences/usage', () => ({ createUsageCounter: mocks.createUsageCounter }));
 vi.mock('@/lib/businessCentral/customerReferences/service', () => ({
@@ -55,8 +56,9 @@ function fakeClient(rows: Record<string, unknown>[]) {
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.createServiceClient.mockReturnValue({ svc: true });
-  mocks.createBcClientForOrg.mockResolvedValue({ bc: true });
-  mocks.createTransport.mockResolvedValue({ transport: true });
+  mocks.getCompany.mockResolvedValue({ name: 'CRONUS' });
+  mocks.createBcClientForOrg.mockResolvedValue({ config: { companyId: 'c1' }, getCompany: mocks.getCompany });
+  mocks.createTransport.mockReturnValue({ transport: true });
   mocks.createUsageCounter.mockReturnValue(() => null);
   mocks.syncList.mockResolvedValue({ inserted: 1, updated: 2, deleted: 3 });
 });
@@ -118,6 +120,20 @@ describe('saveReferenceEntry', () => {
     await saveReferenceEntry('taxJurisdictions', { id: null, original: null, edited: { code: 'J1' } });
     expect(mocks.syncList).toHaveBeenCalledTimes(1);
     expect(mocks.syncList.mock.calls[0][1].key).toBe('taxDetails');
+  });
+
+  it('create succeeds with a warning when the follow-up taxDetails sync throws', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    const entry = { id: 'e' };
+    mocks.saveEntry.mockResolvedValue(entry);
+    mocks.syncList.mockRejectedValue(new Error('BC down'));
+    const res = await saveReferenceEntry('taxJurisdictions', { id: null, original: null, edited: { code: 'J1' } });
+    expect(res).toEqual({
+      ok: true,
+      entry,
+      warning: 'Saved, but refreshing tax details from Business Central failed. Press Sync on Tax details.',
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith('/customer-lists', 'layout');
   });
 
   it('edit on taxJurisdictions does not sync', async () => {

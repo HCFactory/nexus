@@ -11,7 +11,7 @@ import {
   syncList,
   type ServiceDeps,
 } from '@/lib/businessCentral/customerReferences/service';
-import { createReferenceTransportForOrg } from '@/lib/businessCentral/customerReferences/transport';
+import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
 import { createUsageCounter } from '@/lib/businessCentral/customerReferences/usage';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type { ListKey, ListPageData, ReferenceEntry } from '@/types/customerReferences';
@@ -32,9 +32,11 @@ function revalidateLists() {
 async function buildDeps(scope: { orgId: string; bcConnectionId: string }): Promise<ServiceDeps> {
   const supabase = createServiceClient();
   const bc = await createBcClientForOrg(scope.orgId, scope.bcConnectionId);
+  // Same company lookup as createReferenceTransportForOrg, reusing the one client.
+  const company = await bc.getCompany(bc.config.companyId);
   return {
     supabase,
-    transport: await createReferenceTransportForOrg(scope.orgId, scope.bcConnectionId),
+    transport: createReferenceTransport(bc, company.name),
     orgId: scope.orgId,
     connectionId: scope.bcConnectionId,
     now: () => new Date().toISOString(),
@@ -65,6 +67,7 @@ export async function getReferenceListPage(
     .eq('organization_id', scope.orgId)
     .eq('bc_connection_id', scope.bcConnectionId);
   if (filter?.parentCode && def.parent) query = query.eq(def.parent.field, filter.parentCode);
+  // jurisdictionCode only applies to taxDetails.
   if (filter?.jurisdictionCode && key === 'taxDetails') {
     query = query.eq('tax_jurisdiction_code', filter.jurisdictionCode);
   }
@@ -98,7 +101,7 @@ export async function getReferenceListPage(
 export async function saveReferenceEntry(
   key: ListKey,
   input: { id: string | null; original: Row | null; edited: Row },
-): Promise<{ ok: true; entry: ReferenceEntry } | Fail> {
+): Promise<{ ok: true; entry: ReferenceEntry; warning?: string } | Fail> {
   try {
     const def = LIST_DEFINITIONS[key];
     const scope = await requireActiveBusinessCentralScope();
@@ -113,11 +116,17 @@ export async function saveReferenceEntry(
     });
 
     // BC may add tax detail rows when a jurisdiction/detail is created; re-pull so Nexus matches.
+    let warning: string | undefined;
     if (input.id === null && (key === 'taxJurisdictions' || key === 'taxDetails')) {
-      await syncList(deps, LIST_DEFINITIONS.taxDetails);
+      try {
+        await syncList(deps, LIST_DEFINITIONS.taxDetails);
+      } catch {
+        // The entry is already saved in BC and Nexus; do not report the save as failed.
+        warning = 'Saved, but refreshing tax details from Business Central failed. Press Sync on Tax details.';
+      }
     }
     revalidateLists();
-    return { ok: true, entry };
+    return warning ? { ok: true, entry, warning } : { ok: true, entry };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }
