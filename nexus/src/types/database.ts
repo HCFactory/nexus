@@ -978,6 +978,51 @@ export interface Database {
         };
         Update: Partial<Omit<BusinessCentralCustomer, "id">>;
       };
+      business_central_payment_terms: {
+        Row: BusinessCentralPaymentTerm;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralPaymentTerm>;
+        Update: Partial<Omit<BusinessCentralPaymentTerm, "id">>;
+      };
+      business_central_customer_price_groups: {
+        Row: BusinessCentralCustomerPriceGroup;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralCustomerPriceGroup>;
+        Update: Partial<Omit<BusinessCentralCustomerPriceGroup, "id">>;
+      };
+      business_central_tax_areas: {
+        Row: BusinessCentralTaxArea;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxArea>;
+        Update: Partial<Omit<BusinessCentralTaxArea, "id">>;
+      };
+      business_central_tax_jurisdictions: {
+        Row: BusinessCentralTaxJurisdiction;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxJurisdiction>;
+        Update: Partial<Omit<BusinessCentralTaxJurisdiction, "id">>;
+      };
+      business_central_tax_area_lines: {
+        Row: BusinessCentralTaxAreaLine;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxAreaLine>;
+        Update: Partial<Omit<BusinessCentralTaxAreaLine, "id">>;
+      };
+      business_central_tax_details: {
+        Row: BusinessCentralTaxDetail;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxDetail>;
+        Update: Partial<Omit<BusinessCentralTaxDetail, "id">>;
+      };
+      business_central_locations: {
+        Row: BusinessCentralLocation;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralLocation>;
+        Update: Partial<Omit<BusinessCentralLocation, "id">>;
+      };
+      business_central_customer_posting_groups: {
+        Row: BusinessCentralCustomerPostingGroup;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralCustomerPostingGroup>;
+        Update: Partial<Omit<BusinessCentralCustomerPostingGroup, "id">>;
+      };
+      business_central_general_business_posting_groups: {
+        Row: BusinessCentralGeneralBusinessPostingGroup;
+        Insert: BusinessCentralReferenceInsert<BusinessCentralGeneralBusinessPostingGroup>;
+        Update: Partial<Omit<BusinessCentralGeneralBusinessPostingGroup, "id">>;
+      };
       business_central_sales_invoices: {
         Row: BusinessCentralSalesInvoice;
         Insert: Omit<
@@ -1105,6 +1150,163 @@ export interface BusinessCentralCustomer {
   created_at: string;
   updated_at: string;
 }
+
+export interface BusinessCentralPaymentTerm {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  due_date_calculation: string | null;
+  discount_date_calculation: string | null;
+  discount_percent: number;
+  calculate_discount_on_credit_memos: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralCustomerPriceGroup {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  allow_invoice_disc: boolean | null;
+  allow_line_disc: boolean | null;
+  price_includes_vat: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralTaxArea {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  tax_type: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralTaxJurisdiction {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  report_to_jurisdiction: string | null;
+  tax_account_sales: string | null;
+  tax_account_purchases: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralTaxAreaLine {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  tax_area_code: string;
+  tax_jurisdiction_code: string;
+  calculation_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralTaxDetail {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  tax_jurisdiction_code: string;
+  tax_group_code: string;
+  tax_type: string;
+  effective_date: string;
+  maximum_amount_qty: number;
+  tax_below_maximum: number;
+  tax_above_maximum: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralLocation {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  address_line_1: string | null;
+  address_line_2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralCustomerPostingGroup {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralGeneralBusinessPostingGroup {
+  id: string | null;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  default_vat_business_posting_group: string | null;
+  auto_insert_default: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type BusinessCentralReferenceInsert<T> = Omit<T, "id" | "created_at" | "updated_at"> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
 
 export interface BusinessCentralSalesInvoice {
   id: string;
