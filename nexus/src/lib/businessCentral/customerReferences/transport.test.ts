@@ -86,6 +86,18 @@ describe('reference transport', () => {
     expect(err.message).toContain('CustomerPriceGroups');
   });
 
+  it('404 on an odata record URL with a not-found body throws BcReferenceError with BC message', async () => {
+    const { transport } = setup([json({ error: { code: 'Request_ResourceNotFound', message: "Resource not found for the segment 'CustomerPriceGroups'." } }, 404)]);
+    const err = await transport.get(odataSource, { values: { Code: 'X' } }).catch((e) => e);
+    expect(err).toBeInstanceOf(BcReferenceError);
+    expect(err.message).toBe("Resource not found for the segment 'CustomerPriceGroups'.");
+  });
+
+  it('404 on an odata record URL with "No HTTP resource" body throws ReferencePageUnavailableError', async () => {
+    const { transport } = setup([new Response('No HTTP resource was found that matches the request URI', { status: 404 })]);
+    await expect(transport.remove(odataSource, { values: { Code: 'X' } }, 'W/"1"')).rejects.toThrow(ReferencePageUnavailableError);
+  });
+
   it("400 throws BcReferenceError carrying BC's message", async () => {
     const { transport } = setup([
       json({ error: { code: 'Internal_EntityWithSameKeyExists', message: 'The record already exists.' } }, 400),

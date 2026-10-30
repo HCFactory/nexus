@@ -80,7 +80,7 @@ export function createReferenceTransport(
   async function send(
     source: ReferenceSource,
     url: string,
-    init: { method?: string; etag?: string; body?: Record<string, unknown> } = {},
+    init: { method?: string; etag?: string; body?: Record<string, unknown>; isList?: boolean } = {},
   ): Promise<Response> {
     const token = await bc.getAccessToken();
     const headers: Record<string, string> = {
@@ -96,15 +96,23 @@ export function createReferenceTransport(
     });
     if (res.ok) return res;
     if (res.status === 412) throw new BcConflictError();
-    if (res.status === 404 && source.kind === 'odata') {
-      throw new ReferencePageUnavailableError(source.service, source.pageNumber, res.status);
-    }
     let bcMessage = `${res.status} ${res.statusText}`;
+    let rawBody = '';
     try {
-      const body = (await res.json()) as { error?: { message?: string } };
+      rawBody = await res.text();
+      const body = JSON.parse(rawBody) as { error?: { message?: string } };
       if (body?.error?.message) bcMessage = body.error.message;
     } catch {
       // non-JSON body: keep status text
+    }
+    if (res.status === 404 && source.kind === 'odata') {
+      // A 404 on the collection means the page is not published. On a single
+      // record URL BC also returns 404 for a missing record, so only treat it
+      // as unpublished when BC says the route itself was not found.
+      const routeMissing = /No HTTP resource was found/i.test(`${rawBody} ${bcMessage}`);
+      if (init.isList || routeMissing) {
+        throw new ReferencePageUnavailableError(source.service, source.pageNumber, res.status);
+      }
     }
     throw new BcReferenceError(res.status, bcMessage);
   }
@@ -118,7 +126,7 @@ export function createReferenceTransport(
       const out: BcRecord[] = [];
       let url: string | undefined = collectionUrl(source);
       while (url) {
-        const res = await send(source, url);
+        const res = await send(source, url, { isList: true });
         const json = (await res.json()) as { value?: Record<string, unknown>[]; '@odata.nextLink'?: string };
         for (const row of json.value ?? []) out.push(mapRecord(source, row));
         url = json['@odata.nextLink'];
