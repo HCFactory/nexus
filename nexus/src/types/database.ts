@@ -980,47 +980,74 @@ export interface Database {
       };
       business_central_payment_terms: {
         Row: BusinessCentralPaymentTerm;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralPaymentTerm>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralPaymentTerm,
+          'display_name' | 'discount_percent' | 'calculate_discount_on_credit_memos'
+        >;
         Update: Partial<Omit<BusinessCentralPaymentTerm, "id">>;
       };
       business_central_customer_price_groups: {
         Row: BusinessCentralCustomerPriceGroup;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralCustomerPriceGroup>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralCustomerPriceGroup,
+          'display_name'
+        >;
         Update: Partial<Omit<BusinessCentralCustomerPriceGroup, "id">>;
       };
       business_central_tax_areas: {
         Row: BusinessCentralTaxArea;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxArea>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralTaxArea,
+          'display_name'
+        >;
         Update: Partial<Omit<BusinessCentralTaxArea, "id">>;
       };
       business_central_tax_jurisdictions: {
         Row: BusinessCentralTaxJurisdiction;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxJurisdiction>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralTaxJurisdiction,
+          'display_name'
+        >;
         Update: Partial<Omit<BusinessCentralTaxJurisdiction, "id">>;
       };
       business_central_tax_area_lines: {
         Row: BusinessCentralTaxAreaLine;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxAreaLine>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralTaxAreaLine,
+          'calculation_order'
+        >;
         Update: Partial<Omit<BusinessCentralTaxAreaLine, "id">>;
       };
       business_central_tax_details: {
         Row: BusinessCentralTaxDetail;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralTaxDetail>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralTaxDetail,
+          'maximum_amount_qty' | 'tax_below_maximum' | 'tax_above_maximum'
+        >;
         Update: Partial<Omit<BusinessCentralTaxDetail, "id">>;
       };
       business_central_locations: {
         Row: BusinessCentralLocation;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralLocation>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralLocation,
+          'display_name'
+        >;
         Update: Partial<Omit<BusinessCentralLocation, "id">>;
       };
       business_central_customer_posting_groups: {
         Row: BusinessCentralCustomerPostingGroup;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralCustomerPostingGroup>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralCustomerPostingGroup,
+          'display_name'
+        >;
         Update: Partial<Omit<BusinessCentralCustomerPostingGroup, "id">>;
       };
       business_central_general_business_posting_groups: {
         Row: BusinessCentralGeneralBusinessPostingGroup;
-        Insert: BusinessCentralReferenceInsert<BusinessCentralGeneralBusinessPostingGroup>;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralGeneralBusinessPostingGroup,
+          'display_name'
+        >;
         Update: Partial<Omit<BusinessCentralGeneralBusinessPostingGroup, "id">>;
       };
       business_central_sales_invoices: {
@@ -1152,7 +1179,7 @@ export interface BusinessCentralCustomer {
 }
 
 export interface BusinessCentralPaymentTerm {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1170,7 +1197,7 @@ export interface BusinessCentralPaymentTerm {
 }
 
 export interface BusinessCentralCustomerPriceGroup {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1187,7 +1214,7 @@ export interface BusinessCentralCustomerPriceGroup {
 }
 
 export interface BusinessCentralTaxArea {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1202,7 +1229,7 @@ export interface BusinessCentralTaxArea {
 }
 
 export interface BusinessCentralTaxJurisdiction {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1219,7 +1246,7 @@ export interface BusinessCentralTaxJurisdiction {
 }
 
 export interface BusinessCentralTaxAreaLine {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1234,7 +1261,7 @@ export interface BusinessCentralTaxAreaLine {
 }
 
 export interface BusinessCentralTaxDetail {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1253,7 +1280,7 @@ export interface BusinessCentralTaxDetail {
 }
 
 export interface BusinessCentralLocation {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1273,7 +1300,7 @@ export interface BusinessCentralLocation {
 }
 
 export interface BusinessCentralCustomerPostingGroup {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1287,7 +1314,7 @@ export interface BusinessCentralCustomerPostingGroup {
 }
 
 export interface BusinessCentralGeneralBusinessPostingGroup {
-  id: string | null;
+  id: string;
   organization_id: string;
   bc_connection_id: string;
   bc_id: string | null;
@@ -1302,11 +1329,15 @@ export interface BusinessCentralGeneralBusinessPostingGroup {
   updated_at: string;
 }
 
-type BusinessCentralReferenceInsert<T> = Omit<T, "id" | "created_at" | "updated_at"> & {
-  id?: string;
-  created_at?: string;
-  updated_at?: string;
-};
+type BusinessCentralReferenceInsert<T, D extends keyof T = never> = Omit<
+  T,
+  "id" | "created_at" | "updated_at" | D
+> &
+  Partial<Pick<T, D>> & {
+    id?: string;
+    created_at?: string;
+    updated_at?: string;
+  };
 
 export interface BusinessCentralSalesInvoice {
   id: string;
