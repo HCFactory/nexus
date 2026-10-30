@@ -170,7 +170,12 @@ export function FriendsFamilyOrderForm({
       const category = product.category.trim() || 'Other';
       grouped.set(category, [...(grouped.get(category) ?? []), product]);
     }
-    return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
+    // Christmas is pinned to the top; the rest stay alphabetical.
+    const isChristmas = (category: string) => category.toLowerCase().includes('christmas');
+    return [...grouped.entries()].sort(([a], [b]) => {
+      if (isChristmas(a) !== isChristmas(b)) return isChristmas(a) ? -1 : 1;
+      return a.localeCompare(b);
+    });
   }, [selectableProducts]);
 
   const lineDetails = lines.map((line) => {
