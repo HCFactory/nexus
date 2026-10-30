@@ -273,14 +273,21 @@ export function FriendsFamilyOrderForm({
             <span className="text-xs text-foreground-subtle sm:hidden">Swipe table ↔</span>
           </div>
           <div className="-mx-3 w-[calc(100%+1.5rem)] touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1 sm:mx-0 sm:w-full">
-            <table className="w-[1100px] min-w-[1100px] table-fixed text-sm">
+            <table className="table-fixed text-sm" style={{ width: 1100, minWidth: 1100 }}>
+              <colgroup>
+                <col style={{ width: 840 }} />
+                <col style={{ width: 56 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 80 }} />
+                <col style={{ width: 44 }} />
+              </colgroup>
               <thead className="border-b border-border bg-surface-raised/50 text-left text-[11px] uppercase tracking-wider text-foreground-subtle">
                 <tr>
-                  <th className="w-[840px] px-2 py-2 font-semibold">Product</th>
-                  <th className="w-14 px-1 py-2 text-right font-semibold">Qty</th>
-                  <th className="w-20 px-1 py-2 text-right font-semibold">Unit price</th>
-                  <th className="w-20 px-1 py-2 text-right font-semibold">Subtotal</th>
-                  <th className="w-10 px-1 py-2"><span className="sr-only">Remove</span></th>
+                  <th className="px-2 py-2 font-semibold">Product</th>
+                  <th className="px-1 py-2 text-right font-semibold">Qty</th>
+                  <th className="px-1 py-2 text-right font-semibold">Unit price</th>
+                  <th className="px-1 py-2 text-right font-semibold">Subtotal</th>
+                  <th className="px-1 py-2"><span className="sr-only">Remove</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
