@@ -234,7 +234,7 @@ export function FriendsFamilyOrderForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+    <form onSubmit={handleSubmit} className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised/40 px-3 py-3 sm:px-4 lg:px-5">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider text-primary">
@@ -247,7 +247,7 @@ export function FriendsFamilyOrderForm({
         </div>
       </div>
 
-      <fieldset disabled={readOnly || pending} className="space-y-5 p-3 disabled:opacity-80 sm:p-4 lg:p-5">
+      <fieldset disabled={readOnly || pending} className="min-w-0 space-y-5 p-3 disabled:opacity-80 sm:p-4 lg:p-5">
         <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="min-w-0 space-y-1.5 text-xs font-semibold text-foreground-muted">
             Ordered by
@@ -272,7 +272,7 @@ export function FriendsFamilyOrderForm({
             <h3 className="text-sm font-semibold text-foreground">Line items</h3>
             <span className="text-xs text-foreground-subtle sm:hidden">Swipe table ↔</span>
           </div>
-          <div className="-mx-3 w-[calc(100%+1.5rem)] touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1 sm:mx-0 sm:w-full">
+          <div className="w-full max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1">
             <table className="table-fixed text-sm" style={{ width: 1100, minWidth: 1100 }}>
               <colgroup>
                 <col style={{ width: 840 }} />
