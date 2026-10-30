@@ -235,8 +235,8 @@ export function FriendsFamilyOrderForm({
 
   return (
     <form onSubmit={handleSubmit} className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised/40 px-4 py-3 lg:px-5">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised/40 px-3 py-3 sm:px-4 lg:px-5">
+        <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-wider text-primary">
             {initialOrder ? `Editing ${initialOrder.order_number}` : 'Order form'}
           </p>
@@ -247,37 +247,37 @@ export function FriendsFamilyOrderForm({
         </div>
       </div>
 
-      <fieldset disabled={readOnly || pending} className="space-y-5 p-4 disabled:opacity-80 lg:p-5">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+      <fieldset disabled={readOnly || pending} className="space-y-5 p-3 disabled:opacity-80 sm:p-4 lg:p-5">
+        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="min-w-0 space-y-1.5 text-xs font-semibold text-foreground-muted">
             Ordered by
-            <input required value={orderedBy} onChange={(event) => setOrderedBy(event.target.value)} placeholder="Employee name" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+            <input required value={orderedBy} onChange={(event) => setOrderedBy(event.target.value)} placeholder="Employee name" className="w-full min-w-0 rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
           </label>
-          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+          <label className="min-w-0 space-y-1.5 text-xs font-semibold text-foreground-muted">
             Customer Name
-            <input required value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Friend or family member" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+            <input required value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Friend or family member" className="w-full min-w-0 rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
           </label>
-          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+          <label className="min-w-0 space-y-1.5 text-xs font-semibold text-foreground-muted">
             Phone #
-            <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 555-0123" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+            <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 555-0123" className="w-full min-w-0 rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
           </label>
-          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+          <label className="min-w-0 space-y-1.5 text-xs font-semibold text-foreground-muted">
             Email address
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" className="w-full min-w-0 rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
           </label>
         </div>
 
         <section>
           <h3 className="mb-2 text-sm font-semibold text-foreground">Line items</h3>
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[500px] text-sm">
+          <div className="w-full max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1">
+            <table className="w-full min-w-[540px] table-fixed text-sm">
               <thead className="border-b border-border bg-surface-raised/50 text-left text-[11px] uppercase tracking-wider text-foreground-subtle">
                 <tr>
-                  <th className="px-3 py-2 font-semibold">Product</th>
-                  <th className="w-20 px-2 py-2 text-right font-semibold">Qty</th>
-                  <th className="w-28 px-2 py-2 text-right font-semibold">Unit price</th>
-                  <th className="w-28 px-2 py-2 text-right font-semibold">Subtotal</th>
-                  <th className="w-12 px-3 py-2"><span className="sr-only">Remove</span></th>
+                  <th className="w-[280px] px-2 py-2 font-semibold">Product</th>
+                  <th className="w-14 px-1 py-2 text-right font-semibold">Qty</th>
+                  <th className="w-20 px-1 py-2 text-right font-semibold">Unit price</th>
+                  <th className="w-20 px-1 py-2 text-right font-semibold">Subtotal</th>
+                  <th className="w-10 px-1 py-2"><span className="sr-only">Remove</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -294,10 +294,10 @@ export function FriendsFamilyOrderForm({
                       </select>
                     </td>
                     <td className="p-1">
-                      <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantityText} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
+                      <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantityText} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-1.5 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
                     </td>
-                    <td className="px-2 py-2 text-right tabular-nums text-foreground-muted">{line.product ? money(line.product.unit_price) : '—'}</td>
-                    <td className="px-2 py-2 text-right font-semibold tabular-nums text-foreground">{money(line.subtotal)}</td>
+                    <td className="px-1 py-2 text-right tabular-nums text-foreground-muted">{line.product ? money(line.product.unit_price) : '—'}</td>
+                    <td className="px-1 py-2 text-right font-semibold tabular-nums text-foreground">{money(line.subtotal)}</td>
                     <td className="p-1 text-right">
                       <button type="button" disabled={lines.length === 1 || readOnly} onClick={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} className="rounded p-2 text-foreground-subtle hover:bg-destructive-subtle hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30" aria-label="Remove line item"><Trash2 className="size-4" /></button>
                     </td>
@@ -318,9 +318,9 @@ export function FriendsFamilyOrderForm({
           </div>
         </section>
 
-        <label className="block space-y-1.5 text-xs font-semibold text-foreground-muted">
+        <label className="block min-w-0 space-y-1.5 text-xs font-semibold text-foreground-muted">
           Notes
-          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} placeholder="Add pickup details, special instructions, or anything else the fulfillment team should know." className="w-full resize-y rounded-lg border border-border bg-surface-raised px-3 py-2.5 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} placeholder="Add pickup details, special instructions, or anything else the fulfillment team should know." className="w-full min-w-0 resize-y rounded-lg border border-border bg-surface-raised px-3 py-2.5 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
         </label>
       </fieldset>
 
