@@ -18,7 +18,12 @@ interface Props {
   fields: FieldSpec[];
   entry: ReferenceEntry | null;
   selectOptions: Record<string, Option[]>;
-  onDone(warning?: string): void;
+  /** Values the form wrote, so a caller can react to e.g. a renamed key. */
+  onDone(warning?: string, saved?: Row): void;
+  /** Pre-filled into creates (and kept on edits of hidden fields). */
+  fixedValues?: Record<string, unknown>;
+  /** Editable fields that keep their value but are not shown. */
+  hiddenFields?: string[];
   onCancel(): void;
 }
 
@@ -37,12 +42,12 @@ function toValue(f: FieldSpec, raw: string | boolean): unknown {
   return raw;
 }
 
-export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDone, onCancel }: Props) {
+export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDone, onCancel, fixedValues, hiddenFields = [] }: Props) {
   const editable = fields.filter((f) => f.editable);
   const keyFields = fields.filter((f) => f.isKey);
   const renamable = keyFields.length === 1 && keyFields[0].name === 'code';
   const [raw, setRaw] = useState<Record<string, string | boolean>>(() =>
-    Object.fromEntries(editable.map((f) => [f.name, toRaw(f, entry?.values[f.name])])),
+    Object.fromEntries(editable.map((f) => [f.name, toRaw(f, entry ? entry.values[f.name] : fixedValues?.[f.name])])),
   );
   const [errors, setErrors] = useState<string[]>([]);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -68,7 +73,7 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
         original: entry ? entry.values : null,
         edited,
       });
-      if (res.ok) onDone(res.warning);
+      if (res.ok) onDone(res.warning, edited);
       else setServerError(res.error);
     });
   }
@@ -112,7 +117,7 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
         </div>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
-        {editable.map((f) => {
+        {editable.filter((f) => !hiddenFields.includes(f.name)).map((f) => {
           const id = `ref-${f.name}`;
           const value = raw[f.name];
           const set = (v: string | boolean) => setRaw((cur) => ({ ...cur, [f.name]: v }));

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useState, useTransition, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
@@ -13,6 +13,12 @@ import { ReferenceEntryForm } from './ReferenceEntryForm';
 interface Props {
   data: ListPageData;
   selectOptions: Record<string, { code: string; label: string }[]>;
+  /** Pre-filled into new entries (used by detail pages that scope a list to a parent). */
+  fixedValues?: Record<string, unknown>;
+  /** Fields kept in the data but hidden from the table and form. */
+  hiddenFields?: string[];
+  /** Extra content shown at the end of each row (e.g. links). */
+  renderRowExtra?: (entry: ReferenceEntry) => ReactNode;
 }
 
 function cell(f: FieldSpec, v: unknown): string {
@@ -21,7 +27,7 @@ function cell(f: FieldSpec, v: unknown): string {
   return String(v);
 }
 
-export function ReferenceListClient({ data, selectOptions }: Props) {
+export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFields = [], renderRowExtra }: Props) {
   const router = useRouter();
   const [form, setForm] = useState<{ entry: ReferenceEntry | null } | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -31,6 +37,7 @@ export function ReferenceListClient({ data, selectOptions }: Props) {
 
   const readOnly = data.mode === 'readOnly';
   const canEdit = data.canManage && !readOnly;
+  const shownFields = data.fields.filter((f) => !hiddenFields.includes(f.name));
   const deleteBlocked = data.deleteDisabledReason !== null;
 
   function sync() {
@@ -105,6 +112,8 @@ export function ReferenceListClient({ data, selectOptions }: Props) {
           fields={data.fields}
           entry={form.entry}
           selectOptions={selectOptions}
+          fixedValues={fixedValues}
+          hiddenFields={hiddenFields}
           onDone={saved}
           onCancel={() => setForm(null)}
         />
@@ -114,23 +123,24 @@ export function ReferenceListClient({ data, selectOptions }: Props) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-foreground-subtle">
-              {data.fields.map((f) => (
+              {shownFields.map((f) => (
                 <th key={f.name} className="px-3 py-2 font-medium">{f.label}</th>
               ))}
+              {renderRowExtra && <th className="px-3 py-2" />}
               {canEdit && <th className="px-3 py-2" />}
             </tr>
           </thead>
           <tbody>
             {data.entries.length === 0 && (
               <tr>
-                <td colSpan={data.fields.length + 1} className="px-3 py-8 text-center text-foreground-muted">
+                <td colSpan={shownFields.length + 2} className="px-3 py-8 text-center text-foreground-muted">
                   No entries yet.
                 </td>
               </tr>
             )}
             {data.entries.map((entry) => (
               <tr key={entry.id} className="border-b border-border last:border-0">
-                {data.fields.map((f) => {
+                {shownFields.map((f) => {
                   const text = cell(f, entry.values[f.name]);
                   return (
                     <td key={f.name} className="px-3 py-2 text-foreground">
@@ -144,6 +154,7 @@ export function ReferenceListClient({ data, selectOptions }: Props) {
                     </td>
                   );
                 })}
+                {renderRowExtra && <td className="px-3 py-2">{renderRowExtra(entry)}</td>}
                 {canEdit && (
                   <td className="px-3 py-2">
                     {confirmId === entry.id ? (

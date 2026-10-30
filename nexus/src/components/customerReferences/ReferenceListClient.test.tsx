@@ -118,4 +118,18 @@ describe('ReferenceListClient', () => {
     expect(screen.getByRole('alert').textContent).toMatch(/Tax jurisdiction is required/);
     expect(actions.saveReferenceEntry).not.toHaveBeenCalled();
   });
+  it('taxDetails filtered by jurisdiction pre-fills tax_jurisdiction_code on Add', () => {
+    const fields: FieldSpec[] = [
+      { name: 'tax_jurisdiction_code', bcName: 'J', label: 'Tax jurisdiction', type: 'select', required: true, isKey: true, editable: true, optionsFrom: 'taxJurisdictions' },
+    ];
+    render(
+      <ReferenceListClient
+        data={page({ key: 'taxDetails', fields, entries: [] })}
+        selectOptions={{ taxJurisdictions: [{ code: 'A', label: 'A — Alpha' }, { code: 'B', label: 'B — Beta' }] }}
+        fixedValues={{ tax_jurisdiction_code: 'B' }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^add/i }));
+    expect((screen.getByLabelText(/Tax jurisdiction/) as HTMLSelectElement).value).toBe('B');
+  });
 });
