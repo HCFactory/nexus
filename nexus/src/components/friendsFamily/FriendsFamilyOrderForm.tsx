@@ -7,12 +7,12 @@ import {
   updateFriendsFamilyOrder,
 } from '@/app/actions/friendsFamilyOrders';
 import type { FriendsFamilyOrderWithItems, FriendsFamilyProduct } from '@/types/database';
-import { Check, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, ImageDown, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
 
 type DraftLine = { key: string; productId: string; quantity: string };
 
 function blankLine(): DraftLine {
-  return { key: crypto.randomUUID(), productId: '', quantity: '1' };
+  return { key: crypto.randomUUID(), productId: '', quantity: '' };
 }
 
 function money(value: number) {
@@ -25,6 +25,91 @@ function getErrorMessage(error: unknown, fallback: string) {
     return error.message;
   }
   return fallback;
+}
+
+function downloadOrderImage({
+  orderNumber,
+  orderedBy,
+  customerName,
+  phone,
+  email,
+  notes,
+  lines,
+  total,
+}: {
+  orderNumber: string;
+  orderedBy: string;
+  customerName: string;
+  phone: string;
+  email: string;
+  notes: string;
+  lines: Array<{ product?: FriendsFamilyProduct; quantity: number; subtotal: number }>;
+  total: number;
+}) {
+  const width = 1200;
+  const rowHeight = 42;
+  const height = 260 + (lines.length * rowHeight) + (notes ? 58 : 0);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) return;
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = '#166534';
+  context.fillRect(0, 0, width, 12);
+  context.fillStyle = '#111827';
+  context.font = '700 30px Arial';
+  context.fillText('Friends & Family Order', 48, 62);
+  context.fillStyle = '#166534';
+  context.font = '700 26px Arial';
+  context.fillText(orderNumber, 980, 62);
+  context.fillStyle = '#4b5563';
+  context.font = '16px Arial';
+  context.fillText(`Customer: ${customerName}`, 48, 100);
+  context.fillText(`Ordered by: ${orderedBy}`, 48, 126);
+  context.fillText([phone, email].filter(Boolean).join('  •  '), 48, 152);
+
+  const tableTop = 180;
+  context.fillStyle = '#f3f4f6';
+  context.fillRect(40, tableTop, width - 80, 34);
+  context.fillStyle = '#374151';
+  context.font = '700 14px Arial';
+  context.fillText('PRODUCT', 56, tableTop + 22);
+  context.fillText('QTY', 720, tableTop + 22);
+  context.fillText('UNIT PRICE', 810, tableTop + 22);
+  context.fillText('SUBTOTAL', 1010, tableTop + 22);
+
+  context.font = '16px Arial';
+  lines.forEach((line, index) => {
+    const y = tableTop + 34 + (index * rowHeight);
+    context.strokeStyle = '#e5e7eb';
+    context.beginPath();
+    context.moveTo(40, y + rowHeight);
+    context.lineTo(width - 40, y + rowHeight);
+    context.stroke();
+    context.fillStyle = '#111827';
+    context.fillText(line.product?.name ?? 'Product', 56, y + 27);
+    context.fillText(String(line.quantity), 730, y + 27);
+    context.fillText(line.product ? money(line.product.unit_price) : '—', 810, y + 27);
+    context.fillText(money(line.subtotal), 1010, y + 27);
+  });
+
+  const totalY = tableTop + 34 + (lines.length * rowHeight) + 34;
+  context.font = '700 20px Arial';
+  context.fillStyle = '#111827';
+  context.fillText(`Total: ${money(total)}`, 940, totalY);
+  if (notes) {
+    context.font = '15px Arial';
+    context.fillStyle = '#4b5563';
+    context.fillText(`Notes: ${notes.slice(0, 130)}`, 48, totalY + 36);
+  }
+
+  const link = document.createElement('a');
+  link.download = `${orderNumber.toLowerCase()}.png`;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
 }
 
 export function FriendsFamilyOrderForm({
@@ -43,6 +128,7 @@ export function FriendsFamilyOrderForm({
   onDeleted?: () => Promise<void> | void;
 }) {
   const [orderId, setOrderId] = useState<string | null>(initialOrder?.id ?? null);
+  const [orderNumber, setOrderNumber] = useState<string | null>(initialOrder?.order_number ?? null);
   const [submitted, setSubmitted] = useState(false);
   const [orderedBy, setOrderedBy] = useState(initialOrder?.ordered_by ?? '');
   const [customerName, setCustomerName] = useState(initialOrder?.customer_name ?? '');
@@ -79,12 +165,13 @@ export function FriendsFamilyOrderForm({
   const lineDetails = lines.map((line) => {
     const product = products.find((candidate) => candidate.id === line.productId);
     const quantity = Math.max(0, Number(line.quantity) || 0);
-    return { ...line, product, quantity, subtotal: product ? product.unit_price * quantity : 0 };
+    return { ...line, quantityText: line.quantity, product, quantity, subtotal: product ? product.unit_price * quantity : 0 };
   });
   const total = lineDetails.reduce((sum, line) => sum + line.subtotal, 0);
 
   const reset = () => {
     setOrderId(null);
+    setOrderNumber(null);
     setSubmitted(false);
     setOrderedBy('');
     setCustomerName('');
@@ -121,7 +208,9 @@ export function FriendsFamilyOrderForm({
         if (orderId) {
           await updateFriendsFamilyOrder(orderId, input);
         } else {
-          setOrderId(await createFriendsFamilyOrder(input));
+          const createdOrder = await createFriendsFamilyOrder(input);
+          setOrderId(createdOrder.id);
+          setOrderNumber(createdOrder.orderNumber);
         }
         if (standalone) setSubmitted(true);
         await onSaved?.();
@@ -144,7 +233,7 @@ export function FriendsFamilyOrderForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+    <form onSubmit={handleSubmit} className={`overflow-hidden rounded-xl bg-surface shadow-sm ${standalone && submitted ? 'border-2 border-success' : 'border border-border'}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised/40 px-4 py-3 lg:px-5">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-primary">
@@ -153,7 +242,7 @@ export function FriendsFamilyOrderForm({
           <h2 className="mt-0.5 text-lg font-bold text-foreground">Friends &amp; Family order</h2>
         </div>
         <div className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-foreground-subtle">
-          {initialOrder?.order_number ?? (orderId ? 'Order submitted' : 'Order # assigned automatically')}
+          {initialOrder?.order_number ?? orderNumber ?? 'Order # assigned automatically'}
         </div>
       </div>
 
@@ -164,7 +253,7 @@ export function FriendsFamilyOrderForm({
             <input required value={orderedBy} onChange={(event) => setOrderedBy(event.target.value)} placeholder="Employee name" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
           </label>
           <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
-            Name
+            Customer Name
             <input required value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Friend or family member" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
           </label>
           <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
@@ -204,7 +293,7 @@ export function FriendsFamilyOrderForm({
                       </select>
                     </td>
                     <td className="p-2">
-                      <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantity} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
+                      <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantityText} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{line.product ? money(line.product.unit_price) : '—'}</td>
                     <td className="px-3 py-2 text-right font-semibold tabular-nums text-foreground">{money(line.subtotal)}</td>
@@ -247,6 +336,7 @@ export function FriendsFamilyOrderForm({
             <>
               <button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-surface-raised"><RotateCcw className="size-4" /> New Order</button>
               <button type="button" onClick={() => setSubmitted(false)} className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-surface-raised"><Pencil className="size-4" /> Edit</button>
+              <button type="button" onClick={() => downloadOrderImage({ orderNumber: orderNumber ?? 'friends-family-order', orderedBy, customerName, phone, email, notes, lines: lineDetails, total })} className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-surface-raised"><ImageDown className="size-4" /> Download Image</button>
               <button type="button" disabled className="inline-flex items-center gap-2 rounded-lg bg-success px-5 py-2 text-sm font-semibold text-white"><Check className="size-4" /> Submitted</button>
             </>
           )}

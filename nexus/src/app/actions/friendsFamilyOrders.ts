@@ -22,14 +22,19 @@ export interface CreateFriendsFamilyOrderInput {
   items: Array<{ product_id: string; quantity: number }>;
 }
 
+export interface CreatedFriendsFamilyOrder {
+  id: string;
+  orderNumber: string;
+}
+
 export interface FriendsFamilyProductInput {
   name: string;
   category: string;
   unit_price: number;
 }
 
-const FULFILLMENT_STATUSES = new Set<FriendsFamilyFulfillmentStatus>(['new', 'processing', 'fulfilled', 'cancelled']);
-const PAYMENT_STATUSES = new Set<FriendsFamilyPaymentStatus>(['unpaid', 'paid', 'refunded']);
+const FULFILLMENT_STATUSES = new Set<FriendsFamilyFulfillmentStatus>(['new', 'packed', 'fulfilled']);
+const PAYMENT_STATUSES = new Set<FriendsFamilyPaymentStatus>(['unpaid', 'cash_paid', 'square_paid', 'venmo_paid']);
 
 function requiredText(value: string, label: string) {
   const trimmed = value.trim();
@@ -124,7 +129,7 @@ export async function getFriendsFamilyWorkspace(): Promise<FriendsFamilyWorkspac
   };
 }
 
-export async function createFriendsFamilyOrder(input: CreateFriendsFamilyOrderInput): Promise<string> {
+export async function createFriendsFamilyOrder(input: CreateFriendsFamilyOrderInput): Promise<CreatedFriendsFamilyOrder> {
   const { orderedBy, customerName } = validateOrderInput(input);
   const { orgId, supabase, isAuthenticatedMember } = await getWorkspaceDataContext();
 
@@ -141,9 +146,16 @@ export async function createFriendsFamilyOrder(input: CreateFriendsFamilyOrderIn
     }
   );
 
-  if (error) throw error;
+  if (error || !data) throw error ?? new Error('Order could not be created');
+  const { data: createdOrder, error: createdOrderError } = await supabase
+    .from('friends_family_orders')
+    .select('order_number')
+    .eq('id', data as string)
+    .eq('organization_id', orgId)
+    .single();
+  if (createdOrderError || !createdOrder) throw createdOrderError ?? new Error('Order number could not be loaded');
   revalidateWorkspace();
-  return data as string;
+  return { id: data as string, orderNumber: createdOrder.order_number };
 }
 
 export async function updateFriendsFamilyOrder(

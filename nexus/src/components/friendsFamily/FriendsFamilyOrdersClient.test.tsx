@@ -68,7 +68,7 @@ const workspace: FriendsFamilyWorkspace = {
 
 beforeEach(() => {
   actions.getFriendsFamilyWorkspace.mockResolvedValue(workspace);
-  actions.createFriendsFamilyOrder.mockResolvedValue('order-2');
+  actions.createFriendsFamilyOrder.mockResolvedValue({ id: 'order-2', orderNumber: 'FF-000002' });
   actions.updateFriendsFamilyOrderStatus.mockResolvedValue(undefined);
 });
 
@@ -87,14 +87,33 @@ describe('FriendsFamilyOrdersClient', () => {
     expect(screen.getAllByText('$25.00').length).toBeGreaterThan(0);
     expect(screen.getByLabelText('Fulfillment status for FF-000001')).toHaveValue('new');
     expect(screen.getByLabelText('Payment status for FF-000001')).toHaveValue('unpaid');
+    expect(screen.getAllByRole('option', { name: 'Packed' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('option', { name: 'Cash Paid' }).length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'Delete FF-000001' })).toBeInTheDocument();
+  });
+
+  it('filters orders by search, fulfillment status, and payment status', () => {
+    render(<FriendsFamilyOrdersClient initialWorkspace={workspace} isAdmin={false} />);
+
+    fireEvent.change(screen.getByLabelText('Search orders'), { target: { value: 'not found' } });
+    expect(screen.getByText('No orders match the current search and filters.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search orders'), { target: { value: 'Jamie' } });
+    expect(screen.getByText('FF-000001')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Filter by order status'), { target: { value: 'packed' } });
+    expect(screen.getByText('No orders match the current search and filters.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Filter by order status'), { target: { value: 'all' } });
+    fireEvent.change(screen.getByLabelText('Filter by payment status'), { target: { value: 'cash_paid' } });
+    expect(screen.getByText('No orders match the current search and filters.')).toBeInTheDocument();
   });
 
   it('calculates line subtotal and submits the manually entered employee name', async () => {
     render(<FriendsFamilyOrdersClient initialWorkspace={workspace} isAdmin={false} />);
 
     fireEvent.click(screen.getByRole('button', { name: /new order/i }));
+    expect(screen.getByLabelText('Quantity')).toHaveDisplayValue('');
     fireEvent.change(screen.getByLabelText('Ordered by'), { target: { value: 'Morgan Employee' } });
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Taylor Family' } });
+    fireEvent.change(screen.getByLabelText('Customer Name'), { target: { value: 'Taylor Family' } });
     fireEvent.change(screen.getByLabelText('Product'), { target: { value: 'product-1' } });
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '3' } });
 
@@ -130,15 +149,18 @@ describe('FriendsFamilyOrdersClient', () => {
     render(<FriendsFamilyOrderForm products={workspace.products} standalone />);
 
     fireEvent.change(screen.getByLabelText('Ordered by'), { target: { value: 'Alex Employee' } });
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'New Customer' } });
+    fireEvent.change(screen.getByLabelText('Customer Name'), { target: { value: 'New Customer' } });
     fireEvent.change(screen.getByLabelText('Product'), { target: { value: 'product-1' } });
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: /submit order/i }));
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submitted' })).toBeInTheDocument());
-    expect(screen.getByLabelText('Name')).toBeDisabled();
+    expect(screen.getByText('FF-000002')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /download image/i })).toBeInTheDocument();
+    expect(screen.getByLabelText('Customer Name')).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
-    expect(screen.getByLabelText('Name')).not.toBeDisabled();
+    expect(screen.getByLabelText('Customer Name')).not.toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Submitted' })).toBeInTheDocument());

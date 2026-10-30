@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useTransition, type FormEvent } from 'react';
+import { useMemo, useState, useTransition, type FormEvent } from 'react';
 import {
   createFriendsFamilyProduct,
+  deleteFriendsFamilyOrder,
   getFriendsFamilyWorkspace,
   updateFriendsFamilyOrderStatus,
   updateFriendsFamilyProduct,
@@ -16,19 +17,19 @@ import type {
   FriendsFamilyProduct,
   FriendsFamilyWorkspace,
 } from '@/types/database';
-import { ChevronDown, ExternalLink, PackagePlus, Pencil, Plus, Settings2, X } from 'lucide-react';
+import { ChevronDown, ExternalLink, PackagePlus, Pencil, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
 
 const FULFILLMENT_LABELS: Record<FriendsFamilyFulfillmentStatus, string> = {
   new: 'New',
-  processing: 'Processing',
+  packed: 'Packed',
   fulfilled: 'Fulfilled',
-  cancelled: 'Cancelled',
 };
 
 const PAYMENT_LABELS: Record<FriendsFamilyPaymentStatus, string> = {
   unpaid: 'Unpaid',
-  paid: 'Paid',
-  refunded: 'Refunded',
+  cash_paid: 'Cash Paid',
+  square_paid: 'Square Paid',
+  venmo_paid: 'Venmo Paid',
 };
 
 function money(value: number) {
@@ -44,9 +45,10 @@ function formatDate(value: string) {
 }
 
 function statusClass(kind: 'fulfillment' | 'payment', value: string) {
-  if (value === 'fulfilled' || value === 'paid') return 'border-success/30 bg-success-subtle text-success';
-  if (value === 'cancelled' || value === 'refunded') return 'border-destructive/30 bg-destructive-subtle text-destructive';
-  if (kind === 'fulfillment' && value === 'processing') return 'border-warning/30 bg-warning-subtle text-warning';
+  if (value === 'fulfilled' || value === 'cash_paid') return 'border-success/30 bg-success-subtle text-success';
+  if (value === 'square_paid') return 'border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-300';
+  if (value === 'packed' || value === 'venmo_paid') return 'border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300';
+  if (value === 'new' || (kind === 'payment' && value === 'unpaid')) return 'border-warning/30 bg-warning-subtle text-warning';
   return 'border-border bg-surface-raised text-foreground-muted';
 }
 
@@ -107,6 +109,14 @@ function OrderCard({
     });
   };
 
+  const deleteOrder = () => {
+    if (!window.confirm(`Delete ${order.order_number} permanently?`)) return;
+    startTransition(async () => {
+      await deleteFriendsFamilyOrder(order.id);
+      await onChanged();
+    });
+  };
+
   if (editing) {
     return (
       <FriendsFamilyOrderForm
@@ -155,6 +165,9 @@ function OrderCard({
           />
           <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-surface" aria-label={`Edit ${order.order_number}`}>
             <Pencil className="size-3.5" /> Edit
+          </button>
+          <button type="button" disabled={pending} onClick={deleteOrder} className="rounded-lg border border-destructive/30 p-1.5 text-destructive hover:bg-destructive-subtle disabled:opacity-50" aria-label={`Delete ${order.order_number}`}>
+            <Trash2 className="size-3.5" />
           </button>
         </div>
       </header>
@@ -343,8 +356,21 @@ export function FriendsFamilyOrdersClient({
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [showNewOrder, setShowNewOrder] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [fulfillmentFilter, setFulfillmentFilter] = useState<'all' | FriendsFamilyFulfillmentStatus>('all');
+  const [paymentFilter, setPaymentFilter] = useState<'all' | FriendsFamilyPaymentStatus>('all');
 
   const refresh = async () => setWorkspace(await getFriendsFamilyWorkspace());
+  const filteredOrders = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return workspace.orders.filter((order) => {
+      const matchesSearch = !query || [order.order_number, order.customer_name, order.ordered_by]
+        .some((value) => value.toLowerCase().includes(query));
+      return matchesSearch
+        && (fulfillmentFilter === 'all' || order.fulfillment_status === fulfillmentFilter)
+        && (paymentFilter === 'all' || order.payment_status === paymentFilter);
+    });
+  }, [fulfillmentFilter, paymentFilter, searchTerm, workspace.orders]);
 
   return (
     <main className="flex-1 overflow-y-auto bg-background px-3 py-4 lg:p-6">
@@ -398,10 +424,25 @@ export function FriendsFamilyOrdersClient({
         )}
 
         <section className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-foreground-subtle">
               Orders ({workspace.orders.length})
             </h2>
+            <div className="flex flex-1 flex-wrap justify-end gap-2 sm:flex-none">
+              <label className="relative min-w-52 flex-1 sm:w-64 sm:flex-none">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
+                <span className="sr-only">Search orders</span>
+                <input value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search orders" className="w-full rounded-lg border border-border bg-surface px-3 py-2 pl-9 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
+              </label>
+              <select aria-label="Filter by order status" value={fulfillmentFilter} onChange={(event) => setFulfillmentFilter(event.target.value as 'all' | FriendsFamilyFulfillmentStatus)} className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                <option value="all">All order statuses</option>
+                {Object.entries(FULFILLMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+              <select aria-label="Filter by payment status" value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value as 'all' | FriendsFamilyPaymentStatus)} className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                <option value="all">All payment statuses</option>
+                {Object.entries(PAYMENT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </div>
           </div>
           {workspace.orders.length === 0 ? (
             <div className="rounded-xl border border-border bg-surface px-6 py-14 text-center">
@@ -409,8 +450,12 @@ export function FriendsFamilyOrdersClient({
               <h2 className="mt-3 text-lg font-semibold text-foreground">No Friends &amp; Family orders yet</h2>
               <p className="mt-1 text-sm text-foreground-muted">Create the first order to start the list.</p>
             </div>
+          ) : filteredOrders.length === 0 ? (
+            <div className="rounded-xl border border-border bg-surface px-6 py-10 text-center text-sm text-foreground-muted">
+              No orders match the current search and filters.
+            </div>
           ) : (
-            workspace.orders.map((order) => <OrderCard key={order.id} order={order} products={workspace.products} onChanged={refresh} />)
+            filteredOrders.map((order) => <OrderCard key={order.id} order={order} products={workspace.products} onChanged={refresh} />)
           )}
         </section>
       </div>

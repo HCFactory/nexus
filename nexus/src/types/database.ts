@@ -6,8 +6,8 @@ export type ItemOrderStatus = "new" | "final" | "cancel";
 export type ItemPriority = "1_critical" | "2_standard" | "3_low";
 export type InvoiceParty = "supplier" | "manufacturer";
 export type InvoiceStatus = "draft" | "final" | "paid";
-export type FriendsFamilyFulfillmentStatus = "new" | "processing" | "fulfilled" | "cancelled";
-export type FriendsFamilyPaymentStatus = "unpaid" | "paid" | "refunded";
+export type FriendsFamilyFulfillmentStatus = "new" | "packed" | "fulfilled";
+export type FriendsFamilyPaymentStatus = "unpaid" | "cash_paid" | "square_paid" | "venmo_paid";
 export type DesignerAccessLevel = "disabled" | "view" | "edit";
 export type BusinessCentralSyncStatus =
   | "never_synced"
