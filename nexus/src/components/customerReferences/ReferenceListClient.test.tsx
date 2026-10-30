@@ -100,4 +100,22 @@ describe('ReferenceListClient', () => {
     expect(screen.queryByText('These changes will be saved to Business Central')).toBeNull();
     expect(actions.saveReferenceEntry).not.toHaveBeenCalled();
   });
+
+  it('required select starts blank and requires a choice', () => {
+    const fields: FieldSpec[] = [
+      { name: 'j', bcName: 'J', label: 'Tax jurisdiction', type: 'select', required: true, isKey: true, editable: true, optionsFrom: 'taxJurisdictions' },
+    ];
+    render(
+      <ReferenceListClient
+        data={page({ key: 'taxDetails', fields, entries: [] })}
+        selectOptions={{ taxJurisdictions: [{ code: 'A', label: 'A — Alpha' }] }}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^add/i }));
+    expect((screen.getByLabelText(/Tax jurisdiction/) as HTMLSelectElement).value).toBe('');
+    expect(screen.getByRole('option', { name: 'Select…' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /review changes/i }));
+    expect(screen.getByRole('alert').textContent).toMatch(/Tax jurisdiction is required/);
+    expect(actions.saveReferenceEntry).not.toHaveBeenCalled();
+  });
 });

@@ -131,7 +131,10 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
                   </Label>
                   {f.type === 'select' ? (
                     <select id={id} className={SELECT_CLASS} value={String(value)} disabled={isDisabled(f)} onChange={(e) => set(e.target.value)}>
-                      {!f.required && <option value="" />}
+                      <option value="" disabled={f.required}>Select…</option>
+                      {value !== '' && !(f.optionsFrom ? selectOptions[f.optionsFrom] ?? [] : []).some((o) => o.code === value) && (
+                        <option value={String(value)}>{String(value)}</option>
+                      )}
                       {(f.optionsFrom ? selectOptions[f.optionsFrom] ?? [] : []).map((o) => (
                         <option key={o.code} value={o.code}>
                           {o.label}
