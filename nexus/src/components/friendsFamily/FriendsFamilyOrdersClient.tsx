@@ -88,6 +88,7 @@ function StatusSelect<T extends string>({
   options,
   kind,
   disabled,
+  widthClass,
   onChange,
 }: {
   label: string;
@@ -95,6 +96,7 @@ function StatusSelect<T extends string>({
   options: Record<T, string>;
   kind: 'fulfillment' | 'payment';
   disabled: boolean;
+  widthClass: string;
   onChange: (value: T) => void;
 }) {
   return (
@@ -105,7 +107,7 @@ function StatusSelect<T extends string>({
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value as T)}
-        className={`appearance-none rounded-full border py-1.5 pl-3 pr-8 text-xs font-semibold outline-none transition focus:ring-2 focus:ring-ring disabled:opacity-60 ${statusClass(kind, value)}`}
+        className={`${widthClass} appearance-none rounded-full border py-0.5 pl-2 pr-6 text-xs font-semibold leading-tight sm:py-1.5 sm:pl-3 sm:pr-8 sm:leading-normal outline-none transition focus:ring-2 focus:ring-ring disabled:opacity-60 ${statusClass(kind, value)}`}
       >
         {(Object.keys(options) as T[]).map((optionValue) => (
           <option key={optionValue} value={optionValue}>
@@ -113,7 +115,7 @@ function StatusSelect<T extends string>({
           </option>
         ))}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3 -translate-y-1/2" />
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 sm:right-2.5" />
     </label>
   );
 }
@@ -167,7 +169,7 @@ function OrderCard({
 
   return (
     <article className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised/40 px-4 py-2.5">
+      <header className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:gap-3 border-b border-border bg-surface-raised/40 px-4 py-2.5">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="text-sm font-bold text-foreground">{order.order_number}</h2>
           <span className="text-sm font-medium text-foreground">{order.customer_name}</span>
@@ -182,6 +184,7 @@ function OrderCard({
             value={order.fulfillment_status}
             options={FULFILLMENT_LABELS}
             kind="fulfillment"
+            widthClass="w-[105px] sm:w-auto"
             disabled={pending}
             onChange={(fulfillment_status) => updateStatus({ fulfillment_status })}
           />
@@ -190,6 +193,7 @@ function OrderCard({
             value={order.payment_status}
             options={PAYMENT_LABELS}
             kind="payment"
+            widthClass="w-[140px] sm:w-auto"
             disabled={pending}
             onChange={(payment_status) => updateStatus({ payment_status })}
           />
