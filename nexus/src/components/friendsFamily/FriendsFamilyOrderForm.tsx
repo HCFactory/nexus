@@ -46,7 +46,7 @@ function downloadOrderImage({
   lines: Array<{ product?: FriendsFamilyProduct; quantity: number; subtotal: number }>;
   total: number;
 }) {
-  const width = 1200;
+  const width = 800;
   const rowHeight = 42;
   const height = 260 + (lines.length * rowHeight) + (notes ? 58 : 0);
   const canvas = document.createElement('canvas');
@@ -60,11 +60,11 @@ function downloadOrderImage({
   context.fillStyle = '#166534';
   context.fillRect(0, 0, width, 12);
   context.fillStyle = '#111827';
-  context.font = '700 30px Arial';
+  context.font = '700 26px Arial';
   context.fillText('Friends & Family Order', 48, 62);
   context.fillStyle = '#166534';
-  context.font = '700 26px Arial';
-  context.fillText(orderNumber, 980, 62);
+  context.font = '700 22px Arial';
+  context.fillText(orderNumber, 610, 62);
   context.fillStyle = '#4b5563';
   context.font = '16px Arial';
   context.fillText(`Customer: ${customerName}`, 48, 100);
@@ -77,9 +77,9 @@ function downloadOrderImage({
   context.fillStyle = '#374151';
   context.font = '700 14px Arial';
   context.fillText('PRODUCT', 56, tableTop + 22);
-  context.fillText('QTY', 720, tableTop + 22);
-  context.fillText('UNIT PRICE', 810, tableTop + 22);
-  context.fillText('SUBTOTAL', 1010, tableTop + 22);
+  context.fillText('QTY', 390, tableTop + 22);
+  context.fillText('UNIT PRICE', 450, tableTop + 22);
+  context.fillText('SUBTOTAL', 625, tableTop + 22);
 
   context.font = '16px Arial';
   lines.forEach((line, index) => {
@@ -90,16 +90,17 @@ function downloadOrderImage({
     context.lineTo(width - 40, y + rowHeight);
     context.stroke();
     context.fillStyle = '#111827';
-    context.fillText(line.product?.name ?? 'Product', 56, y + 27);
-    context.fillText(String(line.quantity), 730, y + 27);
-    context.fillText(line.product ? money(line.product.unit_price) : '—', 810, y + 27);
-    context.fillText(money(line.subtotal), 1010, y + 27);
+    const productLabel = line.product ? `${line.product.name} — ${line.product.category}` : 'Product';
+    context.fillText(productLabel.slice(0, 39), 56, y + 27);
+    context.fillText(String(line.quantity), 395, y + 27);
+    context.fillText(line.product ? money(line.product.unit_price) : '—', 450, y + 27);
+    context.fillText(money(line.subtotal), 625, y + 27);
   });
 
   const totalY = tableTop + 34 + (lines.length * rowHeight) + 34;
   context.font = '700 20px Arial';
   context.fillStyle = '#111827';
-  context.fillText(`Total: ${money(total)}`, 940, totalY);
+  context.fillText(`Total: ${money(total)}`, 570, totalY);
   if (notes) {
     context.font = '15px Arial';
     context.fillStyle = '#4b5563';
@@ -233,7 +234,7 @@ export function FriendsFamilyOrderForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className={`overflow-hidden rounded-xl bg-surface shadow-sm ${standalone && submitted ? 'border-2 border-success' : 'border border-border'}`}>
+    <form onSubmit={handleSubmit} className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised/40 px-4 py-3 lg:px-5">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-primary">
@@ -241,7 +242,7 @@ export function FriendsFamilyOrderForm({
           </p>
           <h2 className="mt-0.5 text-lg font-bold text-foreground">Friends &amp; Family order</h2>
         </div>
-        <div className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-foreground-subtle">
+        <div className={`rounded-lg border px-3 py-2 text-xs text-foreground-subtle ${standalone && submitted ? 'border-success text-success' : 'border-dashed border-border'}`}>
           {initialOrder?.order_number ?? orderNumber ?? 'Order # assigned automatically'}
         </div>
       </div>
@@ -269,35 +270,35 @@ export function FriendsFamilyOrderForm({
         <section>
           <h3 className="mb-2 text-sm font-semibold text-foreground">Line items</h3>
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[620px] text-sm">
+            <table className="w-full min-w-[500px] text-sm">
               <thead className="border-b border-border bg-surface-raised/50 text-left text-[11px] uppercase tracking-wider text-foreground-subtle">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Product</th>
-                  <th className="w-28 px-3 py-2 text-right font-semibold">Qty</th>
-                  <th className="w-36 px-3 py-2 text-right font-semibold">Unit price</th>
-                  <th className="w-36 px-3 py-2 text-right font-semibold">Subtotal</th>
+                  <th className="w-20 px-2 py-2 text-right font-semibold">Qty</th>
+                  <th className="w-28 px-2 py-2 text-right font-semibold">Unit price</th>
+                  <th className="w-28 px-2 py-2 text-right font-semibold">Subtotal</th>
                   <th className="w-12 px-3 py-2"><span className="sr-only">Remove</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {lineDetails.map((line) => (
                   <tr key={line.key}>
-                    <td className="p-2">
+                    <td className="p-2 pr-1">
                       <select aria-label="Product" required value={line.productId} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, productId: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
                         <option value="">Select a product…</option>
                         {categories.map(([category, categoryProducts]) => (
                           <optgroup key={category} label={category}>
-                            {categoryProducts.map((product) => <option key={product.id} value={product.id}>{product.name} — {money(product.unit_price)}</option>)}
+                            {categoryProducts.map((product) => <option key={product.id} value={product.id}>{product.name} — {product.category}</option>)}
                           </optgroup>
                         ))}
                       </select>
                     </td>
-                    <td className="p-2">
+                    <td className="p-1">
                       <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantityText} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
                     </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{line.product ? money(line.product.unit_price) : '—'}</td>
-                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-foreground">{money(line.subtotal)}</td>
-                    <td className="p-2 text-right">
+                    <td className="px-2 py-2 text-right tabular-nums text-foreground-muted">{line.product ? money(line.product.unit_price) : '—'}</td>
+                    <td className="px-2 py-2 text-right font-semibold tabular-nums text-foreground">{money(line.subtotal)}</td>
+                    <td className="p-1 text-right">
                       <button type="button" disabled={lines.length === 1 || readOnly} onClick={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} className="rounded p-2 text-foreground-subtle hover:bg-destructive-subtle hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30" aria-label="Remove line item"><Trash2 className="size-4" /></button>
                     </td>
                   </tr>
@@ -308,8 +309,8 @@ export function FriendsFamilyOrderForm({
                   <td colSpan={2} className="px-3 py-2">
                     {!readOnly && <button type="button" onClick={() => setLines((current) => [...current, blankLine()])} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40 hover:text-primary"><Plus className="size-3.5" /> Add line item</button>}
                   </td>
-                  <td className="px-3 py-2 text-right font-semibold text-foreground-muted">Total price</td>
-                  <td className="px-3 py-2 text-right text-base font-bold tabular-nums text-foreground">{money(total)}</td>
+                  <td className="px-2 py-2 text-right font-semibold text-foreground-muted">Total price</td>
+                  <td className="px-2 py-2 text-right text-base font-bold tabular-nums text-foreground">{money(total)}</td>
                   <td />
                 </tr>
               </tfoot>

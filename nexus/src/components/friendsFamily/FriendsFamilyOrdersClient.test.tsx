@@ -112,6 +112,7 @@ describe('FriendsFamilyOrdersClient', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /new order/i }));
     expect(screen.getByLabelText('Quantity')).toHaveDisplayValue('');
+    expect(screen.getByRole('option', { name: 'Family Pack — Bundles' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Ordered by'), { target: { value: 'Morgan Employee' } });
     fireEvent.change(screen.getByLabelText('Customer Name'), { target: { value: 'Taylor Family' } });
     fireEvent.change(screen.getByLabelText('Product'), { target: { value: 'product-1' } });
