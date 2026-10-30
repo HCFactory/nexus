@@ -8,6 +8,7 @@ export type InvoiceParty = "supplier" | "manufacturer";
 export type InvoiceStatus = "draft" | "final" | "paid";
 export type FriendsFamilyFulfillmentStatus = "new" | "packed" | "fulfilled";
 export type FriendsFamilyPaymentStatus = "unpaid" | "cash_paid" | "square_paid" | "venmo_paid";
+export type FriendsFamilyProductColor = "slate" | "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "pink";
 export type DesignerAccessLevel = "disabled" | "view" | "edit";
 export type BusinessCentralSyncStatus =
   | "never_synced"
@@ -539,6 +540,7 @@ export interface FriendsFamilyProduct {
   name: string;
   category: string;
   unit_price: number;
+  color_key: FriendsFamilyProductColor;
   active: boolean;
   created_by: string | null;
   created_at: string;
@@ -779,11 +781,12 @@ export interface Database {
       };
       friends_family_products: {
         Row: FriendsFamilyProduct;
-        Insert: Omit<FriendsFamilyProduct, "id" | "created_at" | "updated_at" | "active"> & {
+        Insert: Omit<FriendsFamilyProduct, "id" | "created_at" | "updated_at" | "active" | "color_key"> & {
           id?: string;
           created_at?: string;
           updated_at?: string;
           active?: boolean;
+          color_key?: FriendsFamilyProductColor;
         };
         Update: Partial<Omit<FriendsFamilyProduct, "id" | "organization_id">>;
       };

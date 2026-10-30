@@ -376,6 +376,21 @@
   }
 }
 
+@media (min-width: 768px) {
+  .friends-family-line-items-table {
+    width: 100% !important;
+    min-width: 100% !important;
+  }
+
+  .friends-family-product-column {
+    width: auto !important;
+  }
+
+  .friends-family-quantity-column {
+    width: 56px !important;
+  }
+}
+
 @media (max-width: 1024px), (pointer: coarse) {
   html body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
   html body textarea,

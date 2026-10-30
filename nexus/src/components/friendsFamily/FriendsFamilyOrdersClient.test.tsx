@@ -25,6 +25,7 @@ const workspace: FriendsFamilyWorkspace = {
       name: 'Family Pack',
       category: 'Bundles',
       unit_price: 12.5,
+      color_key: 'blue',
       active: true,
       created_by: 'user-1',
       created_at: '2026-10-01T00:00:00Z',
@@ -112,10 +113,11 @@ describe('FriendsFamilyOrdersClient', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /new order/i }));
     expect(screen.getByLabelText('Quantity')).toHaveDisplayValue('');
-    expect(screen.getByRole('option', { name: 'Family Pack — Bundles' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Ordered by'), { target: { value: 'Morgan Employee' } });
     fireEvent.change(screen.getByLabelText('Customer Name'), { target: { value: 'Taylor Family' } });
-    fireEvent.change(screen.getByLabelText('Product'), { target: { value: 'product-1' } });
+    fireEvent.click(screen.getByLabelText('Product'));
+    fireEvent.click(screen.getByRole('option', { name: 'Family Pack - Bundles' }));
+    expect(screen.getByLabelText('Product')).toHaveStyle({ backgroundColor: '#dbeafe' });
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '3' } });
 
     expect(screen.getAllByText('$37.50').length).toBeGreaterThan(0);
@@ -126,6 +128,15 @@ describe('FriendsFamilyOrdersClient', () => {
       customer_name: 'Taylor Family',
       items: [{ product_id: 'product-1', quantity: 3 }],
     })));
+  });
+
+  it('offers preset colors in product management without a freeform color picker', () => {
+    render(<FriendsFamilyOrdersClient initialWorkspace={workspace} isAdmin />);
+
+    fireEvent.click(screen.getByRole('button', { name: /manage products/i }));
+    expect(screen.getByLabelText('New product color')).toHaveValue('slate');
+    expect(screen.getByLabelText('Color for Family Pack')).toHaveValue('blue');
+    expect(screen.queryByDisplayValue(/^#/)).not.toBeInTheDocument();
   });
 
   it('edits header details and line items from the order card', async () => {
@@ -151,7 +162,8 @@ describe('FriendsFamilyOrdersClient', () => {
 
     fireEvent.change(screen.getByLabelText('Ordered by'), { target: { value: 'Alex Employee' } });
     fireEvent.change(screen.getByLabelText('Customer Name'), { target: { value: 'New Customer' } });
-    fireEvent.change(screen.getByLabelText('Product'), { target: { value: 'product-1' } });
+    fireEvent.click(screen.getByLabelText('Product'));
+    fireEvent.click(screen.getByRole('option', { name: 'Family Pack - Bundles' }));
     fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '1' } });
     fireEvent.click(screen.getByRole('button', { name: /submit order/i }));
 

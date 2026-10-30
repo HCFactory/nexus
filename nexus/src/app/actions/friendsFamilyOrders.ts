@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { getCurrentUserAccessContext, requireOrganizationContext } from '@/lib/auth/currentUserAccess';
+import { FRIENDS_FAMILY_PRODUCT_COLORS } from '@/lib/friendsFamily/productColors';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type {
   FriendsFamilyFulfillmentStatus,
@@ -10,6 +11,7 @@ import type {
   FriendsFamilyOrderWithItems,
   FriendsFamilyPaymentStatus,
   FriendsFamilyProduct,
+  FriendsFamilyProductColor,
   FriendsFamilyWorkspace,
 } from '@/types/database';
 
@@ -31,10 +33,12 @@ export interface FriendsFamilyProductInput {
   name: string;
   category: string;
   unit_price: number;
+  color_key: FriendsFamilyProductColor;
 }
 
 const FULFILLMENT_STATUSES = new Set<FriendsFamilyFulfillmentStatus>(['new', 'packed', 'fulfilled']);
 const PAYMENT_STATUSES = new Set<FriendsFamilyPaymentStatus>(['unpaid', 'cash_paid', 'square_paid', 'venmo_paid']);
+const PRODUCT_COLORS = new Set<FriendsFamilyProductColor>(FRIENDS_FAMILY_PRODUCT_COLORS.map((color) => color.value));
 
 function requiredText(value: string, label: string) {
   const trimmed = value.trim();
@@ -225,6 +229,7 @@ export async function createFriendsFamilyProduct(input: FriendsFamilyProductInpu
   const { orgId, user } = await requireFriendsFamilyAdmin();
   const unitPrice = Number(input.unit_price);
   if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Unit price must be zero or greater');
+  if (!PRODUCT_COLORS.has(input.color_key)) throw new Error('Invalid product color');
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('friends_family_products')
@@ -233,6 +238,7 @@ export async function createFriendsFamilyProduct(input: FriendsFamilyProductInpu
       name: requiredText(input.name, 'Product name'),
       category: requiredText(input.category, 'Category'),
       unit_price: unitPrice,
+      color_key: input.color_key,
       created_by: user.id,
     })
     .select('*')
@@ -244,7 +250,7 @@ export async function createFriendsFamilyProduct(input: FriendsFamilyProductInpu
 
 export async function updateFriendsFamilyProduct(
   productId: string,
-  patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'active'>>
+  patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'active'>>
 ): Promise<FriendsFamilyProduct> {
   const { orgId } = await requireFriendsFamilyAdmin();
   const update: Record<string, string | number | boolean> = {};
@@ -253,6 +259,10 @@ export async function updateFriendsFamilyProduct(
   if (patch.unit_price !== undefined) {
     if (!Number.isFinite(patch.unit_price) || patch.unit_price < 0) throw new Error('Unit price must be zero or greater');
     update.unit_price = patch.unit_price;
+  }
+  if (patch.color_key !== undefined) {
+    if (!PRODUCT_COLORS.has(patch.color_key)) throw new Error('Invalid product color');
+    update.color_key = patch.color_key;
   }
   if (patch.active !== undefined) update.active = patch.active;
 

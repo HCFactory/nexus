@@ -10,11 +10,13 @@ import {
   updateFriendsFamilyProduct,
 } from '@/app/actions/friendsFamilyOrders';
 import { FriendsFamilyOrderForm } from './FriendsFamilyOrderForm';
+import { FRIENDS_FAMILY_PRODUCT_COLORS, getFriendsFamilyProductColor } from '@/lib/friendsFamily/productColors';
 import type {
   FriendsFamilyFulfillmentStatus,
   FriendsFamilyOrderWithItems,
   FriendsFamilyPaymentStatus,
   FriendsFamilyProduct,
+  FriendsFamilyProductColor,
   FriendsFamilyWorkspace,
 } from '@/types/database';
 import { ChevronDown, ExternalLink, PackagePlus, Pencil, Plus, Search, Settings2, Trash2, X } from 'lucide-react';
@@ -34,6 +36,34 @@ const PAYMENT_LABELS: Record<FriendsFamilyPaymentStatus, string> = {
 
 function money(value: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+}
+
+function ProductColorSelect({
+  value,
+  onChange,
+  label,
+}: {
+  value: FriendsFamilyProductColor;
+  onChange: (value: FriendsFamilyProductColor) => void;
+  label: string;
+}) {
+  const color = getFriendsFamilyProductColor(value);
+  return (
+    <label className="relative flex items-center gap-2 rounded-lg border border-border bg-surface-raised px-2">
+      <span className="size-4 shrink-0 rounded-full border" style={{ backgroundColor: color.background, borderColor: color.border }} />
+      <span className="sr-only">{label}</span>
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(event.target.value as FriendsFamilyProductColor)}
+        className="min-w-0 flex-1 bg-transparent py-2 text-sm text-foreground outline-none"
+      >
+        {FRIENDS_FAMILY_PRODUCT_COLORS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function formatDate(value: string) {
@@ -218,6 +248,7 @@ function ProductManager({
   const [name, setName] = useState('');
   const [category, setCategory] = useState('');
   const [price, setPrice] = useState('');
+  const [colorKey, setColorKey] = useState<FriendsFamilyProductColor>('slate');
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
 
@@ -226,10 +257,11 @@ function ProductManager({
     setError('');
     startTransition(async () => {
       try {
-        await createFriendsFamilyProduct({ name, category, unit_price: Number(price) });
+        await createFriendsFamilyProduct({ name, category, unit_price: Number(price), color_key: colorKey });
         setName('');
         setCategory('');
         setPrice('');
+        setColorKey('slate');
         await onChanged();
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : 'Product could not be saved.');
@@ -239,7 +271,7 @@ function ProductManager({
 
   const saveProduct = (
     productId: string,
-    patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'active'>>
+    patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'active'>>
   ) => {
     setError('');
     startTransition(async () => {
@@ -264,10 +296,11 @@ function ProductManager({
         </button>
       </div>
 
-      <form onSubmit={saveNewProduct} className="grid gap-3 border-b border-border p-4 sm:grid-cols-[1fr_1fr_160px_auto] lg:p-5">
+      <form onSubmit={saveNewProduct} className="grid gap-3 border-b border-border p-4 sm:grid-cols-[1fr_1fr_140px_140px_auto] lg:p-5">
         <input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Product name" className="rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
         <input required value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Category" className="rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
         <input required min="0" step="0.01" type="number" value={price} onChange={(event) => setPrice(event.target.value)} placeholder="Unit price" className="rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
+        <ProductColorSelect value={colorKey} onChange={setColorKey} label="New product color" />
         <button type="submit" disabled={pending} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary-hover disabled:opacity-50">
           <Plus className="size-4" /> Add
         </button>
@@ -281,6 +314,7 @@ function ProductManager({
               <th className="px-4 py-2.5 font-semibold lg:px-5">Product</th>
               <th className="px-4 py-2.5 font-semibold">Category</th>
               <th className="px-4 py-2.5 text-right font-semibold">Unit price</th>
+              <th className="px-4 py-2.5 font-semibold">Color</th>
               <th className="px-4 py-2.5 text-right font-semibold lg:px-5">Availability</th>
             </tr>
           </thead>
@@ -302,12 +336,13 @@ function ProductRow({
 }: {
   product: FriendsFamilyProduct;
   pending: boolean;
-  onSave: (productId: string, patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'active'>>) => void;
+  onSave: (productId: string, patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'active'>>) => void;
 }) {
   const [name, setName] = useState(product.name);
   const [category, setCategory] = useState(product.category);
   const [price, setPrice] = useState(String(product.unit_price));
-  const changed = name.trim() !== product.name || category.trim() !== product.category || Number(price) !== product.unit_price;
+  const [colorKey, setColorKey] = useState(product.color_key);
+  const changed = name.trim() !== product.name || category.trim() !== product.category || Number(price) !== product.unit_price || colorKey !== product.color_key;
 
   return (
     <tr className={!product.active ? 'opacity-55' : undefined}>
@@ -320,13 +355,16 @@ function ProductRow({
       <td className="p-2.5">
         <input min="0" step="0.01" type="number" value={price} onChange={(event) => setPrice(event.target.value)} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
       </td>
+      <td className="p-2.5">
+        <ProductColorSelect value={colorKey} onChange={setColorKey} label={`Color for ${product.name}`} />
+      </td>
       <td className="px-4 py-2.5 text-right lg:pr-5">
         <div className="flex justify-end gap-2">
           {changed && (
             <button
               type="button"
               disabled={pending || !name.trim() || !category.trim() || !Number.isFinite(Number(price)) || Number(price) < 0}
-              onClick={() => onSave(product.id, { name, category, unit_price: Number(price) })}
+              onClick={() => onSave(product.id, { name, category, unit_price: Number(price), color_key: colorKey })}
               className="rounded-lg border border-primary/30 bg-primary-subtle px-3 py-1.5 text-xs font-semibold text-primary disabled:opacity-40"
             >
               Save

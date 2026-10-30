@@ -6,6 +6,16 @@ import {
   deleteFriendsFamilyOrder,
   updateFriendsFamilyOrder,
 } from '@/app/actions/friendsFamilyOrders';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { getFriendsFamilyProductColor } from '@/lib/friendsFamily/productColors';
 import type { FriendsFamilyOrderWithItems, FriendsFamilyProduct } from '@/types/database';
 import { Check, ImageDown, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
 
@@ -90,7 +100,7 @@ function downloadOrderImage({
     context.lineTo(width - 40, y + rowHeight);
     context.stroke();
     context.fillStyle = '#111827';
-    const productLabel = line.product ? `${line.product.name} — ${line.product.category}` : 'Product';
+    const productLabel = line.product ? `${line.product.name} - ${line.product.category}` : 'Product';
     context.fillText(productLabel.slice(0, 39), 56, y + 27);
     context.fillText(String(line.quantity), 395, y + 27);
     context.fillText(line.product ? money(line.product.unit_price) : '—', 450, y + 27);
@@ -273,10 +283,10 @@ export function FriendsFamilyOrderForm({
             <span className="text-xs text-foreground-subtle sm:hidden">Swipe table ↔</span>
           </div>
           <div className="w-full max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1">
-            <table className="table-fixed text-sm" style={{ width: 1100, minWidth: 1100 }}>
+            <table className="friends-family-line-items-table table-fixed text-sm" style={{ width: 534, minWidth: 534 }}>
               <colgroup>
-                <col style={{ width: 840 }} />
-                <col style={{ width: 56 }} />
+                <col className="friends-family-product-column" style={{ width: 250 }} />
+                <col className="friends-family-quantity-column" style={{ width: 80 }} />
                 <col style={{ width: 80 }} />
                 <col style={{ width: 80 }} />
                 <col style={{ width: 44 }} />
@@ -291,17 +301,52 @@ export function FriendsFamilyOrderForm({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {lineDetails.map((line) => (
+                {lineDetails.map((line) => {
+                  const selectedColor = line.product ? getFriendsFamilyProductColor(line.product.color_key) : null;
+                  return (
                   <tr key={line.key}>
                     <td className="p-2 pr-1">
-                      <select aria-label="Product" required value={line.productId} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, productId: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
-                        <option value="">Select a product…</option>
-                        {categories.map(([category, categoryProducts]) => (
-                          <optgroup key={category} label={category}>
-                            {categoryProducts.map((product) => <option key={product.id} value={product.id}>{product.name} — {product.category}</option>)}
-                          </optgroup>
-                        ))}
-                      </select>
+                      <Select
+                        value={line.productId || undefined}
+                        onValueChange={(productId) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, productId } : candidate))}
+                        disabled={readOnly || pending}
+                      >
+                        <SelectTrigger
+                          aria-label="Product"
+                          className="h-9 w-full min-w-0 px-2 text-[8px] md:text-sm"
+                          style={selectedColor ? {
+                            backgroundColor: selectedColor.background,
+                            borderColor: selectedColor.border,
+                            color: selectedColor.foreground,
+                          } : undefined}
+                        >
+                          <SelectValue placeholder="Select a product…" />
+                        </SelectTrigger>
+                        <SelectContent className="max-w-[min(90vw,28rem)]">
+                          {categories.map(([category, categoryProducts]) => (
+                            <SelectGroup key={category}>
+                              <SelectLabel>{category}</SelectLabel>
+                              {categoryProducts.map((product) => {
+                                const color = getFriendsFamilyProductColor(product.color_key);
+                                return (
+                                  <SelectItem
+                                    key={product.id}
+                                    value={product.id}
+                                    className="my-0.5 border text-xs"
+                                    style={{
+                                      backgroundColor: color.background,
+                                      borderColor: color.border,
+                                      color: color.foreground,
+                                    }}
+                                  >
+                                    {product.name} - {product.category}
+                                  </SelectItem>
+                                );
+                              })}
+                            </SelectGroup>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </td>
                     <td className="p-1">
                       <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantityText} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-1.5 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
@@ -312,7 +357,8 @@ export function FriendsFamilyOrderForm({
                       <button type="button" disabled={lines.length === 1 || readOnly} onClick={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} className="rounded p-2 text-foreground-subtle hover:bg-destructive-subtle hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30" aria-label="Remove line item"><Trash2 className="size-4" /></button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
               <tfoot className="border-t border-border bg-surface-raised/30">
                 <tr>
