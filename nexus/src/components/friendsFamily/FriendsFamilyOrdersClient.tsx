@@ -358,7 +358,7 @@ export function FriendsFamilyOrdersClient({
           </div>
           <div className="flex flex-wrap gap-2">
             <Link
-              href="/friends-family/order-form"
+              href="/friends-family-order-form"
               className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3.5 py-2 text-sm font-semibold text-foreground hover:bg-surface-raised"
             >
               <ExternalLink className="size-4" /> Order form page

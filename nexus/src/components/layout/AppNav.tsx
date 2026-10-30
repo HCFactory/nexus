@@ -70,7 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Internal Sales',
     items: [
-      { label: 'Friends & Family', href: '/friends-family', icon: HeartHandshake },
+      { label: 'Friends & Family', href: '/fnforders', icon: HeartHandshake },
     ],
   },
   {

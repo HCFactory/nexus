@@ -38,8 +38,8 @@ function requiredText(value: string, label: string) {
 }
 
 function revalidateWorkspace() {
-  revalidatePath('/friends-family');
-  revalidatePath('/friends-family/order-form');
+  revalidatePath('/fnforders');
+  revalidatePath('/friends-family-order-form');
 }
 
 async function getPublicFriendsFamilyOrganizationId(): Promise<string> {

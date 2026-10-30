@@ -37,8 +37,8 @@ export async function updateSession(request: NextRequest) {
     request.nextUrl.pathname.startsWith('/login') ||
     request.nextUrl.pathname.startsWith('/register');
   const isPublicFriendsFamilyPage =
-    request.nextUrl.pathname === '/friends-family' ||
-    request.nextUrl.pathname.startsWith('/friends-family/');
+    request.nextUrl.pathname === '/fnforders' ||
+    request.nextUrl.pathname === '/friends-family-order-form';
 
   if (!user && !isAuthPage && !isPublicFriendsFamilyPage) {
     const url = request.nextUrl.clone();
