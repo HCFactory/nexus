@@ -21,6 +21,7 @@ import {
   HelpCircle,
   Menu,
   Package,
+  HeartHandshake,
   Users,
   Clock,
 } from 'lucide-react';
@@ -64,6 +65,12 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Customers', href: '/customers', icon: Users },
       { label: 'Receivables', href: '/receivables', icon: Clock },
       { label: 'Sales invoices', href: '/receivables/invoices', icon: FileText },
+    ],
+  },
+  {
+    title: 'Internal Sales',
+    items: [
+      { label: 'Friends & Family', href: '/friends-family', icon: HeartHandshake },
     ],
   },
   {

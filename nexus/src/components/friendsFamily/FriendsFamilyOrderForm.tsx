@@ -1,0 +1,263 @@
+'use client';
+
+import { useMemo, useState, useTransition, type FormEvent } from 'react';
+import {
+  createFriendsFamilyOrder,
+  deleteFriendsFamilyOrder,
+  updateFriendsFamilyOrder,
+} from '@/app/actions/friendsFamilyOrders';
+import type { FriendsFamilyOrderWithItems, FriendsFamilyProduct } from '@/types/database';
+import { Check, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
+
+type DraftLine = { key: string; productId: string; quantity: string };
+
+function blankLine(): DraftLine {
+  return { key: crypto.randomUUID(), productId: '', quantity: '1' };
+}
+
+function money(value: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return fallback;
+}
+
+export function FriendsFamilyOrderForm({
+  products,
+  initialOrder = null,
+  standalone = false,
+  onSaved,
+  onCancel,
+  onDeleted,
+}: {
+  products: FriendsFamilyProduct[];
+  initialOrder?: FriendsFamilyOrderWithItems | null;
+  standalone?: boolean;
+  onSaved?: () => Promise<void> | void;
+  onCancel?: () => void;
+  onDeleted?: () => Promise<void> | void;
+}) {
+  const [orderId, setOrderId] = useState<string | null>(initialOrder?.id ?? null);
+  const [submitted, setSubmitted] = useState(false);
+  const [orderedBy, setOrderedBy] = useState(initialOrder?.ordered_by ?? '');
+  const [customerName, setCustomerName] = useState(initialOrder?.customer_name ?? '');
+  const [phone, setPhone] = useState(initialOrder?.phone ?? '');
+  const [email, setEmail] = useState(initialOrder?.email ?? '');
+  const [notes, setNotes] = useState(initialOrder?.notes ?? '');
+  const [lines, setLines] = useState<DraftLine[]>(
+    initialOrder?.items.length
+      ? initialOrder.items.map((item) => ({
+          key: item.id,
+          productId: item.product_id ?? '',
+          quantity: String(item.quantity),
+        }))
+      : [blankLine()]
+  );
+  const [error, setError] = useState('');
+  const [pending, startTransition] = useTransition();
+  const readOnly = standalone && submitted;
+
+  const selectableProducts = useMemo(() => {
+    const selected = new Set(lines.map((line) => line.productId));
+    return products.filter((product) => product.active || selected.has(product.id));
+  }, [lines, products]);
+
+  const categories = useMemo(() => {
+    const grouped = new Map<string, FriendsFamilyProduct[]>();
+    for (const product of selectableProducts) {
+      const category = product.category.trim() || 'Other';
+      grouped.set(category, [...(grouped.get(category) ?? []), product]);
+    }
+    return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [selectableProducts]);
+
+  const lineDetails = lines.map((line) => {
+    const product = products.find((candidate) => candidate.id === line.productId);
+    const quantity = Math.max(0, Number(line.quantity) || 0);
+    return { ...line, product, quantity, subtotal: product ? product.unit_price * quantity : 0 };
+  });
+  const total = lineDetails.reduce((sum, line) => sum + line.subtotal, 0);
+
+  const reset = () => {
+    setOrderId(null);
+    setSubmitted(false);
+    setOrderedBy('');
+    setCustomerName('');
+    setPhone('');
+    setEmail('');
+    setNotes('');
+    setLines([blankLine()]);
+    setError('');
+  };
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    setError('');
+    const validLines = lineDetails.filter((line) => line.product && line.quantity > 0 && Number.isInteger(line.quantity));
+    if (!orderedBy.trim() || !customerName.trim()) {
+      setError('Ordered by and customer name are required.');
+      return;
+    }
+    if (!validLines.length || validLines.length !== lines.length) {
+      setError('Select a product and enter a whole-number quantity greater than zero for every line.');
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const input = {
+          ordered_by: orderedBy,
+          customer_name: customerName,
+          phone,
+          email,
+          notes,
+          items: validLines.map((line) => ({ product_id: line.productId, quantity: line.quantity })),
+        };
+        if (orderId) {
+          await updateFriendsFamilyOrder(orderId, input);
+        } else {
+          setOrderId(await createFriendsFamilyOrder(input));
+        }
+        if (standalone) setSubmitted(true);
+        await onSaved?.();
+      } catch (caught) {
+        setError(getErrorMessage(caught, 'Order could not be saved.'));
+      }
+    });
+  };
+
+  const handleDelete = () => {
+    if (!orderId || !window.confirm('Delete this order permanently?')) return;
+    startTransition(async () => {
+      try {
+        await deleteFriendsFamilyOrder(orderId);
+        await onDeleted?.();
+      } catch (caught) {
+        setError(getErrorMessage(caught, 'Order could not be deleted.'));
+      }
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface-raised/40 px-4 py-3 lg:px-5">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+            {initialOrder ? `Editing ${initialOrder.order_number}` : 'Order form'}
+          </p>
+          <h2 className="mt-0.5 text-lg font-bold text-foreground">Friends &amp; Family order</h2>
+        </div>
+        <div className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-foreground-subtle">
+          {initialOrder?.order_number ?? (orderId ? 'Order submitted' : 'Order # assigned automatically')}
+        </div>
+      </div>
+
+      <fieldset disabled={readOnly || pending} className="space-y-5 p-4 disabled:opacity-80 lg:p-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+            Ordered by
+            <input required value={orderedBy} onChange={(event) => setOrderedBy(event.target.value)} placeholder="Employee name" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+          </label>
+          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+            Name
+            <input required value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Friend or family member" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+          </label>
+          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+            Phone #
+            <input type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="(555) 555-0123" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+          </label>
+          <label className="space-y-1.5 text-xs font-semibold text-foreground-muted">
+            Email address
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+          </label>
+        </div>
+
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-foreground">Line items</h3>
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[620px] text-sm">
+              <thead className="border-b border-border bg-surface-raised/50 text-left text-[11px] uppercase tracking-wider text-foreground-subtle">
+                <tr>
+                  <th className="px-3 py-2 font-semibold">Product</th>
+                  <th className="w-28 px-3 py-2 text-right font-semibold">Qty</th>
+                  <th className="w-36 px-3 py-2 text-right font-semibold">Unit price</th>
+                  <th className="w-36 px-3 py-2 text-right font-semibold">Subtotal</th>
+                  <th className="w-12 px-3 py-2"><span className="sr-only">Remove</span></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {lineDetails.map((line) => (
+                  <tr key={line.key}>
+                    <td className="p-2">
+                      <select aria-label="Product" required value={line.productId} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, productId: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring">
+                        <option value="">Select a product…</option>
+                        {categories.map(([category, categoryProducts]) => (
+                          <optgroup key={category} label={category}>
+                            {categoryProducts.map((product) => <option key={product.id} value={product.id}>{product.name} — {money(product.unit_price)}</option>)}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="p-2">
+                      <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantity} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-foreground-muted">{line.product ? money(line.product.unit_price) : '—'}</td>
+                    <td className="px-3 py-2 text-right font-semibold tabular-nums text-foreground">{money(line.subtotal)}</td>
+                    <td className="p-2 text-right">
+                      <button type="button" disabled={lines.length === 1 || readOnly} onClick={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} className="rounded p-2 text-foreground-subtle hover:bg-destructive-subtle hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30" aria-label="Remove line item"><Trash2 className="size-4" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t border-border bg-surface-raised/30">
+                <tr>
+                  <td colSpan={2} className="px-3 py-2">
+                    {!readOnly && <button type="button" onClick={() => setLines((current) => [...current, blankLine()])} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40 hover:text-primary"><Plus className="size-3.5" /> Add line item</button>}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold text-foreground-muted">Total price</td>
+                  <td className="px-3 py-2 text-right text-base font-bold tabular-nums text-foreground">{money(total)}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+
+        <label className="block space-y-1.5 text-xs font-semibold text-foreground-muted">
+          Notes
+          <textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={4} placeholder="Add pickup details, special instructions, or anything else the fulfillment team should know." className="w-full resize-y rounded-lg border border-border bg-surface-raised px-3 py-2.5 text-sm font-normal text-foreground outline-none focus:ring-2 focus:ring-ring" />
+        </label>
+      </fieldset>
+
+      {error && <p role="alert" className="px-4 pb-3 text-sm text-destructive lg:px-5">{error}</p>}
+
+      <div className="flex flex-wrap justify-between gap-2 border-t border-border px-4 py-3 lg:px-5">
+        <div>
+          {initialOrder && !standalone && (
+            <button type="button" disabled={pending} onClick={handleDelete} className="inline-flex items-center gap-2 rounded-lg border border-destructive/30 px-4 py-2 text-sm font-semibold text-destructive hover:bg-destructive-subtle disabled:opacity-50"><Trash2 className="size-4" /> Delete order</button>
+          )}
+        </div>
+        <div className="flex flex-wrap justify-end gap-2">
+          {standalone && submitted && (
+            <>
+              <button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-surface-raised"><RotateCcw className="size-4" /> New Order</button>
+              <button type="button" onClick={() => setSubmitted(false)} className="inline-flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground hover:bg-surface-raised"><Pencil className="size-4" /> Edit</button>
+              <button type="button" disabled className="inline-flex items-center gap-2 rounded-lg bg-success px-5 py-2 text-sm font-semibold text-white"><Check className="size-4" /> Submitted</button>
+            </>
+          )}
+          {!submitted && (
+            <>
+              {onCancel && <button type="button" onClick={onCancel} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground-muted hover:bg-surface-raised">Cancel</button>}
+              <button type="submit" disabled={pending || selectableProducts.length === 0} className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"><Check className="size-4" /> {pending ? 'Saving…' : orderId ? 'Save changes' : 'Submit order'}</button>
+            </>
+          )}
+        </div>
+      </div>
+    </form>
+  );
+}

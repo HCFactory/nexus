@@ -6,6 +6,8 @@ export type ItemOrderStatus = "new" | "final" | "cancel";
 export type ItemPriority = "1_critical" | "2_standard" | "3_low";
 export type InvoiceParty = "supplier" | "manufacturer";
 export type InvoiceStatus = "draft" | "final" | "paid";
+export type FriendsFamilyFulfillmentStatus = "new" | "processing" | "fulfilled" | "cancelled";
+export type FriendsFamilyPaymentStatus = "unpaid" | "paid" | "refunded";
 export type DesignerAccessLevel = "disabled" | "view" | "edit";
 export type BusinessCentralSyncStatus =
   | "never_synced"
@@ -531,6 +533,58 @@ export interface OrderItemInvoicePatch {
   updated_at: string;
 }
 
+export interface FriendsFamilyProduct {
+  id: string;
+  organization_id: string;
+  name: string;
+  category: string;
+  unit_price: number;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FriendsFamilyOrder {
+  id: string;
+  organization_id: string;
+  order_number: string;
+  order_sequence: number;
+  ordered_by: string;
+  customer_name: string;
+  phone: string | null;
+  email: string | null;
+  fulfillment_status: FriendsFamilyFulfillmentStatus;
+  payment_status: FriendsFamilyPaymentStatus;
+  notes: string | null;
+  total_amount: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FriendsFamilyOrderItem {
+  id: string;
+  order_id: string;
+  product_id: string | null;
+  product_name: string;
+  category_name: string;
+  quantity: number;
+  unit_price: number;
+  subtotal: number;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface FriendsFamilyOrderWithItems extends FriendsFamilyOrder {
+  items: FriendsFamilyOrderItem[];
+}
+
+export interface FriendsFamilyWorkspace {
+  products: FriendsFamilyProduct[];
+  orders: FriendsFamilyOrderWithItems[];
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -722,6 +776,32 @@ export interface Database {
           bc_connection_id?: string | null;
         };
         Update: Partial<Omit<PurchaseInvoice, "id">>;
+      };
+      friends_family_products: {
+        Row: FriendsFamilyProduct;
+        Insert: Omit<FriendsFamilyProduct, "id" | "created_at" | "updated_at" | "active"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          active?: boolean;
+        };
+        Update: Partial<Omit<FriendsFamilyProduct, "id" | "organization_id">>;
+      };
+      friends_family_orders: {
+        Row: FriendsFamilyOrder;
+        Insert: Omit<FriendsFamilyOrder, "id" | "created_at" | "updated_at" | "fulfillment_status" | "payment_status"> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          fulfillment_status?: FriendsFamilyFulfillmentStatus;
+          payment_status?: FriendsFamilyPaymentStatus;
+        };
+        Update: Partial<Omit<FriendsFamilyOrder, "id" | "organization_id" | "order_number" | "order_sequence">>;
+      };
+      friends_family_order_items: {
+        Row: FriendsFamilyOrderItem;
+        Insert: Omit<FriendsFamilyOrderItem, "id" | "created_at"> & { id?: string; created_at?: string };
+        Update: Partial<Omit<FriendsFamilyOrderItem, "id" | "order_id">>;
       };
 
       business_central_connections: {
