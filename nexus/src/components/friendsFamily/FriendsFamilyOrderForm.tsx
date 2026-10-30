@@ -270,10 +270,10 @@ export function FriendsFamilyOrderForm({
         <section>
           <h3 className="mb-2 text-sm font-semibold text-foreground">Line items</h3>
           <div className="w-full max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1">
-            <table className="w-full min-w-[540px] table-fixed text-sm">
+            <table className="w-[1100px] min-w-[1100px] table-fixed text-sm">
               <thead className="border-b border-border bg-surface-raised/50 text-left text-[11px] uppercase tracking-wider text-foreground-subtle">
                 <tr>
-                  <th className="w-[280px] px-2 py-2 font-semibold">Product</th>
+                  <th className="w-[840px] px-2 py-2 font-semibold">Product</th>
                   <th className="w-14 px-1 py-2 text-right font-semibold">Qty</th>
                   <th className="w-20 px-1 py-2 text-right font-semibold">Unit price</th>
                   <th className="w-20 px-1 py-2 text-right font-semibold">Subtotal</th>
