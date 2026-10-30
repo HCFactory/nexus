@@ -411,8 +411,8 @@ export function FriendsFamilyOrdersClient({
   }, [fulfillmentFilter, paymentFilter, searchTerm, workspace.orders]);
 
   return (
-    <main className="flex-1 overflow-y-auto bg-background px-3 py-4 lg:p-6">
-      <div className="mx-auto max-w-7xl space-y-5">
+    <main className="flex w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background px-3 py-4 lg:p-6">
+      <div className="mx-auto w-full min-w-0 max-w-7xl space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-bold text-foreground lg:text-2xl">Friends &amp; Family Orders</h1>

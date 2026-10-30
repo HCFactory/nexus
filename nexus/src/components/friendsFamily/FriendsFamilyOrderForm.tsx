@@ -282,7 +282,7 @@ export function FriendsFamilyOrderForm({
             <h3 className="text-sm font-semibold text-foreground">Line items</h3>
             <span className="text-xs text-foreground-subtle sm:hidden">Swipe table ↔</span>
           </div>
-          <div className="w-full max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1">
+          <div className="relative w-full max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1">
             <table className="friends-family-line-items-table table-fixed text-sm" style={{ width: 534, minWidth: 534 }}>
               <colgroup>
                 <col className="friends-family-product-column" style={{ width: 250 }} />
@@ -313,16 +313,18 @@ export function FriendsFamilyOrderForm({
                       >
                         <SelectTrigger
                           aria-label="Product"
-                          className="h-9 w-full min-w-0 px-2 text-[8px] md:text-sm"
+                          className="h-9 w-full min-w-0 px-2 text-xs md:text-sm"
                           style={selectedColor ? {
                             backgroundColor: selectedColor.background,
                             borderColor: selectedColor.border,
                             color: selectedColor.foreground,
-                          } : undefined}
+                          } : {
+                            backgroundColor: '#ffffff',
+                          }}
                         >
                           <SelectValue placeholder="Select a product…" />
                         </SelectTrigger>
-                        <SelectContent className="max-w-[min(90vw,28rem)]">
+                        <SelectContent className="max-w-[min(90vw,28rem)] md:w-56 md:max-w-56 md:[&_[data-radix-select-viewport]]:min-w-0">
                           {categories.map(([category, categoryProducts]) => (
                             <SelectGroup key={category}>
                               <SelectLabel>{category}</SelectLabel>
