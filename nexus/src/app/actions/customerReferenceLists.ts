@@ -98,6 +98,19 @@ export async function getReferenceListPage(
   };
 }
 
+// BC inserts tax detail rows when a jurisdiction/detail is created, and carries a renamed
+// tax area or jurisdiction code into its lines and details.
+function followUpLists(key: ListKey, input: { id: string | null; original: Row | null; edited: Row }): ListKey[] {
+  if (input.id === null) {
+    return key === 'taxJurisdictions' || key === 'taxDetails' ? ['taxDetails'] : [];
+  }
+  const renamed = 'code' in input.edited && input.original !== null && input.edited.code !== input.original.code;
+  if (!renamed) return [];
+  if (key === 'taxAreas') return ['taxAreaLines'];
+  if (key === 'taxJurisdictions') return ['taxAreaLines', 'taxDetails'];
+  return [];
+}
+
 export async function saveReferenceEntry(
   key: ListKey,
   input: { id: string | null; original: Row | null; edited: Row },
@@ -115,14 +128,15 @@ export async function saveReferenceEntry(
       edited: keepEditable(def, input.edited) ?? {},
     });
 
-    // BC may add tax detail rows when a jurisdiction/detail is created; re-pull so Nexus matches.
+    // BC changes dependent rows on its own; re-pull them so Nexus matches.
     let warning: string | undefined;
-    if (input.id === null && (key === 'taxJurisdictions' || key === 'taxDetails')) {
+    for (const follow of followUpLists(key, input)) {
       try {
-        await syncList(deps, LIST_DEFINITIONS.taxDetails);
+        await syncList(deps, LIST_DEFINITIONS[follow]);
       } catch {
         // The entry is already saved in BC and Nexus; do not report the save as failed.
-        warning = 'Saved, but refreshing tax details from Business Central failed. Press Sync on Tax details.';
+        const title = LIST_DEFINITIONS[follow].title;
+        warning = `Saved, but refreshing ${title.toLowerCase()} from Business Central failed. Press Sync on ${title}.`;
       }
     }
     revalidateLists();

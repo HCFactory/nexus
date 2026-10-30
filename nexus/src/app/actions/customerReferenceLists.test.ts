@@ -142,6 +142,27 @@ describe('saveReferenceEntry', () => {
     await saveReferenceEntry('taxJurisdictions', { id: 'e', original: { code: 'J1' }, edited: { code: 'J1' } });
     expect(mocks.syncList).not.toHaveBeenCalled();
   });
+
+  it('renaming a jurisdiction re-pulls tax area lines and tax details', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.saveEntry.mockResolvedValue({ id: 'e' });
+    await saveReferenceEntry('taxJurisdictions', { id: 'e', original: { code: 'J1' }, edited: { code: 'J2' } });
+    expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['taxAreaLines', 'taxDetails']);
+  });
+
+  it('renaming a tax area re-pulls its lines', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.saveEntry.mockResolvedValue({ id: 'e' });
+    await saveReferenceEntry('taxAreas', { id: 'e', original: { code: 'A1' }, edited: { code: 'A2' } });
+    expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['taxAreaLines']);
+  });
+
+  it('renaming a payment term does not sync anything else', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.saveEntry.mockResolvedValue({ id: 'e' });
+    await saveReferenceEntry('paymentTerms', { id: 'e', original: { code: 'N30' }, edited: { code: 'N31' } });
+    expect(mocks.syncList).not.toHaveBeenCalled();
+  });
 });
 
 describe('deleteReferenceEntry', () => {
