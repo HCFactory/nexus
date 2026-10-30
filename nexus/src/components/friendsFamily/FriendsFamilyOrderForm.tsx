@@ -267,9 +267,12 @@ export function FriendsFamilyOrderForm({
           </label>
         </div>
 
-        <section>
-          <h3 className="mb-2 text-sm font-semibold text-foreground">Line items</h3>
-          <div className="w-full max-w-full touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1">
+        <section className="min-w-0">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-foreground">Line items</h3>
+            <span className="text-xs text-foreground-subtle sm:hidden">Swipe table ↔</span>
+          </div>
+          <div className="-mx-3 w-[calc(100%+1.5rem)] touch-pan-x overflow-x-auto overscroll-x-contain rounded-lg border border-border pb-1 sm:mx-0 sm:w-full">
             <table className="w-[1100px] min-w-[1100px] table-fixed text-sm">
               <thead className="border-b border-border bg-surface-raised/50 text-left text-[11px] uppercase tracking-wider text-foreground-subtle">
                 <tr>
