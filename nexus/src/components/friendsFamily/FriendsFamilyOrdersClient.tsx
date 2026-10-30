@@ -107,7 +107,7 @@ function StatusSelect<T extends string>({
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value as T)}
-        className={`${widthClass} appearance-none rounded-full border py-0.5 pl-2 pr-6 text-xs font-semibold leading-tight sm:py-0.5 sm:pl-2 sm:pr-6 lg:text-[11px] outline-none transition focus:ring-2 focus:ring-ring disabled:opacity-60 ${statusClass(kind, value)}`}
+        className={`${widthClass} appearance-none rounded-full border py-0.5 pl-2 pr-6 text-xs font-semibold leading-tight sm:py-1 sm:pl-2.5 sm:pr-7 outline-none transition focus:ring-2 focus:ring-ring disabled:opacity-60 ${statusClass(kind, value)}`}
       >
         {(Object.keys(options) as T[]).map((optionValue) => (
           <option key={optionValue} value={optionValue}>
@@ -115,7 +115,7 @@ function StatusSelect<T extends string>({
           </option>
         ))}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2" />
+      <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 sm:right-2.5" />
     </label>
   );
 }
@@ -184,7 +184,7 @@ function OrderCard({
             value={order.fulfillment_status}
             options={FULFILLMENT_LABELS}
             kind="fulfillment"
-            widthClass="w-[105px] sm:w-auto"
+            widthClass="w-[105px] sm:w-[90px]"
             disabled={pending}
             onChange={(fulfillment_status) => updateStatus({ fulfillment_status })}
           />
