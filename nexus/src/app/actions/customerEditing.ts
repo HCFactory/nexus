@@ -1,6 +1,11 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import {
+  lookupCustomerNumber,
+  pushCustomerAfterSave,
+  type BillcomSaveStatus,
+} from '@/lib/billcom/customerSyncHooks';
 import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
 import { CUSTOMER_FIELDS } from '@/lib/businessCentral/customers/customerFields';
@@ -38,6 +43,31 @@ export interface CustomerEditContext {
 const NO_PERMISSION = "You don't have permission to change customers";
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+const billcomScope = (scope: Scope) => ({
+  supabase: createServiceClient(),
+  orgId: scope.orgId,
+  bcConnectionId: scope.bcConnectionId,
+});
+
+/** Send a saved customer to Bill.com. Never throws: the save already succeeded. */
+async function pushToBillcom(scope: Scope, number: string | null | Promise<string | null>): Promise<BillcomSaveStatus> {
+  try {
+    const no = await number;
+    if (!no) return { status: 'failed', message: 'Saved, but the customer number is missing, so Bill.com was not updated.' };
+    return await pushCustomerAfterSave(billcomScope(scope), no);
+  } catch (e) {
+    console.error('[customers] Bill.com push after save failed:', e);
+    return { status: 'failed', message: `Saved, but sending to Bill.com failed: ${errorMessage(e)}` };
+  }
+}
+
+/** Read the number before a delete; a failed lookup becomes a Bill.com status, not a save error. */
+function numberOf(scope: Scope, id: string): Promise<string | null> {
+  const p = lookupCustomerNumber(billcomScope(scope), id);
+  p.catch(() => undefined); // handled when awaited in pushToBillcom
+  return p;
+}
 
 function revalidateCustomers() {
   // 'layout' also refreshes every /customers/[id] page.
@@ -109,13 +139,14 @@ export async function getCustomerEditContext(): Promise<CustomerEditContext> {
 export async function createCustomerAction(input: {
   templateCode: string;
   values: Row;
-}): Promise<{ ok: true; id: string; number: string; warning?: string } | Fail> {
+}): Promise<{ ok: true; id: string; number: string; warning?: string; billcom?: BillcomSaveStatus } | Fail> {
   try {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
     const result = await createCustomer(await buildDeps(scope), { templateCode: input.templateCode, values: input.values });
+    const billcom = await pushToBillcom(scope, result.number);
     revalidateCustomers();
-    return { ok: true, ...result };
+    return { ok: true, ...result, billcom };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }
@@ -125,25 +156,28 @@ export async function updateCustomerAction(input: {
   id: string;
   original: Row;
   edited: Row;
-}): Promise<{ ok: true } | Fail> {
+}): Promise<{ ok: true; billcom?: BillcomSaveStatus } | Fail> {
   try {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
     await updateCustomer(await buildDeps(scope), { id: input.id, original: input.original, edited: input.edited });
+    const billcom = await pushToBillcom(scope, numberOf(scope, input.id));
     revalidateCustomers();
-    return { ok: true };
+    return { ok: true, billcom };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }
 }
 
-export async function deleteCustomerAction(id: string): Promise<{ ok: true } | Fail> {
+export async function deleteCustomerAction(id: string): Promise<{ ok: true; billcom?: BillcomSaveStatus } | Fail> {
   try {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
+    const number = numberOf(scope, id);
     await deleteCustomer(await buildDeps(scope), id);
+    const billcom = await pushToBillcom(scope, number);
     revalidateCustomers();
-    return { ok: true };
+    return { ok: true, billcom };
   } catch (e) {
     return { ok: false, error: errorMessage(e) };
   }

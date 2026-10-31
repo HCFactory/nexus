@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   updateCustomer: vi.fn(),
   deleteCustomer: vi.fn(),
   getSelectOptions: vi.fn(),
+  pushAfterSave: vi.fn(),
+  lookupNumber: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -28,6 +30,10 @@ vi.mock('@/lib/businessCentral/customers/customerService', () => ({
   createCustomer: mocks.createCustomer,
   updateCustomer: mocks.updateCustomer,
   deleteCustomer: mocks.deleteCustomer,
+}));
+vi.mock('@/lib/billcom/customerSyncHooks', () => ({
+  pushCustomerAfterSave: mocks.pushAfterSave,
+  lookupCustomerNumber: mocks.lookupNumber,
 }));
 vi.mock('./customerReferenceLists', () => ({ getSelectOptions: mocks.getSelectOptions }));
 
@@ -51,6 +57,8 @@ beforeEach(() => {
   mocks.createTransport.mockReturnValue({ transport: true });
   mocks.createNoSeriesClient.mockReturnValue({ noSeries: true });
   mocks.createAssigner.mockReturnValue({ assigner: true });
+  mocks.pushAfterSave.mockResolvedValue({ status: 'synced' });
+  mocks.lookupNumber.mockResolvedValue('C9');
 });
 
 describe('permission', () => {
@@ -83,7 +91,7 @@ describe('with permission', () => {
   it('creates through the service with scoped deps and revalidates /customers', async () => {
     mocks.createCustomer.mockResolvedValue({ id: 'new-1', number: 'C100', warning: 'heads up' });
     const res = await createCustomerAction({ templateCode: 'T1', values: { display_name: 'ZZNEXUS A' } });
-    expect(res).toEqual({ ok: true, id: 'new-1', number: 'C100', warning: 'heads up' });
+    expect(res).toEqual({ ok: true, id: 'new-1', number: 'C100', warning: 'heads up', billcom: { status: 'synced' } });
     const [deps, input] = mocks.createCustomer.mock.calls[0];
     expect(deps).toMatchObject({
       supabase: { svc: true },
@@ -103,9 +111,9 @@ describe('with permission', () => {
   });
 
   it('updates and deletes through the service and revalidates', async () => {
-    expect(await updateCustomerAction({ id: 'c1', original: { city: 'A' }, edited: { city: 'B' } })).toEqual({ ok: true });
+    expect(await updateCustomerAction({ id: 'c1', original: { city: 'A' }, edited: { city: 'B' } })).toEqual({ ok: true, billcom: { status: 'synced' } });
     expect(mocks.updateCustomer.mock.calls[0][1]).toEqual({ id: 'c1', original: { city: 'A' }, edited: { city: 'B' } });
-    expect(await deleteCustomerAction('c1')).toEqual({ ok: true });
+    expect(await deleteCustomerAction('c1')).toEqual({ ok: true, billcom: { status: 'synced' } });
     expect(mocks.deleteCustomer.mock.calls[0][1]).toBe('c1');
     expect(mocks.revalidatePath).toHaveBeenCalledTimes(2);
   });
@@ -152,5 +160,41 @@ describe('getCustomerEditContext', () => {
     expect(Object.keys(ctx.selectOptions).sort()).toEqual(
       ['customerPostingGroups', 'customerPriceGroups', 'generalBusinessPostingGroups', 'locations', 'paymentTerms', 'taxAreas'],
     );
+  });
+});
+
+describe('Bill.com push after save', () => {
+  beforeEach(() => mocks.requireScope.mockResolvedValue(scope(true)));
+  const billScope = { supabase: { svc: true }, orgId: 'org-1', bcConnectionId: 'conn-1' };
+
+  it('pushes the created, updated and deleted customer number', async () => {
+    mocks.createCustomer.mockResolvedValue({ id: 'new-1', number: 'C100' });
+    await createCustomerAction({ templateCode: 'T1', values: {} });
+    expect(mocks.pushAfterSave).toHaveBeenLastCalledWith(billScope, 'C100');
+    await updateCustomerAction({ id: 'c1', original: {}, edited: {} });
+    expect(mocks.pushAfterSave).toHaveBeenLastCalledWith(billScope, 'C9');
+    await deleteCustomerAction('c1');
+    expect(mocks.pushAfterSave).toHaveBeenLastCalledWith(billScope, 'C9');
+    // The number is read before the row is deleted.
+    expect(mocks.lookupNumber.mock.invocationCallOrder[1]).toBeLessThan(mocks.deleteCustomer.mock.invocationCallOrder[0]);
+  });
+
+  it('disabled Bill.com keeps the save and leaves it pending', async () => {
+    const off = { status: 'off', message: "Bill.com is turned off — this customer will be sent when it's turned on." };
+    mocks.pushAfterSave.mockResolvedValue(off);
+    expect(await updateCustomerAction({ id: 'c1', original: {}, edited: {} })).toEqual({ ok: true, billcom: off });
+  });
+
+  it('a failing number lookup never changes the save result', async () => {
+    mocks.lookupNumber.mockRejectedValue(new Error('db down'));
+    const res = await updateCustomerAction({ id: 'c1', original: {}, edited: {} });
+    expect(res.ok).toBe(true);
+    expect((res as { billcom?: { status: string } }).billcom?.status).toBe('failed');
+  });
+
+  it('a failed save does not push', async () => {
+    mocks.updateCustomer.mockRejectedValue(new Error('nope'));
+    expect((await updateCustomerAction({ id: 'c1', original: {}, edited: {} })).ok).toBe(false);
+    expect(mocks.pushAfterSave).not.toHaveBeenCalled();
   });
 });

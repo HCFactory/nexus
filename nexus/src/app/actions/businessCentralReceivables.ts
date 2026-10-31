@@ -27,6 +27,7 @@ import {
   type SalesInvoiceLineSyncDeps,
 } from '@/lib/businessCentral/salesInvoiceLineSync';
 import type { BcSalesInvoiceLine } from '@/lib/businessCentral/salesInvoiceLineMapper';
+import { queueChangedCustomers } from '@/lib/billcom/customerSyncHooks';
 import { createServiceClient } from '@/lib/supabase/server';
 import {
   BusinessCentralCustomer,
@@ -225,6 +226,14 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
         cursor: null,
         error: `Customer card fields: ${cardError instanceof Error ? cardError.message : 'failed'}`,
       });
+    }
+
+    // Queue customers whose Bill.com payload changed. No Bill.com calls here;
+    // skipped when Bill.com is off; a failure is logged, never fails the sync.
+    try {
+      await queueChangedCustomers({ supabase, orgId, bcConnectionId: connection.id });
+    } catch (billcomError) {
+      console.error('[billcom] could not queue changed customers after sync:', billcomError);
     }
 
     // Sales invoice lines get their own dedicated sync path (see
