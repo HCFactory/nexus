@@ -69,6 +69,7 @@ const BILLCOM_PAGE = 100;
 const MAX_CONCURRENCY = 3;
 const SAMPLE_SIZE = 10;
 const DELETED_HASH = 'deleted';
+const LEASE_MS = 2 * 60_000;
 
 // ---------- Supabase reads (paged past the 1,000-row cap) ----------
 
@@ -122,6 +123,11 @@ async function loadLinks(deps: PushDeps, numbers?: string[]): Promise<BillcomCus
 }
 
 async function updateLink(deps: PushDeps, id: string, patch: Partial<BillcomCustomerLink>) {
+  return writeLink(deps, id, { ...patch, claimed_until: null });
+}
+
+/** Mid-processing write that keeps the lease (e.g. saving the Bill.com id). */
+async function writeLink(deps: PushDeps, id: string, patch: Partial<BillcomCustomerLink>) {
   const { error } = await deps.supabase
     .from(LINKS)
     .update({ ...patch, updated_at: new Date().toISOString() })
@@ -318,16 +324,18 @@ export async function pushCustomers(
   let next = 0;
   let done = 0;
 
-  /** Optimistic claim: only one concurrent run wins a given link version. */
+  /** DB-checked lease: the update only matches a link with no live lease. */
   async function claim(link: BillcomCustomerLink): Promise<boolean> {
+    const at = now();
+    const nowIso = new Date(at).toISOString();
     const { data, error } = await deps.supabase
       .from(LINKS)
-      .update({ updated_at: new Date().toISOString() })
+      .update({ claimed_until: new Date(at + LEASE_MS).toISOString(), updated_at: new Date().toISOString() })
       .eq('id', link.id)
       .eq('organization_id', deps.orgId)
       .eq('bc_connection_id', deps.bcConnectionId)
       .eq('billcom_connection_id', deps.billcomConnectionId)
-      .eq('updated_at', link.updated_at)
+      .or(`claimed_until.is.null,claimed_until.lt.${nowIso}`)
       .select('id');
     if (error) throw new Error(`Could not claim Bill.com link: ${error.message}`);
     return Array.isArray(data) && data.length > 0;
@@ -398,18 +406,21 @@ export async function pushCustomers(
       if (current) {
         id = current.id;
         // Save the id first so a later failure never leads to a duplicate.
-        await updateLink(deps, link.id, { billcom_customer_id: id });
+        await writeLink(deps, link.id, { billcom_customer_id: id });
         outcome = 'linked';
       } else {
         // Another run may have created it since we loaded the link.
-        if (await currentBillcomId(link)) return 'skipped';
+        if (await currentBillcomId(link)) {
+          await updateLink(deps, link.id, {});
+          return 'skipped';
+        }
         const createdCustomer = await deps.billcom.request<BillcomCustomer>('/v3/customers', {
           method: 'POST',
           body: JSON.stringify(payload),
         });
         id = createdCustomer.id;
         current = createdCustomer;
-        await updateLink(deps, link.id, { billcom_customer_id: id });
+        await writeLink(deps, link.id, { billcom_customer_id: id });
         outcome = 'created';
       }
     }
@@ -446,13 +457,14 @@ export async function pushCustomers(
         if (outcome !== 'synced' && outcome !== 'skipped') result[outcome]++;
         done++;
       } catch (err) {
-        if (err instanceof BillcomRateLimitError) {
-          stop = 'rate_limit';
-          return;
-        }
-        if (err instanceof BillcomListError) {
-          stop = 'list_failed';
-          result.error ??= err.message;
+        if (err instanceof BillcomRateLimitError || err instanceof BillcomListError) {
+          if (err instanceof BillcomRateLimitError) stop = 'rate_limit';
+          else {
+            stop = 'list_failed';
+            result.error ??= err.message;
+          }
+          // Release the lease; status and error stay as they were.
+          await updateLink(deps, link.id, {}).catch(() => undefined);
           return;
         }
         const message = err instanceof Error ? err.message : String(err);

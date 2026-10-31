@@ -1070,6 +1070,7 @@ export interface Database {
           | 'last_pushed_hash'
           | 'last_pushed_at'
           | 'last_error'
+          | 'claimed_until'
         > & {
           id?: string;
           created_at?: string;
@@ -1080,6 +1081,7 @@ export interface Database {
           last_pushed_hash?: string | null;
           last_pushed_at?: string | null;
           last_error?: string | null;
+          claimed_until?: string | null;
         };
         Update: Partial<Omit<BillcomCustomerLink, 'id'>>;
       };
@@ -1373,6 +1375,8 @@ export interface BillcomCustomerLink {
   last_pushed_hash: string | null;
   last_pushed_at: string | null;
   last_error: string | null;
+  /** Lease held by a push run; null or past means free. */
+  claimed_until: string | null;
   created_at: string;
   updated_at: string;
 }

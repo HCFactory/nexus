@@ -33,6 +33,18 @@ function fakeSupabase(tables: Record<string, Row[]>) {
       select: () => q,
       eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), q),
       in: (c: string, vs: unknown[]) => (filters.push((r) => vs.includes(r[c])), q),
+      // Minimal PostgREST or(): comma-separated `col.is.null` / `col.lt.value` terms.
+      or: (expr: string) => {
+        const terms = expr.split(',').map((t) => {
+          const [col, op, ...rest] = t.split('.');
+          const val = rest.join('.');
+          if (op === 'is' && val === 'null') return (r: Row) => r[col] == null;
+          if (op === 'lt') return (r: Row) => r[col] != null && String(r[col]) < val;
+          throw new Error(`fake or(): unsupported ${t}`);
+        });
+        filters.push((r) => terms.some((f) => f(r)));
+        return q;
+      },
       order: () => q,
       range: (a: number, b: number) => ((range = [a, b]), q),
       update: (p: Row) => {
@@ -140,6 +152,7 @@ function link(no: string, over: Partial<BillcomCustomerLink> = {}): Row {
     last_pushed_at: null,
     last_error: null,
     updated_at: '2026-01-01T00:00:00.000Z',
+    claimed_until: null,
     ...over,
   };
 }
@@ -416,6 +429,55 @@ describe('pushCustomers review fixes', () => {
     expect(res.created).toBe(10);
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('pushCustomers lease', () => {
+  it('a run that starts after another has claimed the link skips it (one POST)', async () => {
+    const bill = fakeBillcom();
+    const { deps } = setup([bcRow('C1')], [link('C1')], bill);
+    const orig = bill.client.request;
+    let second: Promise<unknown> | null = null;
+    bill.client.request = async <T,>(p: string, i?: RequestInit): Promise<T> => {
+      // Run A has claimed, passed its re-read and is about to POST; start run B now.
+      if (!second && p === '/v3/customers' && i?.method === 'POST') {
+        second = pushCustomers(deps, { budgetMs: 10_000 });
+        await second;
+      }
+      return orig<T>(p, i);
+    };
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    await second;
+    expect(bill.calls.filter((c) => c.method === 'POST' && c.path === '/v3/customers')).toHaveLength(1);
+  });
+
+  it('an expired lease can be re-claimed', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1')], [link('C1', { claimed_until: '2000-01-01T00:00:00.000Z' } as Partial<BillcomCustomerLink>)], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.created).toBe(1);
+    expect(linkRow(sb, 'C1').claimed_until).toBeNull();
+  });
+
+  it('finished links have claimed_until null', async () => {
+    const bill = fakeBillcom([
+      { id: '0cuA', archived: false, name: 'A', accountNumber: 'C2' },
+      { id: '0cuB', archived: false, name: 'B', accountNumber: 'C2' },
+    ], {
+      failOn: (path, body) =>
+        path === '/v3/customers' && body?.accountNumber === 'C3'
+          ? new BillcomApiError({ status: 400, statusText: 'Bad', message: 'bad', url: path })
+          : path === '/v3/customers' && body?.accountNumber === 'C4'
+            ? new BillcomRateLimitError({ status: 429, statusText: 'x', code: 'BDC_1144', message: 'busy', url: path })
+            : null,
+    });
+    const nos = ['C1', 'C2', 'C3', 'C4'];
+    const { deps, sb } = setup(nos.map((n) => bcRow(n)), nos.map((n) => link(n)), bill);
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(sb.tables.billcom_customer_links.map((l) => l.claimed_until)).toEqual([null, null, null, null]);
+    expect(linkRow(sb, 'C1').status).toBe('synced');
+    expect(linkRow(sb, 'C2').status).toBe('needs_attention');
+    expect(linkRow(sb, 'C3').status).toBe('failed');
   });
 });
 
