@@ -39,5 +39,7 @@ export function compareNo(a: string, b: string): number {
 
 export function isWithinRange(candidate: string, startingNo: string, endingNo: string): boolean {
   if (prefixPart(candidate) !== prefixPart(startingNo)) return false;
+  // BC: a blank ending number means the series is unlimited.
+  if (!endingNo?.trim()) return compareNo(candidate, startingNo) >= 0;
   return compareNo(candidate, startingNo) >= 0 && compareNo(candidate, endingNo) <= 0;
 }

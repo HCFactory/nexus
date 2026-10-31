@@ -46,4 +46,8 @@ describe('isWithinRange', () => {
   it('rejects a different prefix (out of range)', () => {
     expect(isWithinRange('ZZ000001', 'NX000001', 'NX999999')).toBe(false);
   });
+  it('treats a blank ending number as unlimited (BC)', () => {
+    expect(isWithinRange('W01250', 'W00000', '')).toBe(true);
+    expect(isWithinRange('ZZ01250', 'W00000', '')).toBe(false);
+  });
 });
