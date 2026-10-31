@@ -32,23 +32,74 @@ const SELECT_CLASS =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50';
 
 /** Choices for a select: fixed `options`, else the referenced list filtered by `optionsMatch`. */
-function optionsFor(f: FieldSpec, selectOptions: Record<string, Option[]>): Option[] {
+export function optionsFor(f: FieldSpec, selectOptions: Record<string, Option[]>): Option[] {
   if (f.options) return f.options.map((o) => ({ code: o.value, label: o.label }));
   const all = f.optionsFrom ? selectOptions[f.optionsFrom] ?? [] : [];
   const needle = f.optionsMatch?.toLowerCase();
   return needle ? all.filter((o) => o.code.toLowerCase().includes(needle)) : all;
 }
 
-function toRaw(f: FieldSpec, v: unknown): string | boolean {
+export function toRaw(f: FieldSpec, v: unknown): string | boolean {
   if (f.type === 'boolean') return Boolean(v);
   return v === null || v === undefined ? '' : String(v);
 }
 
-function toValue(f: FieldSpec, raw: string | boolean): unknown {
+export function toValue(f: FieldSpec, raw: string | boolean): unknown {
   if (f.type === 'boolean') return Boolean(raw);
   if (typeof raw === 'string' && raw.trim() === '') return null;
   if (f.type === 'percent' || f.type === 'number') return Number(raw);
   return raw;
+}
+
+/** One form control for a FieldSpec: checkbox, select (keeps a current value missing from `options`), or input. */
+export function FieldInput({ field: f, value, options: choices, disabled, onChange: set, idPrefix = 'ref' }: {
+  field: FieldSpec;
+  value: string | boolean;
+  options: Option[];
+  disabled?: boolean;
+  onChange(v: string | boolean): void;
+  idPrefix?: string;
+}) {
+  const id = `${idPrefix}-${f.name}`;
+  return (
+    <div className="min-w-0 space-y-1.5">
+      {f.type === 'boolean' ? (
+        <label htmlFor={id} className="flex items-center gap-2 text-sm text-foreground">
+          <input id={id} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => set(e.target.checked)} />
+          {f.label}
+        </label>
+      ) : (
+        <>
+          <Label htmlFor={id} className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+            {f.label}
+            {f.required ? ' *' : ''}
+          </Label>
+          {f.type === 'select' ? (
+            <select id={id} className={SELECT_CLASS} value={String(value)} disabled={disabled} onChange={(e) => set(e.target.value)}>
+              <option value="" disabled={f.required}>Select…</option>
+              {value !== '' && !choices.some((o) => o.code === value) && (
+                <option value={String(value)}>{String(value)}</option>
+              )}
+              {choices.map((o) => (
+                <option key={o.code} value={o.code}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <Input
+              id={id}
+              type={f.type === 'date' ? 'date' : f.type === 'percent' || f.type === 'number' ? 'number' : 'text'}
+              step={f.type === 'percent' || f.type === 'number' ? 'any' : undefined}
+              value={String(value)}
+              disabled={disabled}
+              onChange={(e) => set(e.target.value)}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
 }
 
 export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDone, onCancel, fixedValues, hiddenFields = [] }: Props) {
@@ -131,51 +182,16 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
         </div>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
-        {editable.filter((f) => !hiddenFields.includes(f.name)).map((f) => {
-          const id = `ref-${f.name}`;
-          const value = raw[f.name];
-          const choices = f.type === 'select' ? optionsFor(f, selectOptions) : [];
-          const set = (v: string | boolean) => setRaw((cur) => ({ ...cur, [f.name]: v }));
-          return (
-            <div key={f.name} className="min-w-0 space-y-1.5">
-              {f.type === 'boolean' ? (
-                <label htmlFor={id} className="flex items-center gap-2 text-sm text-foreground">
-                  <input id={id} type="checkbox" checked={Boolean(value)} disabled={isDisabled(f)} onChange={(e) => set(e.target.checked)} />
-                  {f.label}
-                </label>
-              ) : (
-                <>
-                  <Label htmlFor={id} className="text-[11px] uppercase tracking-wide text-foreground-subtle">
-                    {f.label}
-                    {f.required ? ' *' : ''}
-                  </Label>
-                  {f.type === 'select' ? (
-                    <select id={id} className={SELECT_CLASS} value={String(value)} disabled={isDisabled(f)} onChange={(e) => set(e.target.value)}>
-                      <option value="" disabled={f.required}>Select…</option>
-                      {value !== '' && !choices.some((o) => o.code === value) && (
-                        <option value={String(value)}>{String(value)}</option>
-                      )}
-                      {choices.map((o) => (
-                        <option key={o.code} value={o.code}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <Input
-                      id={id}
-                      type={f.type === 'date' ? 'date' : f.type === 'percent' || f.type === 'number' ? 'number' : 'text'}
-                      step={f.type === 'percent' || f.type === 'number' ? 'any' : undefined}
-                      value={String(value)}
-                      disabled={isDisabled(f)}
-                      onChange={(e) => set(e.target.value)}
-                    />
-                  )}
-                </>
-              )}
-            </div>
-          );
-        })}
+        {editable.filter((f) => !hiddenFields.includes(f.name)).map((f) => (
+          <FieldInput
+            key={f.name}
+            field={f}
+            value={raw[f.name]}
+            options={optionsFor(f, selectOptions)}
+            disabled={isDisabled(f)}
+            onChange={(v) => setRaw((cur) => ({ ...cur, [f.name]: v }))}
+          />
+        ))}
       </div>
       <div className="flex gap-2">
         <Button type="submit" size="sm">

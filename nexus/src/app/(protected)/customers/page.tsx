@@ -1,4 +1,5 @@
 import { getCustomersPageData } from '@/app/actions/businessCentralReceivables';
+import { getCustomerEditContext } from '@/app/actions/customerEditing';
 import { CustomersClient } from '@/components/customers/CustomersClient';
 
 export const dynamic = 'force-dynamic';
@@ -17,11 +18,12 @@ export default async function CustomersPage({
   searchParams?: CustomersPageSearchParams;
 }) {
   const params = searchParams ? await searchParams : undefined;
-  const { customers, canSync } = await getCustomersPageData();
+  const [{ customers, canSync }, edit] = await Promise.all([getCustomersPageData(), getCustomerEditContext()]);
   return (
     <CustomersClient
       customers={customers}
       canSync={canSync}
+      edit={edit}
       initialSearch={firstParam(params?.search)}
     />
   );

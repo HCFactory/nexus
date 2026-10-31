@@ -1,21 +1,27 @@
 "use client";
 
+import { useState, useTransition } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
   BusinessCentralCustomer,
   BusinessCentralCustomerLedgerEntry,
   BusinessCentralSalesInvoice,
 } from "@/types/database";
+import { CustomerForm, customerFormValues } from "./CustomerForm";
+import { DELETE_CONFIRM } from "./CustomersClient";
 
 interface CustomerDetailProps {
   customer: BusinessCentralCustomer;
   invoices: BusinessCentralSalesInvoice[];
   ledgerEntries: BusinessCentralCustomerLedgerEntry[];
+  edit?: CustomerEditContext;
 }
 
 function ReadonlyField({ label, value }: { label: string; value: React.ReactNode }) {
@@ -46,7 +52,23 @@ function FieldCard({
   );
 }
 
-export function CustomerDetail({ customer, invoices, ledgerEntries }: CustomerDetailProps) {
+export function CustomerDetail({ customer, invoices, ledgerEntries, edit }: CustomerDetailProps) {
+  const router = useRouter();
+  const canEdit = edit?.canEdit === true;
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+
+  const remove = () => {
+    if (!window.confirm(DELETE_CONFIRM)) return;
+    setError(null);
+    startTransition(async () => {
+      const res = await deleteCustomerAction(customer.id);
+      if (res.ok) router.push("/customers");
+      else setError(res.error);
+    });
+  };
+
   const address = [customer.address_line_1, customer.address_line_2]
     .filter(Boolean)
     .join(", ");
@@ -75,10 +97,40 @@ export function CustomerDetail({ customer, invoices, ledgerEntries }: CustomerDe
             {customer.bc_customer_number ?? "No BC number"}
           </p>
         </div>
+        {canEdit && (
+          <div className="flex gap-2">
+            <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={() => setEditing(true)}>
+              <Pencil className="size-4" />
+              Edit
+            </Button>
+            <Button type="button" size="sm" variant="outline" disabled={isPending} onClick={remove}>
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          </div>
+        )}
       </header>
+
+      {error && (
+        <div role="alert" className="border-b border-border bg-destructive-subtle px-5 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-5xl space-y-4">
+          {canEdit && edit && editing && (
+            <CustomerForm
+              customer={{ id: customer.id, values: customerFormValues(customer) }}
+              templates={edit.templates}
+              selectOptions={edit.selectOptions}
+              onCancel={() => setEditing(false)}
+              onDone={() => {
+                setEditing(false);
+                router.refresh();
+              }}
+            />
+          )}
           <FieldCard title="Profile and contact">
             <ReadonlyField label="Name" value={customer.display_name} />
             <ReadonlyField label="Email" value={customer.email ?? "—"} />

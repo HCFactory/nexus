@@ -2,12 +2,15 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { RefreshCw, Search, Users, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Pencil, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { syncBusinessCentralReceivables } from "@/app/actions/businessCentralReceivables";
+import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
+import { CustomerForm, customerFormValues } from "./CustomerForm";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BusinessCentralCustomer } from "@/types/database";
@@ -17,9 +20,19 @@ interface CustomersClientProps {
   customers: BusinessCentralCustomer[];
   canSync: boolean;
   initialSearch?: string;
+  /** Create/edit/delete; omitted or canEdit false = read-only. */
+  edit?: CustomerEditContext;
 }
 
-export function CustomersClient({ customers, canSync, initialSearch }: CustomersClientProps) {
+export const DELETE_CONFIRM = "Delete this customer? This can't be undone.";
+
+export function CustomersClient({ customers, canSync, initialSearch, edit }: CustomersClientProps) {
+  const router = useRouter();
+  const canEdit = edit?.canEdit === true;
+  // null = no form; "new" = create; otherwise the customer being edited.
+  const [formFor, setFormFor] = useState<"new" | BusinessCentralCustomer | null>(null);
+  const [notice, setNotice] = useState<{ text: string; href?: string } | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
   const [search, setSearch] = useState(initialSearch ?? "");
   const [isPending, startTransition] = useTransition();
   const [syncResults, setSyncResults] = useState<SyncEntityResult[] | null>(null);
@@ -51,6 +64,21 @@ export function CustomersClient({ customers, canSync, initialSearch }: Customers
     });
   };
 
+  const removeCustomer = (customer: BusinessCentralCustomer) => {
+    if (!window.confirm(DELETE_CONFIRM)) return;
+    setEditError(null);
+    setNotice(null);
+    startTransition(async () => {
+      const res = await deleteCustomerAction(customer.id);
+      if (!res.ok) {
+        setEditError(res.error);
+        return;
+      }
+      setNotice({ text: `Deleted ${customer.display_name}.` });
+      router.refresh();
+    });
+  };
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden bg-background">
       <header className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
@@ -62,6 +90,21 @@ export function CustomersClient({ customers, canSync, initialSearch }: Customers
             {customers.length} customer{customers.length === 1 ? "" : "s"} synced from Business Central
           </p>
         </div>
+        {canEdit && (
+          <Button
+            type="button"
+            size="sm"
+            disabled={isPending}
+            onClick={() => {
+              setFormFor("new");
+              setNotice(null);
+              setEditError(null);
+            }}
+          >
+            <Plus className="size-4" />
+            New customer
+          </Button>
+        )}
         {canSync && (
           <Button
             type="button"
@@ -75,6 +118,46 @@ export function CustomersClient({ customers, canSync, initialSearch }: Customers
           </Button>
         )}
       </header>
+
+      {editError && (
+        <div role="alert" className="border-b border-border bg-destructive-subtle px-5 py-2 text-sm text-destructive">
+          {editError}
+        </div>
+      )}
+
+      {notice && (
+        <div className="border-b border-border bg-warning-subtle px-5 py-2 text-sm text-foreground">
+          {notice.text}{" "}
+          {notice.href && (
+            <Link href={notice.href} className="font-medium underline">
+              Open customer
+            </Link>
+          )}
+        </div>
+      )}
+
+      {canEdit && edit && formFor && (
+        <div className="border-b border-border px-5 py-3">
+          <CustomerForm
+            key={formFor === "new" ? "new" : formFor.id}
+            customer={formFor === "new" ? null : { id: formFor.id, values: customerFormValues(formFor) }}
+            templates={edit.templates}
+            selectOptions={edit.selectOptions}
+            onCancel={() => setFormFor(null)}
+            onDone={({ id, warning }) => {
+              const created = formFor === "new";
+              setFormFor(null);
+              if (created && !warning) {
+                router.push(`/customers/${id}`);
+                return;
+              }
+              if (warning) setNotice({ text: warning, href: `/customers/${id}` });
+              else setNotice({ text: "Saved." });
+              router.refresh();
+            }}
+          />
+        </div>
+      )}
 
       {syncError && (
         <div className="border-b border-border bg-destructive-subtle px-5 py-2 text-sm text-destructive">
@@ -172,6 +255,7 @@ export function CustomersClient({ customers, canSync, initialSearch }: Customers
                       <th className="px-4 py-2.5 font-medium">City</th>
                       <th className="px-4 py-2.5 font-medium">Currency</th>
                       <th className="px-4 py-2.5 text-right font-medium">Balance</th>
+                      {canEdit && <th className="px-4 py-2.5 text-right font-medium">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -220,6 +304,34 @@ export function CustomersClient({ customers, canSync, initialSearch }: Customers
                             {formatMoney(customer.balance, customer.currency_code)}
                           </Link>
                         </td>
+                        {canEdit && (
+                          <td className="px-4 py-1.5 text-right whitespace-nowrap">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Edit ${customer.display_name}`}
+                              disabled={isPending}
+                              onClick={() => {
+                                setFormFor(customer);
+                                setNotice(null);
+                                setEditError(null);
+                              }}
+                            >
+                              <Pencil className="size-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label={`Delete ${customer.display_name}`}
+                              disabled={isPending}
+                              onClick={() => removeCustomer(customer)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
