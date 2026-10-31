@@ -1,3 +1,4 @@
+import { normalizeBlocked } from '../customerMapper';
 import type { BcRecord, ReferenceSource } from '../customerReferences/transport';
 
 export const CUSTOMER_CARD_SOURCE: ReferenceSource = {
@@ -24,6 +25,7 @@ export function mapCardToCustomerColumns(card: Pick<BcRecord, 'etag' | 'fields'>
     application_method: str(x.Application_Method),
     location_code: str(x.Location_Code),
     credit_limit: limit,
+    blocked: normalizeBlocked(x.Blocked),
     bc_card_etag: card.etag || null,
   };
 }

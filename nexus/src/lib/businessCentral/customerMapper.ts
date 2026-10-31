@@ -50,6 +50,16 @@ function emptyToNull(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+/**
+ * BC's "not blocked" is a single blank space, which API v2 returns XML-encoded
+ * as "_x0020_". Real values are Ship, Invoice, All. Anything blank -> null.
+ */
+export function normalizeBlocked(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed === '' || trimmed === '_x0020_' ? null : trimmed;
+}
+
 function numberOrNull(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -87,7 +97,7 @@ export function mapBcCustomerToDb(input: CustomerUpsertInput): Partial<BusinessC
     tax_area_id: emptyToNull(customer.taxAreaId),
     tax_registration_number: emptyToNull(customer.taxRegistrationNumber),
     // BC uses a single blank space for "not blocked".
-    blocked: emptyToNull(customer.blocked),
+    blocked: normalizeBlocked(customer.blocked),
     balance: numberOrNull(financials?.balance ?? customer.balance),
     overdue_amount: numberOrNull(financials?.overdueAmount),
     bc_raw_payload: customer as unknown as Record<string, unknown>,

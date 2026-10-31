@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { FieldSpec } from '@/types/customerReferences';
 import type { BcClient } from '../client';
-import { mapBcCustomerToDb, type BcCustomer } from '../customerMapper';
+import { mapBcCustomerToDb, normalizeBlocked, type BcCustomer } from '../customerMapper';
 import { BcConflictError, BcReferenceError } from '../customerReferences/errors';
 import { changedFields } from '../customerReferences/merge';
 import type { BcKey, BcRecord, ReferenceTransport } from '../customerReferences/transport';
@@ -37,6 +37,8 @@ const DELETE_CONFLICT = 'This customer changed in Business Central. Press Sync a
 const isBlank = (v: unknown) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
 
 function toBcValue(f: FieldSpec, v: unknown): unknown {
+  // BC wants a single space for "not blocked".
+  if (f.name === 'blocked') return normalizeBlocked(v) ?? ' ';
   if (f.type === 'boolean') return Boolean(v);
   if (f.type === 'number') return v === null || v === undefined || v === '' ? 0 : Number(v);
   return v === null || v === undefined ? '' : String(v);
@@ -69,6 +71,7 @@ async function cardEtag(deps: CustomerServiceDeps, row: DbRow, key: BcKey): Prom
 
 /** Same blank-to-null rule the API v2 sync uses (customerMapper.emptyToNull). */
 function syncValue(v: unknown): unknown {
+  if (v === '_x0020_') return null;
   if (typeof v !== 'string') return v ?? null;
   const t = v.trim();
   return t ? t : null;

@@ -204,6 +204,23 @@ function seedCustomer(): Row {
   return { ...row };
 }
 
+describe('blocked storage', () => {
+  it('create stores null blocked when API v2 returns _x0020_', async () => {
+    listResourcePage.mockImplementationOnce(async (_r: string, opts: { filter?: string }) => {
+      const m = /number eq '(.+)'/.exec(opts.filter ?? '');
+      return [{ id: `api-${m![1]}`, number: m![1], displayName: 'ZZNEXUS Test', blocked: '_x0020_' }];
+    });
+    await createCustomer(deps, { templateCode: 'WHSL', values: TYPED });
+    expect(tables.business_central_customers[0].blocked).toBeNull();
+  });
+  it('edit sends a single space to BC when set to Not blocked, stores null', async () => {
+    const original = { ...seedCustomer(), blocked: 'All' };
+    await updateCustomer(deps, { id: 'c1', original, edited: { ...original, blocked: null } });
+    expect(transport.patch.mock.calls[0][3]).toEqual({ Blocked: ' ' });
+    expect(tables.business_central_customers[0].blocked).toBeNull();
+  });
+});
+
 describe('updateCustomer', () => {
   it('edit sends only changed fields', async () => {
     const original = seedCustomer();

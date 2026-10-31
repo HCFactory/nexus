@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapBcCustomerToDb, type BcCustomer } from './customerMapper';
+import { mapBcCustomerToDb, normalizeBlocked, type BcCustomer } from './customerMapper';
 
 const baseCustomer: BcCustomer = {
   id: 'cust-guid-1',
@@ -105,5 +105,20 @@ describe('mapBcCustomerToDb', () => {
       },
     });
     expect(row.balance).toBe(0);
+  });
+});
+
+describe('blocked normalization', () => {
+  it('maps the XML-encoded blank _x0020_ to null', () => {
+    const row = mapBcCustomerToDb({ ...input, customer: { ...baseCustomer, blocked: '_x0020_' } });
+    expect(row.blocked).toBeNull();
+  });
+  it('keeps real values', () => {
+    expect(mapBcCustomerToDb({ ...input, customer: { ...baseCustomer, blocked: 'Invoice' } }).blocked).toBe('Invoice');
+  });
+  it('normalizeBlocked handles blanks and real values', () => {
+    for (const v of ['_x0020_', ' ', '', null, undefined]) expect(normalizeBlocked(v)).toBeNull();
+    expect(normalizeBlocked(' Ship ')).toBe('Ship');
+    expect(normalizeBlocked('All')).toBe('All');
   });
 });

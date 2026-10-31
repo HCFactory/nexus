@@ -15,7 +15,7 @@ describe('mapCardToCustomerColumns', () => {
       email_cc: 'cc@x.com', payment_terms_code: '30 DAYS', tax_area_code: 'HI-HNL-RT',
       tax_identification_type: 'Legal Entity', customer_price_group: 'WHSL-DLVRY',
       customer_posting_group: 'DOMESTIC', gen_bus_posting_group: 'DOMESTIC', application_method: 'Manual',
-      location_code: 'MAIN', credit_limit: 2500.5, bc_card_etag: 'W/"1"',
+      location_code: 'MAIN', credit_limit: 2500.5, blocked: 'Invoice', bc_card_etag: 'W/"1"',
     });
   });
   it('uses empty string / 0 for missing values', () => {
@@ -23,6 +23,17 @@ describe('mapCardToCustomerColumns', () => {
     expect(out.payment_terms_code).toBe('');
     expect(out.email_cc).toBe('');
     expect(out.credit_limit).toBe(0);
+  });
+});
+
+describe('mapCardToCustomerColumns blocked', () => {
+  it('sets blocked null for a blank space and for _x0020_', () => {
+    expect(mapCardToCustomerColumns({ etag: 'e', fields: { No: 'X', Blocked: ' ' } }).blocked).toBeNull();
+    expect(mapCardToCustomerColumns({ etag: 'e', fields: { No: 'X', Blocked: '_x0020_' } }).blocked).toBeNull();
+    expect(mapCardToCustomerColumns({ etag: 'e', fields: { No: 'X' } }).blocked).toBeNull();
+  });
+  it('keeps Invoice', () => {
+    expect(mapCardToCustomerColumns({ etag: 'e', fields: { No: 'X', Blocked: 'Invoice' } }).blocked).toBe('Invoice');
   });
 });
 

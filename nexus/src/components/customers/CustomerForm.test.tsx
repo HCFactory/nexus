@@ -86,6 +86,20 @@ describe('edit mode', () => {
     expect(input.edited.city).toBe('SF');
   });
 
+  it('shows Not blocked for a null stored value and does not send blocked when untouched', async () => {
+    actions.updateCustomerAction.mockResolvedValue({ ok: true });
+    const v = { ...values, blocked: null };
+    render(<CustomerForm customer={{ id: 'c1', values: v }} templates={templates} selectOptions={selectOptions} onDone={vi.fn()} onCancel={vi.fn()} />);
+    const blocked = select(/^blocked/i);
+    expect(blocked.value).toBe(' ');
+    expect(blocked.options[blocked.selectedIndex].textContent).toBe('Not blocked');
+    fireEvent.change(screen.getByLabelText(/^city/i), { target: { value: 'SF' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(actions.updateCustomerAction).toHaveBeenCalled());
+    const input = actions.updateCustomerAction.mock.calls[0][0];
+    expect(input.edited.blocked ?? null).toBe(input.original.blocked ?? null);
+  });
+
   it('shows the server error', async () => {
     actions.updateCustomerAction.mockResolvedValue({ ok: false, error: 'BC said no' });
     render(<CustomerForm customer={{ id: 'c1', values }} templates={templates} selectOptions={selectOptions} onDone={vi.fn()} onCancel={vi.fn()} />);

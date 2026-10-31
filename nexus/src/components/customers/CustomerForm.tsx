@@ -6,6 +6,7 @@ import { createCustomerAction, updateCustomerAction, type CustomerTemplateOption
 import { FieldInput, optionsFor, toRaw, toValue } from '@/components/customerReferences/ReferenceEntryForm';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { normalizeBlocked } from '@/lib/businessCentral/customerMapper';
 import { changedFields } from '@/lib/businessCentral/customerReferences/merge';
 import { validateEntry } from '@/lib/businessCentral/customerReferences/validation';
 import { CUSTOMER_FIELDS } from '@/lib/businessCentral/customers/customerFields';
@@ -38,7 +39,13 @@ export function CustomerForm({ customer, templates, selectOptions, onDone, onCan
   const fields = customer ? CUSTOMER_FIELDS : CREATE_FIELDS;
   const [templateCode, setTemplateCode] = useState('');
   const [raw, setRaw] = useState<Record<string, string | boolean>>(() =>
-    Object.fromEntries(fields.map((f) => [f.name, toRaw(f, customer ? customer.values[f.name] : null)])),
+    Object.fromEntries(
+      fields.map((f) => {
+        const v = customer ? customer.values[f.name] : null;
+        // Stored null means "not blocked"; the select's option for that is ' '.
+        return [f.name, f.name === 'blocked' && !normalizeBlocked(v) ? ' ' : toRaw(f, v)];
+      }),
+    ),
   );
   const [errors, setErrors] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
