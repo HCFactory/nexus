@@ -179,6 +179,14 @@ describe('Bill.com push after save', () => {
     expect(mocks.lookupNumber.mock.invocationCallOrder[1]).toBeLessThan(mocks.deleteCustomer.mock.invocationCallOrder[0]);
   });
 
+  it('a slow number lookup finishes before the BC delete and yields the right number', async () => {
+    let resolved = false;
+    mocks.lookupNumber.mockImplementation(() => new Promise((r) => setTimeout(() => { resolved = true; r('C42'); }, 20)));
+    mocks.deleteCustomer.mockImplementation(async () => { expect(resolved).toBe(true); });
+    expect((await deleteCustomerAction('c1')).ok).toBe(true);
+    expect(mocks.pushAfterSave).toHaveBeenLastCalledWith(billScope, 'C42');
+  });
+
   it('disabled Bill.com keeps the save and leaves it pending', async () => {
     const off = { status: 'off', message: "Bill.com is turned off — this customer will be sent when it's turned on." };
     mocks.pushAfterSave.mockResolvedValue(off);

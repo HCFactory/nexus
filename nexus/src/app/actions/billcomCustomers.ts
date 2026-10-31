@@ -8,6 +8,7 @@ import {
   resolveBillcomConnection,
   type BillcomSaveStatus,
 } from '@/lib/billcom/customerSyncHooks';
+import { fetchAll } from '@/lib/billcom/fetchAll';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import { createServiceClient } from '@/lib/supabase/server';
 import type { BillcomCustomerLinkStatus } from '@/types/database';
@@ -19,7 +20,6 @@ const ADMIN_ONLY = 'Only admins can push customers to Bill.com';
 const NO_PERMISSION = "You don't have permission to change customers";
 const OFF = 'Bill.com is turned off. Turn it on in Admin to send customers.';
 const BULK_BUDGET_MS = 25_000;
-const PAGE = 1000;
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -34,18 +34,6 @@ async function adminScope(): Promise<Scope | null> {
   return scope.access.isAdmin ? scope : null;
 }
 
-async function pageAll<T>(
-  build: () => { range: (a: number, b: number) => PromiseLike<{ data: unknown; error: unknown }> },
-): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await build().range(from, from + PAGE - 1);
-    if (error) throw new Error((error as { message?: string }).message ?? String(error));
-    const rows = (data ?? []) as T[];
-    out.push(...rows);
-    if (rows.length < PAGE) return out;
-  }
-}
 
 /** Dry run of the first push: what would be linked, created, updated, deactivated. Writes nothing. */
 export async function previewInitialPush(): Promise<{ ok: true; preview: PushPreview } | Fail> {
@@ -68,7 +56,7 @@ export async function confirmInitialPush(): Promise<{ ok: true; result: PushResu
     const bScope = billcomScope(scope);
     const deps = await openPushDeps(bScope);
     if (!deps) return { ok: false, error: OFF };
-    const rows = await pageAll<{ bc_customer_number: string | null }>(() =>
+    const rows = await fetchAll<{ bc_customer_number: string | null }>(() =>
       bScope.supabase
         .from('business_central_customers')
         .select('bc_customer_number')
@@ -125,7 +113,7 @@ export async function getBillcomPushStatus(): Promise<
     const supabase = createServiceClient();
     const conn = await resolveBillcomConnection(supabase, scope.orgId);
     if (!conn) return { ok: true, on: false, counts };
-    const links = await pageAll<{ status: BillcomCustomerLinkStatus }>(() =>
+    const links = await fetchAll<{ status: BillcomCustomerLinkStatus }>(() =>
       supabase
         .from('billcom_customer_links')
         .select('status')

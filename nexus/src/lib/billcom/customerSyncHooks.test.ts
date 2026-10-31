@@ -135,4 +135,31 @@ describe('queueChangedCustomers', () => {
     expect(await queueChangedCustomers({ supabase: supabase as never, orgId: 'org-1', bcConnectionId: 'bc-1' })).toBeNull();
     expect(mocks.markPending).not.toHaveBeenCalled();
   });
+
+  it('pages past 1,000 customers', async () => {
+    const rows = Array.from({ length: 1001 }, (_, i) => row(`C${String(i).padStart(4, '0')}`, `N${i}`));
+    const supabase = fakeSupabase({ billcom_connections: [conn('b1', true)], business_central_customers: rows as unknown as Row[] });
+    expect(await queueChangedCustomers({ supabase: supabase as never, orgId: 'org-1', bcConnectionId: 'bc-1' })).toBe(1001);
+    expect(mocks.markPending.mock.calls[0][1]).toHaveLength(1001);
+  });
+
+  it('skips links that are already pending', async () => {
+    const r = row('C1', 'Changed');
+    const supabase = fakeSupabase({
+      billcom_connections: [conn('b1', true)],
+      business_central_customers: [r] as unknown as Row[],
+      billcom_customer_links: [link('C1', 'old', 'pending')],
+    });
+    expect(await queueChangedCustomers({ supabase: supabase as never, orgId: 'org-1', bcConnectionId: 'bc-1' })).toBe(0);
+  });
+
+  it('queues links whose BC customer was deleted, so the next run archives them', async () => {
+    const supabase = fakeSupabase({
+      billcom_connections: [conn('b1', true)],
+      business_central_customers: [],
+      billcom_customer_links: [link('GONE', 'h'), link('DONE', 'deleted'), link('WAIT', 'h', 'pending')],
+    });
+    expect(await queueChangedCustomers({ supabase: supabase as never, orgId: 'org-1', bcConnectionId: 'bc-1' })).toBe(1);
+    expect(mocks.markPending.mock.calls[0][1]).toEqual(['GONE']);
+  });
 });

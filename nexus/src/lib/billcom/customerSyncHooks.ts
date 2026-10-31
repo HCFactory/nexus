@@ -7,6 +7,7 @@ import { createBillcomClientForConnection } from './connection';
 import { payloadHash, shouldBeArchived, toBillcomCustomer } from './customerPayload';
 import { markPending, pushCustomers, type PushDeps, type PushResult } from './customerPush';
 import { BillcomConnectionDisabledError } from './errors';
+import { fetchAll } from './fetchAll';
 import type { BillcomCustomerLink, BusinessCentralCustomer } from '@/types/database';
 
 /**
@@ -28,7 +29,6 @@ export interface BillcomScope {
 export const OFF_MESSAGE = "Bill.com is turned off — this customer will be sent when it's turned on.";
 export const PENDING_MESSAGE = "Bill.com didn't finish in time — this customer will be sent on the next run.";
 
-const PAGE = 1000;
 
 /** The org's Bill.com connection: enabled ones first (default, else the only one). */
 export async function resolveBillcomConnection(
@@ -133,18 +133,6 @@ export async function pushCustomerAfterSave(scope: BillcomScope, number: string)
   }
 }
 
-async function pageAll<T>(
-  build: () => { range: (a: number, b: number) => PromiseLike<{ data: unknown; error: unknown }> },
-): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await build().range(from, from + PAGE - 1);
-    if (error) throw new Error((error as { message?: string }).message ?? String(error));
-    const rows = (data ?? []) as T[];
-    out.push(...rows);
-    if (rows.length < PAGE) return out;
-  }
-}
 
 /**
  * After a BC sync: queue every customer whose Bill.com payload changed since
@@ -155,7 +143,7 @@ export async function queueChangedCustomers(scope: BillcomScope): Promise<number
   const conn = await resolveBillcomConnection(scope.supabase, scope.orgId);
   if (!conn?.enabled) return null;
   const [rows, links] = await Promise.all([
-    pageAll<BusinessCentralCustomer>(() =>
+    fetchAll<BusinessCentralCustomer>(() =>
       scope.supabase
         .from('business_central_customers')
         .select('*')
@@ -163,7 +151,7 @@ export async function queueChangedCustomers(scope: BillcomScope): Promise<number
         .eq('bc_connection_id', scope.bcConnectionId)
         .order('id'),
     ),
-    pageAll<BillcomCustomerLink>(() =>
+    fetchAll<BillcomCustomerLink>(() =>
       scope.supabase
         .from('billcom_customer_links')
         .select('bc_customer_number, last_pushed_hash, status')
@@ -182,6 +170,13 @@ export async function queueChangedCustomers(scope: BillcomScope): Promise<number
     if (link?.status === 'pending') continue;
     if (!link || link.last_pushed_hash !== payloadHash(toBillcomCustomer(row), shouldBeArchived(row))) {
       changed.push(no);
+    }
+  }
+  // Deleted directly in BC: queue so the next run archives it in Bill.com.
+  const known = new Set(rows.map((r) => r.bc_customer_number));
+  for (const l of links) {
+    if (!known.has(l.bc_customer_number) && l.status !== 'pending' && l.last_pushed_hash !== 'deleted') {
+      changed.push(l.bc_customer_number);
     }
   }
   await markPending(deps(scope, conn.id), changed);

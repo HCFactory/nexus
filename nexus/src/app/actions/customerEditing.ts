@@ -51,22 +51,22 @@ const billcomScope = (scope: Scope) => ({
 });
 
 /** Send a saved customer to Bill.com. Never throws: the save already succeeded. */
-async function pushToBillcom(scope: Scope, number: string | null | Promise<string | null>): Promise<BillcomSaveStatus> {
+async function pushToBillcom(scope: Scope, number: string | null): Promise<BillcomSaveStatus> {
+  if (!number) return { status: 'failed', message: 'Saved, but the customer number could not be read, so Bill.com was not updated.' };
   try {
-    const no = await number;
-    if (!no) return { status: 'failed', message: 'Saved, but the customer number is missing, so Bill.com was not updated.' };
-    return await pushCustomerAfterSave(billcomScope(scope), no);
+    return await pushCustomerAfterSave(billcomScope(scope), number);
   } catch (e) {
     console.error('[customers] Bill.com push after save failed:', e);
     return { status: 'failed', message: `Saved, but sending to Bill.com failed: ${errorMessage(e)}` };
   }
 }
 
-/** Read the number before a delete; a failed lookup becomes a Bill.com status, not a save error. */
+/** A failed lookup becomes a Bill.com status, never a save error. */
 function numberOf(scope: Scope, id: string): Promise<string | null> {
-  const p = lookupCustomerNumber(billcomScope(scope), id);
-  p.catch(() => undefined); // handled when awaited in pushToBillcom
-  return p;
+  return lookupCustomerNumber(billcomScope(scope), id).catch((e) => {
+    console.error('[customers] could not read the customer number for Bill.com:', e);
+    return null;
+  });
 }
 
 function revalidateCustomers() {
@@ -161,7 +161,7 @@ export async function updateCustomerAction(input: {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
     await updateCustomer(await buildDeps(scope), { id: input.id, original: input.original, edited: input.edited });
-    const billcom = await pushToBillcom(scope, numberOf(scope, input.id));
+    const billcom = await pushToBillcom(scope, await numberOf(scope, input.id));
     revalidateCustomers();
     return { ok: true, billcom };
   } catch (e) {
@@ -173,7 +173,7 @@ export async function deleteCustomerAction(id: string): Promise<{ ok: true; bill
   try {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
-    const number = numberOf(scope, id);
+    const number = await numberOf(scope, id);
     await deleteCustomer(await buildDeps(scope), id);
     const billcom = await pushToBillcom(scope, number);
     revalidateCustomers();

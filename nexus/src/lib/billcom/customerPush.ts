@@ -8,6 +8,7 @@ import {
   type BillcomCustomerPayload,
 } from './customerPayload';
 import { BillcomRateLimitError } from './errors';
+import { fetchAll } from './fetchAll';
 import type { BillcomCustomerLink, BusinessCentralCustomer } from '@/types/database';
 
 /**
@@ -64,7 +65,6 @@ interface BillcomCustomer {
 
 const LINKS = 'billcom_customer_links';
 const BC_CUSTOMERS = 'business_central_customers';
-const DB_PAGE = 1000;
 const BILLCOM_PAGE = 100;
 const MAX_CONCURRENCY = 3;
 const SAMPLE_SIZE = 10;
@@ -73,18 +73,6 @@ const LEASE_MS = 2 * 60_000;
 
 // ---------- Supabase reads (paged past the 1,000-row cap) ----------
 
-async function fetchAll<T>(
-  build: () => { range: (a: number, b: number) => PromiseLike<{ data: unknown; error: unknown }> },
-): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += DB_PAGE) {
-    const { data, error } = await build().range(from, from + DB_PAGE - 1);
-    if (error) throw new Error(`Could not read customers: ${(error as { message?: string }).message ?? error}`);
-    const rows = (data ?? []) as T[];
-    out.push(...rows);
-    if (rows.length < DB_PAGE) return out;
-  }
-}
 
 function loadBcCustomers(deps: PushDeps): Promise<BusinessCentralCustomer[]> {
   return fetchAll<BusinessCentralCustomer>(() =>
