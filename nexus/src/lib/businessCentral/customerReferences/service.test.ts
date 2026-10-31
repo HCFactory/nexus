@@ -19,7 +19,7 @@ interface FakeOptions {
 
 interface Builder extends PromiseLike<Result> {
   select(): Builder;
-  insert(p: Row): Builder;
+  insert(p: Row | Row[]): Builder;
   update(p: Row): Builder;
   delete(): Builder;
   eq(k: string, v: unknown): Builder;
@@ -36,18 +36,23 @@ function fakeSupabase(tables: Record<string, Row[]>, opts: FakeOptions = {}): Su
     tables[table] ??= [];
     const filters: [string, unknown][] = [];
     let op: 'select' | 'insert' | 'update' | 'delete' = 'select';
-    let payload: Row = {};
+    let payload: Row | Row[] = {};
     const match = () => tables[table].filter((r) => filters.every(([k, v]) => r[k] === v));
     const exec = (): Result => {
       if (op !== 'select') ops.push(`${table}:${op}`);
       if (op !== 'select' && opts.failWrites?.includes(table)) return { data: [], error: { message: 'db exploded: secret detail' } };
       if (op === 'insert') {
-        const clash = opts.uniqueCode?.includes(table) && tables[table].some((r) =>
-          r.organization_id === payload.organization_id && r.bc_connection_id === payload.bc_connection_id && r.code === payload.code);
-        if (clash) return { data: [], error: { message: 'duplicate key value violates unique constraint' } };
-        const row = { id: `gen-${nextId++}`, ...payload };
-        tables[table].push(row);
-        return { data: [row], error: null };
+        const batch = Array.isArray(payload) ? payload : [payload];
+        const inserted: Row[] = [];
+        for (const item of batch) {
+          const clash = opts.uniqueCode?.includes(table) && tables[table].some((r) =>
+            r.organization_id === item.organization_id && r.bc_connection_id === item.bc_connection_id && r.code === item.code);
+          if (clash) return { data: [], error: { message: 'duplicate key value violates unique constraint' } };
+          const row = { id: `gen-${nextId++}`, ...item };
+          tables[table].push(row);
+          inserted.push(row);
+        }
+        return { data: inserted, error: null };
       }
       const rows = match();
       if (op === 'update') rows.forEach((r) => Object.assign(r, payload));
@@ -377,6 +382,14 @@ describe('syncList', () => {
     remote.set('NEW', { rec: bcRec('NEW', 'n', 0, 'e1') });
     await syncList(deps, def);
     expect(ops).toEqual(['pt:delete', 'pt:update', 'pt:insert']);
+  });
+
+  it('inserts all new records in a single database call', async () => {
+    for (const c of ['A', 'B', 'C']) remote.set(c, { rec: bcRec(c, c, 0, 'e1') });
+    expect(await syncList(deps, def)).toEqual({ inserted: 3, updated: 0, deleted: 0 });
+    expect(ops.filter((o) => o === 'pt:insert')).toHaveLength(1);
+    expect(tables.pt.map((r) => r.code).sort()).toEqual(['A', 'B', 'C']);
+    expect(tables.pt[0]).toMatchObject({ organization_id: 'org', bc_connection_id: 'conn' });
   });
 
   it('an entry deleted and re-created in BC with the same code (new id) syncs despite the unique code', async () => {

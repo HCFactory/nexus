@@ -34,6 +34,7 @@ export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFi
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [syncing, setSyncing] = useState(false);
 
   const readOnly = data.mode === 'readOnly';
   const canEdit = data.canManage && !readOnly;
@@ -43,12 +44,17 @@ export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFi
   function sync() {
     setError(null);
     setNotice(null);
+    setSyncing(true);
     startTransition(async () => {
-      const res = await syncReferenceList(data.key);
-      if (res.ok) {
-        setNotice(`Synced: ${res.inserted} added, ${res.updated} updated, ${res.deleted} removed`);
-        router.refresh();
-      } else setError(res.error);
+      try {
+        const res = await syncReferenceList(data.key);
+        if (res.ok) {
+          setNotice(`Synced: ${res.inserted} added, ${res.updated} updated, ${res.deleted} removed`);
+          router.refresh();
+        } else setError(res.error);
+      } finally {
+        setSyncing(false);
+      }
     });
   }
 
@@ -84,8 +90,8 @@ export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFi
         </div>
         {data.canManage && (
           <Button type="button" size="sm" variant="outline" disabled={pending} onClick={sync}>
-            <RefreshCw className="size-4" />
-            Sync with BC
+            <RefreshCw className={syncing ? 'size-4 animate-spin' : 'size-4'} />
+            {syncing ? 'Syncing…' : 'Sync with BC'}
           </Button>
         )}
         {canEdit && (

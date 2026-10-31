@@ -218,6 +218,19 @@ export async function syncList(
   // the unique (org, connection, code) constraint while the old row still exists.
   for (const id of plan.deletes) await deleteScoped(deps, def.table, 'id', id);
   for (const u of plan.updates) await updateRow(deps, def, u.id, rowFromRecord(def, u.record, deps.now()));
-  for (const record of plan.inserts) await insertRow(deps, def, record);
+  if (plan.inserts.length > 0) {
+    // One round-trip for all new rows (a first sync can add hundreds).
+    const now = deps.now();
+    const { error: insertError } = await deps.supabase.from(def.table).insert(
+      plan.inserts.map((record) => ({
+        organization_id: deps.orgId,
+        bc_connection_id: deps.connectionId,
+        ...rowFromRecord(def, record, now),
+        created_at: now,
+        updated_at: now,
+      })),
+    );
+    if (insertError) throw new Error(insertError.message);
+  }
   return { inserted: plan.inserts.length, updated: plan.updates.length, deleted: plan.deletes.length };
 }
