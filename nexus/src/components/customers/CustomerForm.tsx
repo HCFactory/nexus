@@ -1,5 +1,6 @@
 'use client';
 
+import type { BillcomSaveStatus } from "@/lib/billcom/customerSyncHooks";
 import { useState, useTransition } from 'react';
 
 import { createCustomerAction, updateCustomerAction, type CustomerTemplateOption } from '@/app/actions/customerEditing';
@@ -20,7 +21,7 @@ interface Props {
   customer: { id: string; values: Row } | null;
   templates: CustomerTemplateOption[];
   selectOptions: Record<string, Option[]>;
-  onDone(result: { id: string; warning?: string }): void;
+  onDone(result: { id: string; warning?: string; billcom?: BillcomSaveStatus }): void;
   onCancel(): void;
 }
 
@@ -76,11 +77,11 @@ export function CustomerForm({ customer, templates, selectOptions, onDone, onCan
     startTransition(async () => {
       if (customer) {
         const res = await updateCustomerAction({ id: customer.id, original: customer.values, edited: values });
-        if (res.ok) onDone({ id: customer.id });
+        if (res.ok) onDone({ id: customer.id, billcom: res.billcom });
         else setErrors([res.error]);
       } else {
         const res = await createCustomerAction({ templateCode, values });
-        if (res.ok) onDone(res.warning ? { id: res.id, warning: res.warning } : { id: res.id });
+        if (res.ok) onDone({ id: res.id, ...(res.warning ? { warning: res.warning } : {}), billcom: res.billcom });
         else setErrors([res.error]);
       }
     });

@@ -1,5 +1,6 @@
 import { getCustomersPageData } from '@/app/actions/businessCentralReceivables';
 import { getCustomerEditContext } from '@/app/actions/customerEditing';
+import { getBillcomCustomerView } from '@/app/actions/billcomCustomers';
 import { CustomersClient } from '@/components/customers/CustomersClient';
 
 export const dynamic = 'force-dynamic';
@@ -18,12 +19,17 @@ export default async function CustomersPage({
   searchParams?: CustomersPageSearchParams;
 }) {
   const params = searchParams ? await searchParams : undefined;
-  const [{ customers, canSync }, edit] = await Promise.all([getCustomersPageData(), getCustomerEditContext()]);
+  const [{ customers, canSync }, edit, billcom] = await Promise.all([
+    getCustomersPageData(),
+    getCustomerEditContext(),
+    getBillcomCustomerView(),
+  ]);
   return (
     <CustomersClient
       customers={customers}
       canSync={canSync}
       edit={edit}
+      billcom={billcom}
       initialSearch={firstParam(params?.search)}
     />
   );

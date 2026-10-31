@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Pencil, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react";
@@ -10,7 +10,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { syncBusinessCentralReceivables } from "@/app/actions/businessCentralReceivables";
 import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
+import type { BillcomCustomerView } from "@/app/actions/billcomCustomers";
 import { CustomerForm, customerFormValues } from "./CustomerForm";
+import { BillcomPushPanel, type BillcomPushPanelHandle } from "./BillcomPushPanel";
+import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { BusinessCentralCustomer } from "@/types/database";
@@ -22,12 +25,17 @@ interface CustomersClientProps {
   initialSearch?: string;
   /** Create/edit/delete; omitted or canEdit false = read-only. */
   edit?: CustomerEditContext;
+  /** Bill.com link statuses; omitted or off = no Bill.com UI. */
+  billcom?: BillcomCustomerView;
 }
 
 export const DELETE_CONFIRM = "Delete this customer? This can't be undone.";
 
-export function CustomersClient({ customers, canSync, initialSearch, edit }: CustomersClientProps) {
+export function CustomersClient({ customers, canSync, initialSearch, edit, billcom }: CustomersClientProps) {
   const router = useRouter();
+  const billcomOn = billcom?.on === true;
+  const billcomAdmin = billcomOn && billcom?.isAdmin === true;
+  const pushPanel = useRef<BillcomPushPanelHandle>(null);
   const canEdit = edit?.canEdit === true;
   // null = no form; "new" = create; otherwise the customer being edited.
   const [formFor, setFormFor] = useState<"new" | BusinessCentralCustomer | null>(null);
@@ -55,7 +63,11 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
     setSyncError(null);
     startTransition(() => {
       syncBusinessCentralReceivables()
-        .then((results) => setSyncResults(results))
+        .then((results) => {
+          setSyncResults(results);
+          // New or changed customers were queued for Bill.com; send them now.
+          if (billcomAdmin && !results.some((r) => r.error)) pushPanel.current?.startPending();
+        })
         .catch((error) => {
           setSyncError(
             error instanceof Error ? error.message : "Business Central sync failed"
@@ -75,7 +87,8 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
         setEditError(res.error);
         return;
       }
-      setNotice({ text: `Deleted ${customer.display_name}.` });
+      const note = billcomSaveNote(res.billcom);
+      setNotice({ text: note ? `Deleted ${customer.display_name}. ${note}` : `Deleted ${customer.display_name}.` });
       router.refresh();
     });
   };
@@ -120,6 +133,8 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
         )}
       </header>
 
+      {billcomAdmin && <BillcomPushPanel ref={pushPanel} pendingCount={billcom?.pendingCount ?? 0} />}
+
       {editError && (
         <div role="alert" className="border-b border-border bg-destructive-subtle px-5 py-2 text-sm text-destructive">
           {editError}
@@ -145,14 +160,16 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
             templates={edit.templates}
             selectOptions={edit.selectOptions}
             onCancel={() => setFormFor(null)}
-            onDone={({ id, warning }) => {
+            onDone={({ id, warning, billcom: saved }) => {
               const created = formFor === "new";
+              const note = billcomSaveNote(saved);
               setFormFor(null);
-              if (created && !warning) {
+              if (created && !warning && !note) {
                 router.push(`/customers/${id}`);
                 return;
               }
-              if (warning) setNotice({ text: warning, href: `/customers/${id}` });
+              const text = [warning, note].filter(Boolean).join(" ");
+              if (text) setNotice({ text, href: `/customers/${id}` });
               else setNotice({ text: "Saved." });
               router.refresh();
             }}
@@ -256,6 +273,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
                       <th className="px-4 py-2.5 font-medium">City</th>
                       <th className="px-4 py-2.5 font-medium">Currency</th>
                       <th className="px-4 py-2.5 text-right font-medium">Balance</th>
+                      {billcomOn && <th className="px-4 py-2.5 font-medium">Bill.com</th>}
                       {canEdit && <th className="px-4 py-2.5 text-right font-medium">Actions</th>}
                     </tr>
                   </thead>
@@ -305,6 +323,13 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
                             {formatMoney(customer.balance, customer.currency_code)}
                           </Link>
                         </td>
+                        {billcomOn && (
+                          <td className="px-4 py-2.5">
+                            {customer.bc_customer_number && billcom?.links[customer.bc_customer_number] && (
+                              <BillcomStatusBadge status={billcom.links[customer.bc_customer_number].status} />
+                            )}
+                          </td>
+                        )}
                         {canEdit && (
                           <td className="px-4 py-1.5 text-right whitespace-nowrap">
                             <Button

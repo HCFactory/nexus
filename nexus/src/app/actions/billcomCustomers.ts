@@ -128,3 +128,54 @@ export async function getBillcomPushStatus(): Promise<
     return { ok: false, error: errorMessage(e) };
   }
 }
+
+export interface BillcomCustomerView {
+  /** Bill.com connected and turned on. When false, show no Bill.com UI. */
+  on: boolean;
+  isAdmin: boolean;
+  /** May use Retry on one customer. */
+  canRetry: boolean;
+  /** Customers waiting to be sent (pending or failed). */
+  pendingCount: number;
+  /** Link status by BC customer number. */
+  links: Record<string, { status: BillcomCustomerLinkStatus; lastError: string | null }>;
+}
+
+const VIEW_OFF: BillcomCustomerView = { on: false, isAdmin: false, canRetry: false, pendingCount: 0, links: {} };
+
+/** Bill.com link statuses for the customer pages (all, or just one customer). Never throws. */
+export async function getBillcomCustomerView(customerNumber?: string): Promise<BillcomCustomerView> {
+  try {
+    const scope = await requireActiveBusinessCentralScope();
+    if (!scope.access.canViewCustomers) return VIEW_OFF;
+    const supabase = createServiceClient();
+    const conn = await resolveBillcomConnection(supabase, scope.orgId);
+    if (!conn || !conn.enabled) return VIEW_OFF;
+    const rows = await fetchAll<{ bc_customer_number: string; status: BillcomCustomerLinkStatus; last_error: string | null }>(
+      () => {
+        const q = supabase
+          .from('billcom_customer_links')
+          .select('bc_customer_number, status, last_error')
+          .eq('organization_id', scope.orgId)
+          .eq('bc_connection_id', scope.bcConnectionId)
+          .eq('billcom_connection_id', conn.id);
+        return (customerNumber ? q.eq('bc_customer_number', customerNumber) : q).order('id');
+      },
+    );
+    const links: BillcomCustomerView['links'] = {};
+    let pendingCount = 0;
+    for (const r of rows) {
+      links[r.bc_customer_number] = { status: r.status, lastError: r.last_error };
+      if (r.status === 'pending' || r.status === 'failed') pendingCount++;
+    }
+    return {
+      on: true,
+      isAdmin: scope.access.isAdmin === true,
+      canRetry: scope.access.canEditCustomers === true,
+      pendingCount,
+      links,
+    };
+  } catch {
+    return VIEW_OFF;
+  }
+}

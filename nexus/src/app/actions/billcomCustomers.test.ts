@@ -47,6 +47,7 @@ vi.mock('@/lib/billcom/customerPush', () => ({
 
 import {
   confirmInitialPush,
+  getBillcomCustomerView,
   getBillcomPushStatus,
   previewInitialPush,
   retryCustomerPush,
@@ -146,5 +147,54 @@ describe('getBillcomPushStatus', () => {
     mocks.requireScope.mockResolvedValue(editor);
     mocks.resolveConnection.mockResolvedValue(null);
     expect(await getBillcomPushStatus()).toEqual({ ok: true, on: false, counts: { pending: 0, synced: 0, failed: 0, needs_attention: 0 } });
+  });
+});
+
+describe('getBillcomCustomerView', () => {
+  const l = (num: string, status: string, over: Record<string, unknown> = {}) => ({
+    organization_id: 'org-1', bc_connection_id: 'bc-1', billcom_connection_id: 'b1',
+    bc_customer_number: num, status, last_error: null, ...over,
+  });
+
+  it('returns scoped link statuses, pending count and permissions', async () => {
+    mocks.requireScope.mockResolvedValue(editor);
+    mocks.resolveConnection.mockResolvedValue({ id: 'b1', enabled: true });
+    mocks.tables.billcom_customer_links = [
+      l('C1', 'synced'), l('C2', 'failed', { last_error: 'Bad email' }), l('C3', 'pending'),
+      l('C4', 'pending', { billcom_connection_id: 'other' }), l('C5', 'pending', { bc_connection_id: 'bc-2' }),
+    ];
+    expect(await getBillcomCustomerView()).toEqual({
+      on: true, isAdmin: false, canRetry: true, pendingCount: 2,
+      links: {
+        C1: { status: 'synced', lastError: null },
+        C2: { status: 'failed', lastError: 'Bad email' },
+        C3: { status: 'pending', lastError: null },
+      },
+    });
+  });
+
+  it('narrows to one customer number', async () => {
+    mocks.requireScope.mockResolvedValue(admin);
+    mocks.resolveConnection.mockResolvedValue({ id: 'b1', enabled: true });
+    mocks.tables.billcom_customer_links = [l('C1', 'synced'), l('C2', 'failed')];
+    const view = await getBillcomCustomerView('C2');
+    expect(Object.keys(view.links)).toEqual(['C2']);
+    expect(view.isAdmin).toBe(true);
+  });
+
+  it('is off when Bill.com is disabled, missing, or the user cannot view customers', async () => {
+    const off = { on: false, isAdmin: false, canRetry: false, pendingCount: 0, links: {} };
+    mocks.requireScope.mockResolvedValue(editor);
+    mocks.resolveConnection.mockResolvedValue({ id: 'b1', enabled: false });
+    expect(await getBillcomCustomerView()).toEqual(off);
+    mocks.resolveConnection.mockResolvedValue(null);
+    expect(await getBillcomCustomerView()).toEqual(off);
+    mocks.requireScope.mockResolvedValue(scope({ canViewCustomers: false }));
+    expect(await getBillcomCustomerView()).toEqual(off);
+  });
+
+  it('never throws', async () => {
+    mocks.requireScope.mockRejectedValue(new Error('no session'));
+    expect((await getBillcomCustomerView()).on).toBe(false);
   });
 });

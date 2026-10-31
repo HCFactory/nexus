@@ -8,6 +8,7 @@ import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
+import { retryCustomerPush, type BillcomCustomerView } from "@/app/actions/billcomCustomers";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
   BusinessCentralCustomer,
@@ -16,12 +17,15 @@ import {
 } from "@/types/database";
 import { CustomerForm, customerFormValues } from "./CustomerForm";
 import { DELETE_CONFIRM } from "./CustomersClient";
+import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
 
 interface CustomerDetailProps {
   customer: BusinessCentralCustomer;
   invoices: BusinessCentralSalesInvoice[];
   ledgerEntries: BusinessCentralCustomerLedgerEntry[];
   edit?: CustomerEditContext;
+  /** Bill.com link status for this customer; omitted or off = hidden. */
+  billcom?: BillcomCustomerView;
 }
 
 function ReadonlyField({ label, value }: { label: string; value: React.ReactNode }) {
@@ -52,8 +56,26 @@ function FieldCard({
   );
 }
 
-export function CustomerDetail({ customer, invoices, ledgerEntries, edit }: CustomerDetailProps) {
+export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom }: CustomerDetailProps) {
   const router = useRouter();
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isRetrying, startRetry] = useTransition();
+  const number = customer.bc_customer_number ?? "";
+  const link = billcom?.on && number ? billcom.links[number] : undefined;
+
+  const retry = () => {
+    setError(null);
+    setNotice(null);
+    startRetry(async () => {
+      const res = await retryCustomerPush(number);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setNotice(billcomSaveNote(res.billcom) ?? "Sent to Bill.com.");
+      router.refresh();
+    });
+  };
   const canEdit = edit?.canEdit === true;
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,8 +86,13 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit }: Cust
     setError(null);
     startTransition(async () => {
       const res = await deleteCustomerAction(customer.id);
-      if (res.ok) router.push("/customers");
-      else setError(res.error);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      const note = billcomSaveNote(res.billcom);
+      if (note) window.alert(`Deleted. ${note}`);
+      router.push("/customers");
     });
   };
 
@@ -117,6 +144,10 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit }: Cust
         </div>
       )}
 
+      {notice && (
+        <div className="border-b border-border bg-warning-subtle px-5 py-2 text-sm text-foreground">{notice}</div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <div className="mx-auto max-w-5xl space-y-4">
           {canEdit && edit && editing && (
@@ -125,8 +156,9 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit }: Cust
               templates={edit.templates}
               selectOptions={edit.selectOptions}
               onCancel={() => setEditing(false)}
-              onDone={() => {
+              onDone={({ billcom: saved }) => {
                 setEditing(false);
+                setNotice(billcomSaveNote(saved));
                 router.refresh();
               }}
             />
@@ -140,6 +172,24 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit }: Cust
             <ReadonlyField label="City / State / Postal" value={cityLine || "—"} />
             <ReadonlyField label="Country" value={customer.country ?? "—"} />
           </FieldCard>
+
+          {billcom?.on && (
+            <div className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-semibold text-foreground">Bill.com</h3>
+                {link ? <BillcomStatusBadge status={link.status} /> : <Badge variant="secondary">Not sent yet</Badge>}
+                {billcom.canRetry && number && (
+                  <Button type="button" size="sm" variant="outline" disabled={isRetrying} onClick={retry}>
+                    {isRetrying ? "Sending…" : "Retry"}
+                  </Button>
+                )}
+              </div>
+              {link?.lastError && <p className="text-sm text-destructive">{link.lastError}</p>}
+              <p className="mt-1 text-xs text-foreground-subtle">
+                Bill.com has no CC email field, so the CC address isn&apos;t sent.
+              </p>
+            </div>
+          )}
 
           <FieldCard title="Commercial terms">
             <ReadonlyField label="Currency" value={customer.currency_code ?? "—"} />
