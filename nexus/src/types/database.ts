@@ -1050,6 +1050,22 @@ export interface Database {
         >;
         Update: Partial<Omit<BusinessCentralGeneralBusinessPostingGroup, "id">>;
       };
+      business_central_customer_templates: {
+        Row: BusinessCentralCustomerTemplate;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralCustomerTemplate,
+          'display_name' | 'contact_type' | 'no_series' | 'customer_posting_group' | 'gen_bus_posting_group' | 'customer_price_group' | 'payment_terms_code' | 'tax_area_code' | 'tax_liable' | 'tax_identification_type' | 'application_method' | 'location_code'
+        >;
+        Update: Partial<Omit<BusinessCentralCustomerTemplate, "id">>;
+      };
+      business_central_no_series: {
+        Row: BusinessCentralNoSeries;
+        Insert: BusinessCentralReferenceInsert<
+          BusinessCentralNoSeries,
+          'display_name'
+        >;
+        Update: Partial<Omit<BusinessCentralNoSeries, "id">>;
+      };
       business_central_sales_invoices: {
         Row: BusinessCentralSalesInvoice;
         Insert: Omit<
@@ -1325,6 +1341,45 @@ export interface BusinessCentralGeneralBusinessPostingGroup {
   display_name: string;
   default_vat_business_posting_group: string | null;
   auto_insert_default: boolean | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralCustomerTemplate {
+  id: string;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
+  contact_type: string;
+  no_series: string;
+  customer_posting_group: string;
+  gen_bus_posting_group: string;
+  customer_price_group: string;
+  payment_terms_code: string;
+  tax_area_code: string;
+  tax_liable: boolean;
+  tax_identification_type: string;
+  application_method: string;
+  location_code: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessCentralNoSeries {
+  id: string;
+  organization_id: string;
+  bc_connection_id: string;
+  bc_id: string | null;
+  bc_etag: string | null;
+  bc_last_modified_at: string | null;
+  last_synced_at: string | null;
+  code: string;
+  display_name: string;
   created_at: string;
   updated_at: string;
 }
