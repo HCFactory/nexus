@@ -1,9 +1,10 @@
 import type { BcClient } from '../client';
 import { LIST_DEFINITIONS } from './definitions';
 import type { ServiceDeps } from './service';
-import type { ReferenceTransport } from './transport';
+import type { ReferenceSource, ReferenceTransport } from './transport';
 
 const CUSTOMER_PAGE = 1000;
+const CUSTOMER_CARD_SOURCE: ReferenceSource = { kind: 'odata', service: 'Customer_Card_Excel', pageNumber: 21, keyFields: ['No'] };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -35,12 +36,20 @@ export function createUsageCounter(bc: BcClient, transport: ReferenceTransport):
     return rows.map((r) => String(r.fields.Code ?? ''));
   }
 
+  /** Price groups have no BC id on customers; count them from the Customer Card OData page by code. */
+  async function priceGroupCustomersUsing(code: string): Promise<string | null> {
+    const rows = await transport.list(CUSTOMER_CARD_SOURCE, {
+      filter: `Customer_Price_Group eq ${odataString(code)}`,
+    });
+    return rows.length === 0 ? null : plural(rows.length, 'customer', 'customers');
+  }
+
   async function countCustomersAndTemplates(
-    customerField: string,
+    customerField: string | null,
     templateField: string,
     row: Parameters<ReturnType<typeof createUsageCounter>>[1],
   ): Promise<string | null> {
-    if (!row.bcId) {
+    if (customerField !== null && !row.bcId) {
       throw new Error('Cannot check usage: this entry has no Business Central id. Sync the list and try again.');
     }
     const code = String(row.values.code ?? row.keyValues.code ?? '');
@@ -48,7 +57,7 @@ export function createUsageCounter(bc: BcClient, transport: ReferenceTransport):
       throw new Error('Cannot check usage: this entry has no code. Sync the list and try again.');
     }
     const [customers, templates] = await Promise.all([
-      customersUsing(customerField, row.bcId),
+      customerField === null ? priceGroupCustomersUsing(code) : customersUsing(customerField, row.bcId),
       templatesUsing(templateField, code),
     ]);
     const tpl = templates.length === 0 ? null : `${templates.length === 1 ? 'template' : 'templates'} ${templates.join(', ')}`;
@@ -76,6 +85,8 @@ export function createUsageCounter(bc: BcClient, transport: ReferenceTransport):
         return countCustomersAndTemplates('paymentTermsId', 'Payment_Terms_Code', row);
       case 'taxAreas':
         return countCustomersAndTemplates('taxAreaId', 'Tax_Area_Code', row);
+      case 'customerPriceGroups':
+        return countCustomersAndTemplates(null, 'Customer_Price_Group', row);
       case 'taxJurisdictions':
         return countJurisdiction(String(row.values.code ?? row.keyValues.code ?? ''));
       default:

@@ -228,15 +228,6 @@ describe('deleteReferenceEntry', () => {
     });
   });
 
-  it('returns deleteDisabledReason without calling BC', async () => {
-    mocks.requireScope.mockResolvedValue(scope(true));
-    const res = await deleteReferenceEntry('customerPriceGroups', 'x');
-    expect(res.ok).toBe(false);
-    expect((res as { error: string }).error).toMatch(/customer sync project 3/);
-    expect(mocks.createTransport).not.toHaveBeenCalled();
-    expect(mocks.deleteEntry).not.toHaveBeenCalled();
-  });
-
   it('returns in-use message verbatim and succeeds otherwise', async () => {
     mocks.requireScope.mockResolvedValue(scope(true));
     mocks.deleteEntry.mockRejectedValueOnce(new Error('Used by 2 customers'));
@@ -327,10 +318,10 @@ describe('getReferenceListPage', () => {
     expect((await getReferenceListPage('paymentTerms')).canManage).toBe(false);
   });
 
-  it('exposes deleteDisabledReason for price groups', async () => {
+  it('price groups no longer have a delete-disabled reason', async () => {
     mocks.createClient.mockResolvedValue(fakeClient([]).client);
     mocks.requireScope.mockResolvedValue(scope(true));
-    expect((await getReferenceListPage('customerPriceGroups')).deleteDisabledReason).toMatch(/project 3/);
+    expect((await getReferenceListPage('customerPriceGroups')).deleteDisabledReason).toBeNull();
   });
 
   it('filters taxAreaLines by parentCode', async () => {

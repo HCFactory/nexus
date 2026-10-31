@@ -186,11 +186,72 @@ describe('createUsageCounter', () => {
     }
   });
 
+  /** Transport serving Customer_Card_Excel (customers) and CustomerTemplates by service name. */
+  function priceGroupTransport(customers: number, templates: string[]) {
+    const list = vi.fn(async (source: ReferenceSource, options?: { filter?: string }) => {
+      void options;
+      if (source.kind !== 'odata') return [];
+      if (source.service === 'Customer_Card_Excel') return records(customers);
+      if (source.service === 'CustomerTemplates') {
+        return templates.map((Code): BcRecord => ({ key: { values: { Code } }, etag: '', fields: { Code } }));
+      }
+      return [];
+    });
+    return { transport: { list } as unknown as ReferenceTransport, list };
+  }
+  const pg = { values: { code: 'WHSL-DLVRY' } };
+
+  it('blocks a price group used by customers (live from BC, filtered on the code)', async () => {
+    const { bc, listResourcePage } = fakeBc(0);
+    const { transport, list } = priceGroupTransport(3, []);
+    expect(await createUsageCounter(bc, transport)(def('customerPriceGroups'), row({ bcId: null, ...pg })))
+      .toBe('Used by 3 customers');
+    const calls = list.mock.calls.map(([s, o]) => [s.kind === 'odata' ? s.service : '', o?.filter]).sort();
+    expect(calls).toEqual([
+      ['CustomerTemplates', "Customer_Price_Group eq 'WHSL-DLVRY'"],
+      ['Customer_Card_Excel', "Customer_Price_Group eq 'WHSL-DLVRY'"],
+    ].sort());
+    expect(listResourcePage).not.toHaveBeenCalled();
+  });
+
+  it('price group: 1 customer is singular; combines with templates', async () => {
+    const { bc } = fakeBc(0);
+    expect(await createUsageCounter(bc, priceGroupTransport(1, ['A']).transport)(def('customerPriceGroups'), row(pg)))
+      .toBe('Used by 1 customer and template A');
+    expect(await createUsageCounter(bc, priceGroupTransport(2, ['A', 'B']).transport)(def('customerPriceGroups'), row(pg)))
+      .toBe('Used by 2 customers and templates A, B');
+    expect(await createUsageCounter(bc, priceGroupTransport(0, ['T']).transport)(def('customerPriceGroups'), row(pg)))
+      .toBe('Used by template T');
+  });
+
+  it('unused price group returns null', async () => {
+    const { bc } = fakeBc(0);
+    expect(await createUsageCounter(bc, priceGroupTransport(0, []).transport)(def('customerPriceGroups'), row(pg))).toBeNull();
+  });
+
+  it('price group filter doubles single quotes', async () => {
+    const { bc } = fakeBc(0);
+    const { transport, list } = priceGroupTransport(0, []);
+    await createUsageCounter(bc, transport)(def('customerPriceGroups'), row({ values: { code: "O'B" } }));
+    expect(list.mock.calls[0]?.[1]?.filter).toBe("Customer_Price_Group eq 'O''B'");
+  });
+
+  it('price group with a blank code throws; fails closed when BC cannot be read', async () => {
+    const { bc } = fakeBc(0);
+    const t = priceGroupTransport(0, []);
+    await expect(createUsageCounter(bc, t.transport)(def('customerPriceGroups'), row({ values: { code: ' ' } })))
+      .rejects.toThrow('Cannot check usage: this entry has no code. Sync the list and try again.');
+    expect(t.list).not.toHaveBeenCalled();
+    const list = vi.fn(async () => { throw new Error('BC down'); });
+    await expect(createUsageCounter(bc, { list } as unknown as ReferenceTransport)(def('customerPriceGroups'), row(pg)))
+      .rejects.toThrow('BC down');
+  });
+
   it('other lists return null', async () => {
     const { bc, listResourcePage } = fakeBc(5);
     const { transport, list } = fakeTransport({ TaxAreaLines: 5, TaxDetails: 5 });
     const count = createUsageCounter(bc, transport);
-    for (const k of ['taxAreaLines', 'taxDetails', 'customerPriceGroups', 'locations', 'customerPostingGroups', 'generalBusinessPostingGroups']) {
+    for (const k of ['taxAreaLines', 'taxDetails', 'locations', 'customerPostingGroups', 'generalBusinessPostingGroups']) {
       expect(await count(def(k), row())).toBeNull();
     }
     expect(listResourcePage).not.toHaveBeenCalled();

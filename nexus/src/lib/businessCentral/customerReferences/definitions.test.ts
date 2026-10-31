@@ -67,10 +67,8 @@ describe('LIST_DEFINITIONS', () => {
     }
   });
 
-  it('price groups carry the delete-disabled reason', () => {
-    expect(LIST_DEFINITIONS.customerPriceGroups.deleteDisabledReason).toBe(
-      'Deleting price groups is available once customers sync from Nexus (customer sync project 3). Delete it in Business Central for now.',
-    );
+  it('no list has delete disabled (price groups are checked live in usage.ts)', () => {
+    for (const [, d] of defs) expect(d.deleteDisabledReason).toBeUndefined();
   });
 
   it('wires parent and select options', () => {

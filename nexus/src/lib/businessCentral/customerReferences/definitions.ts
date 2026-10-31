@@ -2,9 +2,6 @@ import 'server-only';
 import type { FieldSpec, ListKey } from '@/types/customerReferences';
 import type { ListDefinition } from './listDefinition';
 
-const PRICE_GROUP_DELETE_REASON =
-  'Deleting price groups is available once customers sync from Nexus (customer sync project 3). Delete it in Business Central for now.';
-
 type Opts = Partial<FieldSpec>;
 
 function f(name: string, bcName: string, label: string, type: FieldSpec['type'], editable: boolean, opts: Opts = {}): FieldSpec {
@@ -35,7 +32,6 @@ export const LIST_DEFINITIONS: Record<ListKey, ListDefinition> = {
   customerPriceGroups: {
     key: 'customerPriceGroups', title: 'Customer price groups', table: 'business_central_customer_price_groups', mode: 'managed',
     source: odata('CustomerPriceGroups', 7, ['Code']), renameField: 'code',
-    deleteDisabledReason: PRICE_GROUP_DELETE_REASON,
     fields: [
       f('code', 'Code', 'Code', 'text', true, { required: true, isKey: true, maxLength: 10 }),
       f('display_name', 'Description', 'Description', 'text', true, { maxLength: 100 }),
