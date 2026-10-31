@@ -145,17 +145,20 @@ export async function saveReferenceEntry(
     });
 
     // BC changes dependent rows on its own; re-pull them so Nexus matches.
-    let warning: string | undefined;
+    const failedTitles: string[] = [];
     for (const follow of followUpLists(key, input)) {
       try {
         await syncList(deps, LIST_DEFINITIONS[follow]);
       } catch (e) {
         // The entry is already saved in BC and Nexus; do not report the save as failed.
         console.error(`[customer-lists] follow-up sync of ${follow} after saving ${key} failed:`, errorMessage(e));
-        const title = LIST_DEFINITIONS[follow].title;
-        warning = `Saved, but refreshing ${title.toLowerCase()} from Business Central failed. Press Sync on ${title}.`;
+        failedTitles.push(LIST_DEFINITIONS[follow].title);
       }
     }
+    const warning =
+      failedTitles.length === 0
+        ? undefined
+        : `Saved, but refreshing ${failedTitles.map((t) => t.toLowerCase()).join(' and ')} from Business Central failed. Press Sync on ${failedTitles.join(' and ')}.`;
     revalidateLists();
     return warning ? { ok: true, entry, warning } : { ok: true, entry };
   } catch (e) {

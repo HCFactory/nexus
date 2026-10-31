@@ -2,6 +2,7 @@
 -- Local copies of Business Central customer templates and number series.
 -- Re-runnable: every statement is guarded with if (not) exists.
 -- Members of the organization can read; writes go through service-role code.
+-- Note: BC uses '' for "no value" (e.g. a template with no price group), so empty strings are valid values.
 
 create table if not exists public.business_central_customer_templates (
   id uuid primary key default gen_random_uuid(),

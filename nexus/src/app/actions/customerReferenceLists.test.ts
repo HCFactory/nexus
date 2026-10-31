@@ -194,6 +194,15 @@ describe('saveReferenceEntry', () => {
     expect(res).toMatchObject({ ok: true, warning: expect.stringContaining('Customer templates') });
   });
 
+  it('names every failed follow-up in one warning', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.saveEntry.mockResolvedValue({ id: 'e' });
+    mocks.syncList.mockRejectedValue(new Error('BC down'));
+    const res = await saveReferenceEntry('taxAreas', { id: 'e', original: { code: 'A1' }, edited: { code: 'A2' } });
+    expect(res).toMatchObject({ ok: true, warning: expect.stringContaining('Tax area lines') });
+    expect(res).toMatchObject({ warning: expect.stringContaining('Customer templates') });
+  });
+
   it('creating a customer template triggers no follow-up', async () => {
     mocks.requireScope.mockResolvedValue(scope(true));
     mocks.saveEntry.mockResolvedValue({ id: 'e' });
