@@ -188,6 +188,21 @@ describe('saveEntry', () => {
     expect(entry.lastSyncedAt).toBe('NOW');
   });
 
+  it('create stores the etag BC reports after the create, not the one the create returned', async () => {
+    // BC TEST touches a new tax area line right after the POST, so the POST's etag is already stale.
+    transport.get.mockImplementationOnce(async () => ({ ...remote.get('N45')!.rec, etag: 'e-after' }));
+    await saveEntry(deps, def, { id: null, original: null, edited: { code: 'N45', display_name: 'Net 45', discount_percent: 1 } });
+    expect(transport.get).toHaveBeenCalledWith(def.source, { bcId: 'N45' });
+    expect(tables.pt[0].bc_etag).toBe('e-after');
+  });
+
+  it('create still records the row when reading it back from BC fails', async () => {
+    transport.get.mockRejectedValueOnce(new BcReferenceError(500, 'timeout'));
+    await saveEntry(deps, def, { id: null, original: null, edited: { code: 'N45', display_name: 'Net 45', discount_percent: 1 } });
+    expect(tables.pt).toHaveLength(1);
+    expect(tables.pt[0].bc_etag).toBe(remote.get('N45')!.rec.etag);
+  });
+
   it('create failure leaves no Nexus row', async () => {
     seed('DUP');
     await expect(saveEntry(deps, def, { id: null, original: null, edited: { code: 'DUP', display_name: 'x', discount_percent: 0 } }))

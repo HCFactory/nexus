@@ -128,7 +128,10 @@ export async function saveEntry(
   if (input.id === null) {
     // Creates validate every field.
     assertValid(def.fields, input.edited);
-    const record = await deps.transport.create(def.source, toBcFields(def, input.edited));
+    const created = await deps.transport.create(def.source, toBcFields(def, input.edited));
+    // BC can touch a record again right after the POST (seen on tax area lines), which
+    // makes the POST's etag stale; read it back so the next edit or delete matches.
+    const record = await deps.transport.get(def.source, created.key).catch(() => created);
     return toEntry(def, await recordInNexus(() => insertRow(deps, def, record)));
   }
 
