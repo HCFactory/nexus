@@ -39,12 +39,19 @@ import {
   saveReferenceEntry,
   syncReferenceList,
 } from './customerReferenceLists';
+import type { ListKey } from '@/types/customerReferences';
 
 const scope = (isAdmin: boolean) => ({ orgId: 'org-1', bcConnectionId: 'conn-1', access: { isAdmin } });
 
 function fakeClient(rows: Record<string, unknown>[]) {
   const calls = { table: '', eq: [] as [string, unknown][], order: [] as string[], select: '' };
-  const q: any = {
+  interface Query {
+    select(s: string): Query;
+    eq(c: string, v: unknown): Query;
+    order(c: string): Query;
+    then(res: (v: unknown) => unknown): unknown;
+  }
+  const q: Query = {
     select: (s: string) => { calls.select = s; return q; },
     eq: (c: string, v: unknown) => { calls.eq.push([c, v]); return q; },
     order: (c: string) => { calls.order.push(c); return q; },
@@ -122,7 +129,16 @@ describe('saveReferenceEntry', () => {
     expect(mocks.syncList.mock.calls[0][1].key).toBe('taxDetails');
   });
 
+  it('passes the BC client and the reference transport to the usage counter', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.deleteEntry.mockResolvedValue(undefined);
+    await deleteReferenceEntry('taxJurisdictions', 'x');
+    const bc = await mocks.createBcClientForOrg.mock.results[0].value;
+    expect(mocks.createUsageCounter).toHaveBeenCalledWith(bc, { transport: true });
+  });
+
   it('create succeeds with a warning when the follow-up taxDetails sync throws', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     mocks.requireScope.mockResolvedValue(scope(true));
     const entry = { id: 'e' };
     mocks.saveEntry.mockResolvedValue(entry);
@@ -134,6 +150,9 @@ describe('saveReferenceEntry', () => {
       warning: 'Saved, but refreshing tax details from Business Central failed. Press Sync on Tax details.',
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith('/customer-lists', 'layout');
+    expect(logged).toHaveBeenCalled();
+    expect(String(logged.mock.calls[0]?.join(' '))).toContain('BC down');
+    logged.mockRestore();
   });
 
   it('edit on taxJurisdictions does not sync', async () => {
@@ -210,6 +229,35 @@ describe('syncReferenceList', () => {
   it('syncs read-only lists for admins', async () => {
     mocks.requireScope.mockResolvedValue(scope(true));
     expect(await syncReferenceList('locations')).toEqual({ ok: true, inserted: 1, updated: 2, deleted: 3 });
+    expect(mocks.syncList).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncing tax areas also syncs tax area lines and sums the counts', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.syncList
+      .mockResolvedValueOnce({ inserted: 1, updated: 2, deleted: 3 })
+      .mockResolvedValueOnce({ inserted: 10, updated: 20, deleted: 30 });
+    expect(await syncReferenceList('taxAreas')).toEqual({ ok: true, inserted: 11, updated: 22, deleted: 33 });
+    expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['taxAreas', 'taxAreaLines']);
+  });
+});
+
+describe('unknown list keys', () => {
+  const bogus = 'toString' as unknown as ListKey;
+
+  it('save, delete and sync return Unknown list without touching BC', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    expect(await saveReferenceEntry(bogus, { id: null, original: null, edited: {} })).toEqual({ ok: false, error: 'Unknown list' });
+    expect(await deleteReferenceEntry(bogus, 'x')).toEqual({ ok: false, error: 'Unknown list' });
+    expect(await syncReferenceList(bogus)).toEqual({ ok: false, error: 'Unknown list' });
+    expect(mocks.createBcClientForOrg).not.toHaveBeenCalled();
+  });
+
+  it('page and select options throw Unknown list', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.createClient.mockResolvedValue(fakeClient([]).client);
+    await expect(getReferenceListPage(bogus)).rejects.toThrow('Unknown list');
+    await expect(getSelectOptions(bogus)).rejects.toThrow('Unknown list');
   });
 });
 
@@ -276,7 +324,7 @@ describe('getSelectOptions', () => {
     mocks.requireScope.mockResolvedValue(scope(false));
     const opts = await getSelectOptions('taxGroups');
     expect(calls.table).toBe('business_central_tax_groups');
-    expect(calls.eq).toEqual([['organization_id', 'org-1'], ['bc_connection_id', 'conn-1']]);
+    expect(calls.eq).toEqual([['organization_id', 'org-1'], ['bc_connection_id', 'conn-1'], ['is_active', true]]);
     expect(opts).toEqual([
       { code: 'TAXABLE', label: 'TAXABLE — Taxable' },
       { code: 'NONTAX', label: 'NONTAX' },
@@ -289,6 +337,7 @@ describe('getSelectOptions', () => {
     mocks.requireScope.mockResolvedValue(scope(false));
     const opts = await getSelectOptions('taxJurisdictions');
     expect(calls.table).toBe('business_central_tax_jurisdictions');
+    expect(calls.eq).toEqual([['organization_id', 'org-1'], ['bc_connection_id', 'conn-1']]);
     expect(opts).toEqual([{ code: 'J1', label: 'J1' }]);
   });
 });

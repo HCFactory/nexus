@@ -1,17 +1,21 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BcClient } from '../client';
+import { LIST_DEFINITIONS } from './definitions';
 import type { ServiceDeps } from './service';
+import type { ReferenceTransport } from './transport';
 
 const CUSTOMER_PAGE = 1000;
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function createUsageCounter(
-  bc: BcClient,
-  supabase: SupabaseClient,
-  orgId: string,
-  connectionId: string,
-): ServiceDeps['countUsage'] {
+/** OData v4 string literal: single quotes, embedded quotes doubled. */
+const odataString = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
+/**
+ * Every count here is read live from Business Central, never from Nexus's copy:
+ * BC cascade-deletes a jurisdiction's tax area lines and tax details, so a stale
+ * copy would let a delete silently strip the jurisdiction from tax areas.
+ */
+export function createUsageCounter(bc: BcClient, transport: ReferenceTransport): ServiceDeps['countUsage'] {
   async function countCustomers(field: string, bcId: string | null): Promise<string | null> {
     if (!bcId) {
       throw new Error('Cannot check usage: this entry has no Business Central id. Sync the list and try again.');
@@ -25,15 +29,17 @@ export function createUsageCounter(
     return `Used by ${plural(rows.length, 'customer', 'customers')}`;
   }
 
-  async function countRows(table: string, code: string): Promise<number> {
-    const { count, error } = await supabase
-      .from(table)
-      .select('id', { count: 'exact', head: true })
-      .eq('organization_id', orgId)
-      .eq('bc_connection_id', connectionId)
-      .eq('tax_jurisdiction_code', code);
-    if (error) throw new Error(error.message);
-    return count ?? 0;
+  async function countJurisdiction(code: string): Promise<string | null> {
+    if (code.trim() === '') {
+      throw new Error('Cannot check usage: this jurisdiction has no code. Sync the list and try again.');
+    }
+    const filter = `Tax_Jurisdiction_Code eq ${odataString(code)}`;
+    const [lines, details] = await Promise.all([
+      transport.list(LIST_DEFINITIONS.taxAreaLines.source, { filter }),
+      transport.list(LIST_DEFINITIONS.taxDetails.source, { filter }),
+    ]);
+    if (lines.length === 0 && details.length === 0) return null;
+    return `Used by ${plural(lines.length, 'tax area line', 'tax area lines')} and ${plural(details.length, 'tax detail', 'tax details')}`;
   }
 
   return async (def, row) => {
@@ -42,15 +48,8 @@ export function createUsageCounter(
         return countCustomers('paymentTermsId', row.bcId);
       case 'taxAreas':
         return countCustomers('taxAreaId', row.bcId);
-      case 'taxJurisdictions': {
-        const code = String(row.values.code ?? row.keyValues.code ?? '');
-        const [lines, details] = await Promise.all([
-          countRows('business_central_tax_area_lines', code),
-          countRows('business_central_tax_details', code),
-        ]);
-        if (lines === 0 && details === 0) return null;
-        return `Used by ${plural(lines, 'tax area line', 'tax area lines')} and ${plural(details, 'tax detail', 'tax details')}`;
-      }
+      case 'taxJurisdictions':
+        return countJurisdiction(String(row.values.code ?? row.keyValues.code ?? ''));
       default:
         return null;
     }

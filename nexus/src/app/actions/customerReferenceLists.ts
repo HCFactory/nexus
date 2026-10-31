@@ -22,7 +22,18 @@ type Row = Record<string, unknown>;
 const ADMIN_ONLY = 'Only admins can change customer reference lists';
 const READ_ONLY = 'This list is managed in Business Central';
 
+const UNKNOWN_LIST = 'Unknown list';
+
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** Keys arrive from the client, so never trust them to be a real list (e.g. 'toString'). */
+const isListKey = (key: unknown): key is ListKey =>
+  typeof key === 'string' && Object.hasOwn(LIST_DEFINITIONS, key);
+
+function definitionFor(key: ListKey): ListDefinition {
+  if (!isListKey(key)) throw new Error(UNKNOWN_LIST);
+  return LIST_DEFINITIONS[key];
+}
 
 function revalidateLists() {
   // 'layout' also refreshes every /customer-lists/[list] sub-page.
@@ -34,13 +45,15 @@ async function buildDeps(scope: { orgId: string; bcConnectionId: string }): Prom
   const bc = await createBcClientForOrg(scope.orgId, scope.bcConnectionId);
   // Same company lookup as createReferenceTransportForOrg, reusing the one client.
   const company = await bc.getCompany(bc.config.companyId);
+  const transport = createReferenceTransport(bc, company.name);
   return {
     supabase,
-    transport: createReferenceTransport(bc, company.name),
+    transport,
     orgId: scope.orgId,
     connectionId: scope.bcConnectionId,
     now: () => new Date().toISOString(),
-    countUsage: createUsageCounter(bc, supabase, scope.orgId, scope.bcConnectionId),
+    // Usage is counted live from BC (customers API and the OData line/detail pages).
+    countUsage: createUsageCounter(bc, transport),
   };
 }
 
@@ -57,7 +70,7 @@ export async function getReferenceListPage(
   key: ListKey,
   filter?: { parentCode?: string; jurisdictionCode?: string },
 ): Promise<ListPageData> {
-  const def = LIST_DEFINITIONS[key];
+  const def = definitionFor(key);
   const scope = await requireActiveBusinessCentralScope();
   const supabase = await createClient();
 
@@ -116,6 +129,7 @@ export async function saveReferenceEntry(
   input: { id: string | null; original: Row | null; edited: Row },
 ): Promise<{ ok: true; entry: ReferenceEntry; warning?: string } | Fail> {
   try {
+    if (!isListKey(key)) return { ok: false, error: UNKNOWN_LIST };
     const def = LIST_DEFINITIONS[key];
     const scope = await requireActiveBusinessCentralScope();
     if (!scope.access.isAdmin) return { ok: false, error: ADMIN_ONLY };
@@ -133,8 +147,9 @@ export async function saveReferenceEntry(
     for (const follow of followUpLists(key, input)) {
       try {
         await syncList(deps, LIST_DEFINITIONS[follow]);
-      } catch {
+      } catch (e) {
         // The entry is already saved in BC and Nexus; do not report the save as failed.
+        console.error(`[customer-lists] follow-up sync of ${follow} after saving ${key} failed:`, errorMessage(e));
         const title = LIST_DEFINITIONS[follow].title;
         warning = `Saved, but refreshing ${title.toLowerCase()} from Business Central failed. Press Sync on ${title}.`;
       }
@@ -148,6 +163,7 @@ export async function saveReferenceEntry(
 
 export async function deleteReferenceEntry(key: ListKey, id: string): Promise<{ ok: true } | Fail> {
   try {
+    if (!isListKey(key)) return { ok: false, error: UNKNOWN_LIST };
     const def = LIST_DEFINITIONS[key];
     const scope = await requireActiveBusinessCentralScope();
     if (!scope.access.isAdmin) return { ok: false, error: ADMIN_ONLY };
@@ -162,15 +178,28 @@ export async function deleteReferenceEntry(key: ListKey, id: string): Promise<{ 
   }
 }
 
+// Tax area lines have no list page of their own, so a tax areas sync also pulls
+// them; otherwise a fresh environment shows every area with no jurisdictions.
+function listsToSync(key: ListKey): ListKey[] {
+  return key === 'taxAreas' ? ['taxAreas', 'taxAreaLines'] : [key];
+}
+
 export async function syncReferenceList(
   key: ListKey,
 ): Promise<{ ok: true; inserted: number; updated: number; deleted: number } | Fail> {
   try {
-    const def = LIST_DEFINITIONS[key];
+    if (!isListKey(key)) return { ok: false, error: UNKNOWN_LIST };
     const scope = await requireActiveBusinessCentralScope();
     if (!scope.access.isAdmin) return { ok: false, error: ADMIN_ONLY };
 
-    const result = await syncList(await buildDeps(scope), def);
+    const deps = await buildDeps(scope);
+    const result = { inserted: 0, updated: 0, deleted: 0 };
+    for (const list of listsToSync(key)) {
+      const r = await syncList(deps, LIST_DEFINITIONS[list]);
+      result.inserted += r.inserted;
+      result.updated += r.updated;
+      result.deleted += r.deleted;
+    }
     revalidateLists();
     return { ok: true, ...result };
   } catch (e) {
@@ -179,17 +208,21 @@ export async function syncReferenceList(
 }
 
 export async function getSelectOptions(source: ListKey | 'taxGroups'): Promise<{ code: string; label: string }[]> {
+  const isTaxGroups = source === 'taxGroups';
+  const def = isTaxGroups ? null : definitionFor(source);
   const scope = await requireActiveBusinessCentralScope();
   const supabase = await createClient();
-  const table = source === 'taxGroups' ? 'business_central_tax_groups' : LIST_DEFINITIONS[source].table;
-  const hasDisplayName = source === 'taxGroups' || LIST_DEFINITIONS[source].fields.some((f) => f.name === 'display_name');
+  const table = def ? def.table : 'business_central_tax_groups';
+  const hasDisplayName = !def || def.fields.some((f) => f.name === 'display_name');
 
-  const { data, error } = await supabase
+  let query = supabase
     .from(table)
     .select(hasDisplayName ? 'code, display_name' : 'code')
     .eq('organization_id', scope.orgId)
-    .eq('bc_connection_id', scope.bcConnectionId)
-    .order('code', { ascending: true });
+    .eq('bc_connection_id', scope.bcConnectionId);
+  // business_central_tax_groups has is_active (migration 017); retired groups are not offered.
+  if (isTaxGroups) query = query.eq('is_active', true);
+  const { data, error } = await query.order('code', { ascending: true });
   if (error) throw new Error(error.message);
 
   return ((data ?? []) as unknown as Row[]).map((r) => {

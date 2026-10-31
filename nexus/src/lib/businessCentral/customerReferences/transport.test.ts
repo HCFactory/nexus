@@ -45,6 +45,27 @@ describe('reference transport', () => {
     expect(calls[0].headers.Authorization).toBe('Bearer tok');
   });
 
+  it('list with a filter sends an encoded $filter and follows nextLink', async () => {
+    const source = { kind: 'odata' as const, service: 'TaxAreaLines', pageNumber: 465, keyFields: ['Tax_Area', 'Tax_Jurisdiction_Code'] };
+    const { transport, calls } = setup([
+      json({ value: [{ Tax_Area: 'A', Tax_Jurisdiction_Code: "O'B", '@odata.etag': 'W/"1"' }], '@odata.nextLink': 'https://next/p2' }),
+      json({ value: [{ Tax_Area: 'B', Tax_Jurisdiction_Code: "O'B", '@odata.etag': 'W/"2"' }] }),
+    ]);
+    const rows = await transport.list(source, { filter: "Tax_Jurisdiction_Code eq 'O''B&C'" });
+    expect(rows).toHaveLength(2);
+    expect(calls[0].url).toBe(
+      "https://api.businesscentral.dynamics.com/v2.0/Production/ODataV4/Company('My%20Co')/TaxAreaLines" +
+        "?$filter=Tax_Jurisdiction_Code%20eq%20'O''B%26C'",
+    );
+    expect(calls[1].url).toBe('https://next/p2');
+  });
+
+  it('list without a filter sends no query string', async () => {
+    const { transport, calls } = setup([json({ value: [] })]);
+    await transport.list(odataSource, {});
+    expect(calls[0].url).not.toContain('?');
+  });
+
   it('odata key escapes quotes and encodes', async () => {
     const { transport, calls } = setup([json({ Code: "O'HARE/1", '@odata.etag': 'W/"1"' })]);
     await transport.get(odataSource, { values: { Code: "O'HARE/1" } });
