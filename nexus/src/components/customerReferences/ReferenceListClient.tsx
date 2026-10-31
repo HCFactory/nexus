@@ -123,8 +123,8 @@ export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFi
 
       <div className="min-h-48 flex-1 overflow-auto rounded-xl border border-border bg-surface-raised card-shadow">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-surface-raised">
-            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-foreground-subtle">
+          <thead className="sticky top-0 z-10 bg-surface-raised shadow-[inset_0_-1px_0_var(--color-border)]">
+            <tr className="text-left text-[11px] uppercase tracking-wide text-foreground-subtle">
               {shownFields.map((f) => (
                 <th key={f.name} className="px-3 py-2 font-medium">{f.label}</th>
               ))}
