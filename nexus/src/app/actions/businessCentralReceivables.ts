@@ -11,6 +11,11 @@ import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnectio
 import type { AgingRow } from '@/lib/businessCentral/agingSummary';
 import { buildArSyncAdapters } from '@/lib/businessCentral/arSyncAdapters';
 import { createBcClientForOrg, type BcClient } from '@/lib/businessCentral/client';
+import { createReferenceTransportForOrg } from '@/lib/businessCentral/customerReferences/transport';
+import {
+  CUSTOMER_CARD_SOURCE,
+  fillCustomerCardFields,
+} from '@/lib/businessCentral/customers/customerCardFill';
 import { createCustomerLedgerClientForOrg } from '@/lib/businessCentral/customerLedgerClient';
 import {
   runAllEntitySyncs,
@@ -183,6 +188,43 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
       ctx,
       SYNC_BUDGET_MS
     );
+
+    // Fill the extra customer columns from the Customer_Card_Excel OData page.
+    // Runs after customers are upserted; a failure is reported but never
+    // blocks the rest of the sync.
+    try {
+      const transport = await createReferenceTransportForOrg(orgId, connection.id);
+      const cards = await transport.list(CUSTOMER_CARD_SOURCE);
+      const known = new Set<string>();
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase
+          .from('business_central_customers')
+          .select('bc_customer_number')
+          .eq('organization_id', orgId)
+          .eq('bc_connection_id', connection.id)
+          .range(from, from + 999);
+        if (error) throw error;
+        for (const r of data ?? []) if (r.bc_customer_number) known.add(r.bc_customer_number as string);
+        if ((data ?? []).length < 1000) break;
+      }
+      await fillCustomerCardFields(cards, known, async (number, patch) => {
+        const { error } = await supabase
+          .from('business_central_customers')
+          .update(patch)
+          .eq('organization_id', orgId)
+          .eq('bc_connection_id', connection.id)
+          .eq('bc_customer_number', number);
+        if (error) throw error;
+      });
+    } catch (cardError) {
+      results.push({
+        entityType: 'customer',
+        recordsSynced: 0,
+        complete: false,
+        cursor: null,
+        error: `Customer card fields: ${cardError instanceof Error ? cardError.message : 'failed'}`,
+      });
+    }
 
     // Sales invoice lines get their own dedicated sync path (see
     // salesInvoiceLineSync.ts) — BC cannot query them as a flat collection,
