@@ -177,7 +177,7 @@ payment-term list needs to exist in Bill.com.
 - **Environment scoping:** `requireActiveBusinessCentralScope()` in
   `nexus/src/lib/businessCentral/environmentScope.ts`.
 - **Admin check:** existing actions gate on `access.isAdmin` (e.g. `nexus/src/app/actions/billcom.ts`).
-- **Migrations:** next free number is 051 (047–050 are the uncommitted Friends & Family work).
+- **Migrations:** next free number is 053 (047–052 are Friends & Family; recheck before writing, another session is adding migrations in parallel).
   Recent migrations have failed on partial re-apply (039, see BACKLOG); new ones should be
   re-runnable.
 

@@ -24,6 +24,7 @@ import {
   HeartHandshake,
   Users,
   Clock,
+  ListChecks,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -63,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: 'Receivables',
     items: [
       { label: 'Customers', href: '/customers', icon: Users },
+      { label: 'Customer lists', href: '/customer-lists', icon: ListChecks },
       { label: 'Receivables', href: '/receivables', icon: Clock },
       { label: 'Sales invoices', href: '/receivables/invoices', icon: FileText },
     ],
