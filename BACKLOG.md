@@ -4,13 +4,12 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
 
 ## To do
 
-1. **BC ↔ Bill.com customer sync — 4 projects, done one at a time.** Projects 1 and 2 are merged to `main` (not yet pushed to GitHub after project 2). **Next: project 3.**
+1. **BC ↔ Bill.com customer sync — 4 projects, done one at a time.** Projects 1 and 2 are merged to `main` and pushed. **Next: project 3.**
    1. ✅ Customer reference lists — see Done.
    2. ✅ Customer templates — see Done.
    3. **Customers ↔ BC** (next, not designed yet). Includes the New customer form: pick a template, then type Name (required), Invoice email → BC E-Mail (required), Invoice email CC → BC "Email CC", Phone no. (required), Address. Payment terms and Tax area start from the template's value and are editable per customer (both required). Template-only (not on the form): No. series, Tax liable, Tax identification type, Customer price group, Application method, Location, posting groups, contact type. When customers sync, re-enable price-group delete (disabled until now).
    4. **Customers ↔ Bill.com**, matched on the BC customer number. Bill.com payment terms were dropped; piece E sends due dates calculated by BC.
    - **Before using production BC:** publish the same web services there as in TEST — pages 7 (`CustomerPriceGroups`), 110 (`CustomerPostingGroups`), 312 (`GenBusinessPostingGroups`), 465 (`TaxAreaLines`), 466 (`TaxJurisdictions`), 468 (`TaxDetails`), Customer Templ. Card (`CustomerTemplates`), No. Series (`NoSeries`). Without `CustomerTemplates`, Nexus refuses every payment-term and tax-area delete.
-   - **Housekeeping:** old worktrees `../Artwork Review Tool-crl` and `../Artwork Review Tool-ct` (and their branches) are fully merged and can be deleted.
    - **Unchecked minor:** the templates list has 7 columns; phone width passed a quick manual check but wasn't looked at closely.
 
 2. **Bill.com connector follow-ups** (non-blocking; from the whole-branch review).
