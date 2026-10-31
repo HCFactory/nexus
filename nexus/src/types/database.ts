@@ -1057,6 +1057,32 @@ export interface Database {
         >;
         Update: Partial<Omit<BusinessCentralLocation, "id">>;
       };
+      billcom_customer_links: {
+        Row: BillcomCustomerLink;
+        Insert: Omit<
+          BillcomCustomerLink,
+          | 'id'
+          | 'created_at'
+          | 'updated_at'
+          | 'business_central_customer_id'
+          | 'billcom_customer_id'
+          | 'status'
+          | 'last_pushed_hash'
+          | 'last_pushed_at'
+          | 'last_error'
+        > & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          business_central_customer_id?: string | null;
+          billcom_customer_id?: string | null;
+          status?: BillcomCustomerLinkStatus;
+          last_pushed_hash?: string | null;
+          last_pushed_at?: string | null;
+          last_error?: string | null;
+        };
+        Update: Partial<Omit<BillcomCustomerLink, 'id'>>;
+      };
       business_central_customer_posting_groups: {
         Row: BusinessCentralCustomerPostingGroup;
         Insert: BusinessCentralReferenceInsert<
@@ -1325,6 +1351,28 @@ export interface BusinessCentralTaxDetail {
   maximum_amount_qty: number;
   tax_below_maximum: number;
   tax_above_maximum: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type BillcomCustomerLinkStatus =
+  | 'pending'
+  | 'synced'
+  | 'failed'
+  | 'needs_attention';
+
+export interface BillcomCustomerLink {
+  id: string;
+  organization_id: string;
+  bc_connection_id: string;
+  billcom_connection_id: string;
+  business_central_customer_id: string | null;
+  bc_customer_number: string;
+  billcom_customer_id: string | null;
+  status: BillcomCustomerLinkStatus;
+  last_pushed_hash: string | null;
+  last_pushed_at: string | null;
+  last_error: string | null;
   created_at: string;
   updated_at: string;
 }
