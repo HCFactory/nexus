@@ -33,11 +33,24 @@ function fakeTransport(counts: Record<string, number>) {
 
 const none = () => fakeTransport({}).transport;
 
+/** Transport whose CustomerTemplates service returns the given template codes. */
+function templateTransport(codes: string[]) {
+  const list = vi.fn(async (source: ReferenceSource, options?: { filter?: string }) => {
+    void options;
+    if (source.kind === 'odata' && source.service === 'CustomerTemplates') {
+      return codes.map((Code): BcRecord => ({ key: { values: { Code } }, etag: '', fields: { Code } }));
+    }
+    return [];
+  });
+  return { transport: { list } as unknown as ReferenceTransport, list };
+}
+const withCode = { values: { code: 'NET30' } };
+
 describe('createUsageCounter', () => {
   it('payment term used by 3 customers', async () => {
     const { bc, listResourcePage } = fakeBc(3);
     const count = createUsageCounter(bc, none());
-    expect(await count(def('paymentTerms'), row())).toBe('Used by 3 customers');
+    expect(await count(def('paymentTerms'), row(withCode))).toBe('Used by 3 customers');
     expect(listResourcePage).toHaveBeenCalledWith('customers', {
       filter: 'paymentTermsId eq 3fa85f64-5717-4562-b3fc-2c963f66afa6', top: 1000,
     });
@@ -45,28 +58,28 @@ describe('createUsageCounter', () => {
 
   it('taxAreas filters on taxAreaId', async () => {
     const { bc, listResourcePage } = fakeBc(1);
-    await createUsageCounter(bc, none())(def('taxAreas'), row());
+    await createUsageCounter(bc, none())(def('taxAreas'), row(withCode));
     expect(listResourcePage.mock.calls[0]?.[1].filter).toBe('taxAreaId eq 3fa85f64-5717-4562-b3fc-2c963f66afa6');
   });
 
   it('unused returns null', async () => {
     const { bc } = fakeBc(0);
-    expect(await createUsageCounter(bc, none())(def('paymentTerms'), row())).toBeNull();
+    expect(await createUsageCounter(bc, none())(def('paymentTerms'), row(withCode))).toBeNull();
   });
 
   it('1 customer is singular', async () => {
     const { bc } = fakeBc(1);
-    expect(await createUsageCounter(bc, none())(def('paymentTerms'), row())).toBe('Used by 1 customer');
+    expect(await createUsageCounter(bc, none())(def('paymentTerms'), row(withCode))).toBe('Used by 1 customer');
   });
 
   it('1000 results means 1000 or more', async () => {
     const { bc } = fakeBc(1000);
-    expect(await createUsageCounter(bc, none())(def('paymentTerms'), row())).toBe('Used by 1000 or more customers');
+    expect(await createUsageCounter(bc, none())(def('paymentTerms'), row(withCode))).toBe('Used by 1000 or more customers');
   });
 
   it('throws without bcId', async () => {
     const { bc } = fakeBc(0);
-    await expect(createUsageCounter(bc, none())(def('paymentTerms'), row({ bcId: null })))
+    await expect(createUsageCounter(bc, none())(def('paymentTerms'), row({ bcId: null, ...withCode })))
       .rejects.toThrow('Cannot check usage: this entry has no Business Central id. Sync the list and try again.');
   });
 
@@ -112,6 +125,65 @@ describe('createUsageCounter', () => {
   it('unused jurisdiction returns null', async () => {
     const { bc } = fakeBc(0);
     expect(await createUsageCounter(bc, none())(def('taxJurisdictions'), row({ values: { code: 'X' } }))).toBeNull();
+  });
+
+  it('blocks a payment term used only by a template', async () => {
+    const { bc } = fakeBc(0);
+    const { transport, list } = templateTransport(['WHOLESALE']);
+    expect(await createUsageCounter(bc, transport)(def('paymentTerms'), row({ values: { code: 'NET30' } })))
+      .toBe('Used by template WHOLESALE');
+    expect(list.mock.calls[0]?.[1]?.filter).toBe("Payment_Terms_Code eq 'NET30'");
+  });
+
+  it('combines customers and templates', async () => {
+    const { bc } = fakeBc(2);
+    const { transport } = templateTransport(['A', 'B']);
+    expect(await createUsageCounter(bc, transport)(def('paymentTerms'), row(withCode)))
+      .toBe('Used by 2 customers and templates A, B');
+  });
+
+  it('combines 1 customer and 1 template', async () => {
+    const { bc } = fakeBc(1);
+    const { transport } = templateTransport(['A']);
+    expect(await createUsageCounter(bc, transport)(def('paymentTerms'), row(withCode)))
+      .toBe('Used by 1 customer and template A');
+  });
+
+  it('tax area counts templates by Tax_Area_Code', async () => {
+    const { bc } = fakeBc(0);
+    const { transport, list } = templateTransport(['T1', 'T2']);
+    expect(await createUsageCounter(bc, transport)(def('taxAreas'), row({ values: { code: 'HI-HNL-RT' } })))
+      .toBe('Used by templates T1, T2');
+    expect(list.mock.calls[0]?.[1]?.filter).toBe("Tax_Area_Code eq 'HI-HNL-RT'");
+  });
+
+  it('escapes quotes in the template filter', async () => {
+    const { bc } = fakeBc(0);
+    const { transport, list } = templateTransport([]);
+    await createUsageCounter(bc, transport)(def('paymentTerms'), row({ values: { code: "O'B/1" } }));
+    expect(list.mock.calls[0]?.[1]?.filter).toBe("Payment_Terms_Code eq 'O''B/1'");
+  });
+
+  it('falls back to keyValues.code', async () => {
+    const { bc } = fakeBc(0);
+    const { transport, list } = templateTransport([]);
+    await createUsageCounter(bc, transport)(def('paymentTerms'), row({ keyValues: { code: 'KV' } }));
+    expect(list.mock.calls[0]?.[1]?.filter).toBe("Payment_Terms_Code eq 'KV'");
+  });
+
+  it('fails closed when templates cannot be read', async () => {
+    const { bc } = fakeBc(0);
+    const list = vi.fn(async () => { throw new Error('BC down'); });
+    const transport = { list } as unknown as ReferenceTransport;
+    await expect(createUsageCounter(bc, transport)(def('paymentTerms'), row(withCode))).rejects.toThrow('BC down');
+  });
+
+  it('blank code throws for payment terms and tax areas', async () => {
+    const { bc } = fakeBc(0);
+    for (const k of ['paymentTerms', 'taxAreas']) {
+      await expect(createUsageCounter(bc, none())(def(k), row({ values: { code: ' ' } })))
+        .rejects.toThrow('Cannot check usage: this entry has no code. Sync the list and try again.');
+    }
   });
 
   it('other lists return null', async () => {
