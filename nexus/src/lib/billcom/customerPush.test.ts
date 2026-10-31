@@ -23,7 +23,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
       const matched = rows.filter((r) => filters.every((f) => f(r)));
       if (mode === 'update') {
         matched.forEach((r) => Object.assign(r, patch));
-        return { data: null, error: null };
+        return { data: matched.map((r) => ({ ...r })), error: null };
       }
       const sorted = [...matched].sort((a, b) => String(a.id).localeCompare(String(b.id)));
       const page = range ? sorted.slice(range[0], range[1] + 1) : sorted;
@@ -139,6 +139,7 @@ function link(no: string, over: Partial<BillcomCustomerLink> = {}): Row {
     last_pushed_hash: null,
     last_pushed_at: null,
     last_error: null,
+    updated_at: '2026-01-01T00:00:00.000Z',
     ...over,
   };
 }
@@ -312,6 +313,109 @@ describe('pushCustomers', () => {
     expect(res.created).toBe(1);
     expect(linkRow(sb, 'C1').status).toBe('pending');
     expect(linkRow(sb, 'C2').status).toBe('synced');
+  });
+});
+
+describe('pushCustomers review fixes', () => {
+  it('two concurrent runs over the same pending link make exactly one POST', async () => {
+    const bill = fakeBillcom();
+    const { deps } = setup([bcRow('C1')], [link('C1')], bill);
+    await Promise.all([pushCustomers(deps, { budgetMs: 10_000 }), pushCustomers(deps, { budgetMs: 10_000 })]);
+    expect(bill.calls.filter((c) => c.method === 'POST' && c.path === '/v3/customers')).toHaveLength(1);
+    expect(bill.customers).toHaveLength(1);
+  });
+
+  it('skips the create when the link gained a Bill.com id meanwhile', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1')], [link('C1')], bill);
+    const orig = bill.client.request;
+    bill.client.request = async <T,>(p: string, i?: RequestInit): Promise<T> => {
+      const r = await orig<T>(p, i);
+      if (p.startsWith('/v3/customers?')) linkRow(sb, 'C1').billcom_customer_id = '0cuOther';
+      return r;
+    };
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(bill.calls.filter((c) => c.method === 'POST' && c.path === '/v3/customers')).toHaveLength(0);
+  });
+
+  it('numbers path + budget stop leaves unprocessed links pending', async () => {
+    let t = 0;
+    const nos = ['C1', 'C2', 'C3', 'C4', 'C5'];
+    const rows = nos.map((n) => bcRow(n));
+    const bill = fakeBillcom(nos.map((n) => ({ id: `0cu${n}`, archived: false, name: 'x', accountNumber: n })));
+    const orig = bill.client.request;
+    bill.client.request = async (p, i) => {
+      t += 400;
+      return orig(p, i);
+    };
+    const links = nos.map((n) => link(n, { status: 'synced', billcom_customer_id: `0cu${n}`, last_pushed_hash: 'stale' }));
+    const { deps, sb } = setup(rows, links, bill, () => t);
+    const res = await pushCustomers(deps, { numbers: nos, budgetMs: 1_000 });
+    expect(res.stoppedReason).toBe('budget');
+    const pending = sb.tables.billcom_customer_links.filter((l) => l.status === 'pending');
+    expect(pending.length).toBe(res.remaining);
+    expect(res.remaining).toBeGreaterThan(0);
+  });
+
+  it('a DB error while recording a failure does not reject the run', async () => {
+    const bill = fakeBillcom([], {
+      failOn: (path, body) =>
+        path === '/v3/customers' && body?.accountNumber === 'C1'
+          ? new BillcomApiError({ status: 400, statusText: 'Bad', message: 'bad', url: path })
+          : null,
+    });
+    const { deps, sb } = setup([bcRow('C1'), bcRow('C2')], [link('C1'), link('C2')], bill);
+    const from = sb.client.from.bind(sb.client);
+    (sb.client as unknown as { from: unknown }).from = (t: string) => {
+      const q = from(t) as unknown as Record<string, (...a: unknown[]) => unknown>;
+      const upd = q.update;
+      q.update = (p: unknown) => {
+        if ((p as Row).status === 'failed') throw new Error('db down');
+        return upd(p);
+      };
+      return q;
+    };
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.created).toBe(1);
+    expect(res.failed).toBe(1);
+  });
+
+  it('a failed Bill.com list read stops the run and leaves links as they were', async () => {
+    const bill = fakeBillcom([], {
+      failOn: (path) =>
+        path.startsWith('/v3/customers?')
+          ? new BillcomApiError({ status: 500, statusText: 'x', message: 'Bill.com is down', url: path })
+          : null,
+    });
+    const { deps, sb } = setup([bcRow('C1'), bcRow('C2')], [link('C1'), link('C2')], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.stoppedReason).toBe('list_failed');
+    expect(res.error).toBe('Bill.com is down');
+    expect(res.failed).toBe(0);
+    expect(sb.tables.billcom_customer_links.every((l) => l.status === 'pending' && l.last_error === null)).toBe(true);
+  });
+
+  it('never has more than 3 Bill.com requests in flight', async () => {
+    const nos = Array.from({ length: 10 }, (_, i) => `C${i}`);
+    const bill = fakeBillcom();
+    const orig = bill.client.request;
+    let inFlight = 0;
+    let peak = 0;
+    bill.client.request = async <T,>(p: string, i?: RequestInit): Promise<T> => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 2));
+      try {
+        return await orig<T>(p, i);
+      } finally {
+        inFlight--;
+      }
+    };
+    const { deps } = setup(nos.map((n) => bcRow(n)), nos.map((n) => link(n)), bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.created).toBe(10);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(3);
   });
 });
 

@@ -44,8 +44,13 @@ export interface PushResult {
   failed: number;
   needsAttention: number;
   remaining: number;
-  stoppedReason?: 'budget' | 'rate_limit';
+  stoppedReason?: 'budget' | 'rate_limit' | 'list_failed';
+  /** Bill.com's message when the run stopped because the customer list could not be read. */
+  error?: string;
 }
+
+/** The Bill.com customer list could not be read; the run stops rather than failing every link. */
+class BillcomListError extends Error {}
 
 interface BillcomCustomer {
   id: string;
@@ -130,6 +135,15 @@ async function updateLink(deps: PushDeps, id: string, patch: Partial<BillcomCust
 // ---------- Bill.com reads ----------
 
 async function listBillcomCustomers(deps: PushDeps): Promise<BillcomCustomer[]> {
+  try {
+    return await listBillcomCustomersRaw(deps);
+  } catch (err) {
+    if (err instanceof BillcomRateLimitError) throw err;
+    throw new BillcomListError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function listBillcomCustomersRaw(deps: PushDeps): Promise<BillcomCustomer[]> {
   const byId = new Map<string, BillcomCustomer>();
   for (const filter of [null, 'archived:eq:true']) {
     let page: string | undefined;
@@ -279,11 +293,8 @@ export async function pushCustomers(
   const now = deps.now ?? Date.now;
   const started = now();
 
-  if (opts.numbers) {
-    const have = new Set((await loadLinks(deps, opts.numbers)).map((l) => l.bc_customer_number));
-    const missing = opts.numbers.filter((n) => !have.has(n));
-    if (missing.length) await markPending(deps, missing);
-  }
+  // Mark every given number pending up front so a stop leaves them queued.
+  if (opts.numbers) await markPending(deps, opts.numbers);
   const links = (await loadLinks(deps, opts.numbers)).filter(
     (l) => opts.numbers || l.status === 'pending' || l.status === 'failed',
   );
@@ -307,7 +318,35 @@ export async function pushCustomers(
   let next = 0;
   let done = 0;
 
-  async function processLink(link: BillcomCustomerLink): Promise<Outcome> {
+  /** Optimistic claim: only one concurrent run wins a given link version. */
+  async function claim(link: BillcomCustomerLink): Promise<boolean> {
+    const { data, error } = await deps.supabase
+      .from(LINKS)
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', link.id)
+      .eq('organization_id', deps.orgId)
+      .eq('bc_connection_id', deps.bcConnectionId)
+      .eq('billcom_connection_id', deps.billcomConnectionId)
+      .eq('updated_at', link.updated_at)
+      .select('id');
+    if (error) throw new Error(`Could not claim Bill.com link: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  async function currentBillcomId(link: BillcomCustomerLink): Promise<string | null> {
+    const { data, error } = await deps.supabase
+      .from(LINKS)
+      .select('billcom_customer_id')
+      .eq('id', link.id)
+      .eq('organization_id', deps.orgId)
+      .eq('bc_connection_id', deps.bcConnectionId)
+      .eq('billcom_connection_id', deps.billcomConnectionId);
+    if (error) throw new Error(`Could not read Bill.com link: ${error.message}`);
+    return ((data ?? []) as Array<{ billcom_customer_id: string | null }>)[0]?.billcom_customer_id ?? null;
+  }
+
+  async function processLink(link: BillcomCustomerLink): Promise<Outcome | 'skipped'> {
+    if (!(await claim(link))) return 'skipped';
     const row = link.business_central_customer_id
       ? rowById.get(link.business_central_customer_id)
       : undefined;
@@ -362,6 +401,8 @@ export async function pushCustomers(
         await updateLink(deps, link.id, { billcom_customer_id: id });
         outcome = 'linked';
       } else {
+        // Another run may have created it since we loaded the link.
+        if (await currentBillcomId(link)) return 'skipped';
         const createdCustomer = await deps.billcom.request<BillcomCustomer>('/v3/customers', {
           method: 'POST',
           body: JSON.stringify(payload),
@@ -402,15 +443,24 @@ export async function pushCustomers(
       const link = links[next++];
       try {
         const outcome = await processLink(link);
-        if (outcome !== 'synced') result[outcome]++;
+        if (outcome !== 'synced' && outcome !== 'skipped') result[outcome]++;
         done++;
       } catch (err) {
         if (err instanceof BillcomRateLimitError) {
           stop = 'rate_limit';
           return;
         }
+        if (err instanceof BillcomListError) {
+          stop = 'list_failed';
+          result.error ??= err.message;
+          return;
+        }
         const message = err instanceof Error ? err.message : String(err);
-        await updateLink(deps, link.id, { status: 'failed', last_error: message });
+        try {
+          await updateLink(deps, link.id, { status: 'failed', last_error: message });
+        } catch {
+          // The link stays as it was; one DB error must not drop the run's results.
+        }
         result.failed++;
         done++;
       }
