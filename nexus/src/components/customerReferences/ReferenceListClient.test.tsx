@@ -158,4 +158,15 @@ describe('ReferenceListClient', () => {
     fireEvent.click(screen.getByRole('button', { name: /^add/i }));
     expect((screen.getByLabelText(/Tax jurisdiction/) as HTMLSelectElement).value).toBe('B');
   });
+
+  it('does not render listHidden fields as columns', () => {
+    const fields: FieldSpec[] = [
+      ...termFields,
+      { name: 'secret', bcName: 'secret', label: 'Secret note', type: 'text', editable: true, listHidden: true },
+    ];
+    render(<ReferenceListClient data={page({ fields })} selectOptions={{}} />);
+    expect(screen.queryByText('Secret note')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^edit/i }));
+    expect(screen.getByLabelText(/Secret note/)).toBeInTheDocument();
+  });
 });

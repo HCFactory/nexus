@@ -37,7 +37,7 @@ export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFi
 
   const readOnly = data.mode === 'readOnly';
   const canEdit = data.canManage && !readOnly;
-  const shownFields = data.fields.filter((f) => !hiddenFields.includes(f.name));
+  const shownFields = data.fields.filter((f) => !hiddenFields.includes(f.name) && !f.listHidden);
   const deleteBlocked = data.deleteDisabledReason !== null;
 
   function sync() {

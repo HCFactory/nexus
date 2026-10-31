@@ -31,6 +31,14 @@ interface Props {
 const SELECT_CLASS =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50';
 
+/** Choices for a select: fixed `options`, else the referenced list filtered by `optionsMatch`. */
+function optionsFor(f: FieldSpec, selectOptions: Record<string, Option[]>): Option[] {
+  if (f.options) return f.options.map((o) => ({ code: o.value, label: o.label }));
+  const all = f.optionsFrom ? selectOptions[f.optionsFrom] ?? [] : [];
+  const needle = f.optionsMatch?.toLowerCase();
+  return needle ? all.filter((o) => o.code.toLowerCase().includes(needle)) : all;
+}
+
 function toRaw(f: FieldSpec, v: unknown): string | boolean {
   if (f.type === 'boolean') return Boolean(v);
   return v === null || v === undefined ? '' : String(v);
@@ -48,7 +56,7 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
   const keyFields = fields.filter((f) => f.isKey);
   const renamable = keyFields.length === 1 && keyFields[0].name === 'code';
   const [raw, setRaw] = useState<Record<string, string | boolean>>(() =>
-    Object.fromEntries(editable.map((f) => [f.name, toRaw(f, entry ? entry.values[f.name] : fixedValues?.[f.name])])),
+    Object.fromEntries(editable.map((f) => [f.name, toRaw(f, entry ? entry.values[f.name] : fixedValues?.[f.name] ?? f.defaultValue)])),
   );
   const [errors, setErrors] = useState<string[]>([]);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -126,6 +134,7 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
         {editable.filter((f) => !hiddenFields.includes(f.name)).map((f) => {
           const id = `ref-${f.name}`;
           const value = raw[f.name];
+          const choices = f.type === 'select' ? optionsFor(f, selectOptions) : [];
           const set = (v: string | boolean) => setRaw((cur) => ({ ...cur, [f.name]: v }));
           return (
             <div key={f.name} className="min-w-0 space-y-1.5">
@@ -143,10 +152,10 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
                   {f.type === 'select' ? (
                     <select id={id} className={SELECT_CLASS} value={String(value)} disabled={isDisabled(f)} onChange={(e) => set(e.target.value)}>
                       <option value="" disabled={f.required}>Select…</option>
-                      {value !== '' && !(f.optionsFrom ? selectOptions[f.optionsFrom] ?? [] : []).some((o) => o.code === value) && (
+                      {value !== '' && !choices.some((o) => o.code === value) && (
                         <option value={String(value)}>{String(value)}</option>
                       )}
-                      {(f.optionsFrom ? selectOptions[f.optionsFrom] ?? [] : []).map((o) => (
+                      {choices.map((o) => (
                         <option key={o.code} value={o.code}>
                           {o.label}
                         </option>
