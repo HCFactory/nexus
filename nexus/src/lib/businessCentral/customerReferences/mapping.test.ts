@@ -24,6 +24,9 @@ describe('mapping', () => {
       Tax_Group_Code: '', Tax_Jurisdiction_Code: 'J',
     });
   });
+  it('customer templates send only the supplied fields', () => {
+    expect(toBcFields(LIST_DEFINITIONS.customerTemplates, { display_name: 'x' })).toEqual({ Description: 'x' });
+  });
   it('defaults missing numeric BC fields to 0', () => {
     const rec = { key: { bcId: '1' }, etag: 'e', fields: { Tax_Jurisdiction_Code: 'J' } } as never;
     expect(toDbValues(LIST_DEFINITIONS.taxDetails, rec)).toMatchObject({ tax_below_maximum: 0, maximum_amount_qty: 0, effective_date: null });

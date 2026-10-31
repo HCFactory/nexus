@@ -13,6 +13,9 @@ const COLUMNS: Record<ListKey, string[]> = {
   locations: ['code', 'display_name', 'address_line_1', 'address_line_2', 'city', 'state', 'postal_code', 'country'],
   customerPostingGroups: ['code', 'display_name'],
   generalBusinessPostingGroups: ['code', 'display_name', 'default_vat_business_posting_group', 'auto_insert_default'],
+  customerTemplates: ['code', 'display_name', 'contact_type', 'no_series', 'customer_posting_group', 'gen_bus_posting_group',
+    'customer_price_group', 'payment_terms_code', 'tax_area_code', 'tax_liable', 'tax_identification_type', 'application_method', 'location_code'],
+  noSeries: ['code', 'display_name'],
 };
 const TABLES: Record<ListKey, string> = {
   paymentTerms: 'business_central_payment_terms',
@@ -24,12 +27,14 @@ const TABLES: Record<ListKey, string> = {
   locations: 'business_central_locations',
   customerPostingGroups: 'business_central_customer_posting_groups',
   generalBusinessPostingGroups: 'business_central_general_business_posting_groups',
+  customerTemplates: 'business_central_customer_templates',
+  noSeries: 'business_central_no_series',
 };
 const defs = Object.entries(LIST_DEFINITIONS);
 
 describe('LIST_DEFINITIONS', () => {
-  it('covers all nine lists with matching keys', () => {
-    expect(defs).toHaveLength(9);
+  it('covers all eleven lists with matching keys', () => {
+    expect(defs).toHaveLength(11);
     for (const [k, d] of defs) expect(d.key).toBe(k);
   });
 
@@ -51,7 +56,7 @@ describe('LIST_DEFINITIONS', () => {
 
   it('read-only lists have no editable fields', () => {
     const ro = defs.filter(([, d]) => d.mode === 'readOnly').map(([k]) => k).sort();
-    expect(ro).toEqual(['customerPostingGroups', 'generalBusinessPostingGroups', 'locations']);
+    expect(ro).toEqual(['customerPostingGroups', 'generalBusinessPostingGroups', 'locations', 'noSeries']);
     for (const [, d] of defs) if (d.mode === 'readOnly') expect(d.fields.every((f) => !f.editable)).toBe(true);
   });
 
@@ -104,5 +109,31 @@ describe('LIST_DEFINITIONS', () => {
       kind: 'odata', service: 'TaxDetails', pageNumber: 468,
       keyFields: ['Tax_Jurisdiction_Code', 'Tax_Group_Code', 'Tax_Type', 'Effective_Date'],
     });
+  });
+
+  it('customer templates manage exactly the 13 spec fields', () => {
+    const t = LIST_DEFINITIONS.customerTemplates;
+    expect(t.mode).toBe('managed');
+    expect(t.source).toEqual({ kind: 'odata', service: 'CustomerTemplates', pageNumber: 1382, keyFields: ['Code'] });
+    expect(t.fields.map((f) => f.bcName)).toEqual(['Code', 'Description', 'Contact_Type', 'No_Series',
+      'Customer_Posting_Group', 'Gen_Bus_Posting_Group', 'Customer_Price_Group', 'Payment_Terms_Code',
+      'Tax_Area_Code', 'Tax_Liable', 'Tax_Identification_Type', 'Application_Method', 'Location_Code']);
+    const by = Object.fromEntries(t.fields.map((f) => [f.name, f]));
+    expect(by.customer_price_group.required).toBeFalsy();
+    for (const n of ['code', 'contact_type', 'no_series', 'customer_posting_group', 'gen_bus_posting_group',
+      'payment_terms_code', 'tax_area_code', 'tax_identification_type', 'application_method', 'location_code'])
+      expect(by[n].required).toBe(true);
+    expect(by.no_series).toMatchObject({ optionsFrom: 'noSeries', optionsMatch: 'CUST' });
+    expect(by.application_method.defaultValue).toBe('Manual');
+    expect(by.contact_type.options?.map((o) => o.value)).toEqual(['Company', 'Person']);
+    expect(by.tax_identification_type.options?.map((o) => o.value)).toEqual(['Legal Entity', 'Natural Person']);
+    expect(by.application_method.options?.map((o) => o.value)).toEqual(['Manual', 'Apply to Oldest']);
+    expect(t.fields.filter((f) => f.listHidden).map((f) => f.name)).toEqual(['customer_posting_group',
+      'gen_bus_posting_group', 'tax_liable', 'tax_identification_type', 'application_method', 'location_code']);
+  });
+
+  it('number series is a read-only copy from the NoSeries page', () => {
+    expect(LIST_DEFINITIONS.noSeries).toMatchObject({ mode: 'readOnly', table: 'business_central_no_series',
+      source: { kind: 'odata', service: 'NoSeries', pageNumber: 456, keyFields: ['Code'] } });
   });
 });
