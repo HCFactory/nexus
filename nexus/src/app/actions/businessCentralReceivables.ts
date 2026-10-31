@@ -288,6 +288,8 @@ export async function getReceivablesSyncStatus(): Promise<BusinessCentralSyncChe
   return (data ?? []) as BusinessCentralSyncCheckpoint[];
 }
 
+const CUSTOMER_PAGE_SIZE = 1000;
+
 export async function getCustomersPageData(): Promise<{
   customers: BusinessCentralCustomer[];
   canSync: boolean;
@@ -300,15 +302,24 @@ export async function getCustomersPageData(): Promise<{
   const connection = await resolveActiveBcConnection(orgId, user.id);
   if (!connection) return { customers: [], canSync: false };
 
-  const { data } = await supabase
-    .from('business_central_customers')
-    .select('*')
-    .eq('organization_id', orgId)
-    .eq('bc_connection_id', connection.id)
-    .order('display_name', { ascending: true });
+  // Supabase caps a single response at 1,000 rows, so page through everything.
+  const customers: BusinessCentralCustomer[] = [];
+  for (let from = 0; ; from += CUSTOMER_PAGE_SIZE) {
+    const { data } = await supabase
+      .from('business_central_customers')
+      .select('*')
+      .eq('organization_id', orgId)
+      .eq('bc_connection_id', connection.id)
+      .order('display_name', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + CUSTOMER_PAGE_SIZE - 1);
+    const page = (data ?? []) as BusinessCentralCustomer[];
+    customers.push(...page);
+    if (page.length < CUSTOMER_PAGE_SIZE) break;
+  }
 
   return {
-    customers: (data ?? []) as BusinessCentralCustomer[],
+    customers,
     canSync: canEditBusinessCentralItems(access),
   };
 }
