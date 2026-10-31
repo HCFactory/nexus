@@ -163,6 +163,25 @@ describe('createCustomer', () => {
     const out = await createCustomer(deps, { templateCode: 'WHSL', values: TYPED });
     expect(out.number).toBe('W01251');
     expect(assigner.commit).toHaveBeenCalledTimes(1);
+    expect(assigner.commit).toHaveBeenCalledWith(expect.objectContaining({ candidate: 'W01251' }), 'W01251', undefined);
+  });
+
+  it('treats BC code Internal_EntityWithSameKeyExists as a duplicate number, whatever the text', async () => {
+    transport.create.mockRejectedValueOnce(new BcReferenceError(400, 'Der Datensatz existiert bereits.', 'Internal_EntityWithSameKeyExists'));
+    const out = await createCustomer(deps, { templateCode: 'WHSL', values: TYPED });
+    expect(out.number).toBe('W01251');
+    expect(transport.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failed number-series commit after a successful POST still records the customer and warns', async () => {
+    assigner.commit.mockRejectedValueOnce(new Error('No. Series busy'));
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const out = await createCustomer(deps, { templateCode: 'WHSL', values: TYPED });
+    expect(out.number).toBe('W01250');
+    expect(out.warning).toBe('Created W01250, but the number series in Business Central could not be updated. Tell an admin.');
+    expect(tables.business_central_customers).toHaveLength(1);
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('create validates every field', async () => {
@@ -211,6 +230,26 @@ describe('updateCustomer', () => {
     expect(transport.patch.mock.calls[1][3]).toEqual({ Name: 'New' });
     expect(tables.business_central_customers[0].display_name).toBe('New');
   });
+
+  it('with no stored card etag, reads the card first and uses its etag', async () => {
+    const original = { ...seedCustomer(), bc_card_etag: null };
+    tables.business_central_customers[0].bc_card_etag = null;
+    await updateCustomer(deps, { id: 'c1', original, edited: { ...original, credit_limit: 9 } });
+    expect(transport.get).toHaveBeenCalledTimes(1);
+    expect(transport.patch).toHaveBeenCalledTimes(1);
+    expect(transport.patch.mock.calls[0][2]).toBe('W/"e0"');
+  });
+
+  it('stores what BC returned, mapped like sync (blank Blocked -> null)', async () => {
+    const original = { ...seedCustomer(), blocked: 'All' };
+    transport.patch.mockImplementationOnce(async (_s, key) => {
+      const next = { key, etag: 'W/"bc"', fields: { No: 'W00001', Name: 'Trimmed', Blocked: ' ', Credit_Limit_LCY: 0 } };
+      cards.set('W00001', next);
+      return next;
+    });
+    await updateCustomer(deps, { id: 'c1', original, edited: { ...original, blocked: ' ', display_name: ' Trimmed ' } });
+    expect(tables.business_central_customers[0]).toMatchObject({ blocked: null, display_name: 'Trimmed', bc_card_etag: 'W/"bc"' });
+  });
 });
 
 describe('deleteCustomer', () => {
@@ -228,6 +267,22 @@ describe('deleteCustomer', () => {
     await deleteCustomer(deps, 'c1');
     expect(transport.remove.mock.calls[0][2]).toBe('W/"e0"');
     expect(cards.has('W00001')).toBe(false);
+    expect(tables.business_central_customers).toHaveLength(0);
+  });
+
+  it('with no stored card etag, reads the card first and deletes with its etag', async () => {
+    seedCustomer();
+    tables.business_central_customers[0].bc_card_etag = '';
+    await deleteCustomer(deps, 'c1');
+    expect(transport.get).toHaveBeenCalledTimes(1);
+    expect(transport.remove.mock.calls[0][2]).toBe('W/"e0"');
+    expect(tables.business_central_customers).toHaveLength(0);
+  });
+
+  it('a 404 from BC on delete means already gone: removes the Nexus row, no Blocked hint', async () => {
+    seedCustomer();
+    transport.remove.mockRejectedValueOnce(new BcReferenceError(404, 'The record does not exist.'));
+    await deleteCustomer(deps, 'c1');
     expect(tables.business_central_customers).toHaveLength(0);
   });
 });

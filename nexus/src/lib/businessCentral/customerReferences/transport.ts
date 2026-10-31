@@ -119,7 +119,7 @@ export function createReferenceTransport(
         throw new ReferencePageUnavailableError(source.service, source.pageNumber, res.status);
       }
     }
-    throw new BcReferenceError(res.status, bcMessage);
+    throw new BcReferenceError(res.status, bcMessage, bcCode);
   }
 
   async function readRecord(source: ReferenceSource, res: Response): Promise<BcRecord> {

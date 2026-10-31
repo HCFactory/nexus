@@ -141,6 +141,7 @@ describe('reference transport', () => {
     expect(err).toBeInstanceOf(BcReferenceError);
     expect(err.message).toBe('The record already exists.');
     expect(err.status).toBe(400);
+    expect(err.bcCode).toBe('Internal_EntityWithSameKeyExists');
   });
 
   it('falls back to status text when no BC message', async () => {

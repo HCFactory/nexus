@@ -1,10 +1,10 @@
 import type { BcClient } from '../client';
 import { LIST_DEFINITIONS } from './definitions';
 import type { ServiceDeps } from './service';
-import type { ReferenceSource, ReferenceTransport } from './transport';
+import type { ReferenceTransport } from './transport';
+import { CUSTOMER_CARD_SOURCE } from '../customers/customerCardFill';
 
 const CUSTOMER_PAGE = 1000;
-const CUSTOMER_CARD_SOURCE: ReferenceSource = { kind: 'odata', service: 'Customer_Card_Excel', pageNumber: 21, keyFields: ['No'] };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 

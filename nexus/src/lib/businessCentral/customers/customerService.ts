@@ -54,7 +54,24 @@ function assertValid(fields: FieldSpec[], values: Record<string, unknown>): void
 }
 
 function isDuplicateNumber(err: unknown): boolean {
-  return err instanceof BcReferenceError && (err.status === 409 || /already exists|duplicate/i.test(err.bcMessage));
+  if (!(err instanceof BcReferenceError)) return false;
+  if (err.bcCode === 'Internal_EntityWithSameKeyExists') return true;
+  // Fallback for responses without a code.
+  return err.status === 409 || /already exists|duplicate/i.test(err.bcMessage);
+}
+
+/** The stored card etag, or (when blank) a fresh one read from BC. */
+async function cardEtag(deps: CustomerServiceDeps, row: DbRow, key: BcKey): Promise<string> {
+  const stored = row.bc_card_etag;
+  if (typeof stored === 'string' && stored.trim() !== '') return stored;
+  return (await deps.transport.get(CUSTOMER_CARD_SOURCE, key)).etag;
+}
+
+/** Same blank-to-null rule the API v2 sync uses (customerMapper.emptyToNull). */
+function syncValue(v: unknown): unknown {
+  if (typeof v !== 'string') return v ?? null;
+  const t = v.trim();
+  return t ? t : null;
 }
 
 function recordedInBcOnly(number: string): Error {
@@ -127,7 +144,14 @@ export async function createCustomer(
   }
   if (!created) throw new Error(`Could not find a free number in series '${series}' after ${MAX_DUPLICATE_RETRIES} attempts`);
   const number = 'values' in created.key && created.key.values.No ? created.key.values.No : prepared.candidate;
-  await deps.assigner.commit(prepared, number, deps.today);
+  let warning: string | undefined;
+  try {
+    await deps.assigner.commit(prepared, number, deps.today);
+  } catch (err) {
+    // The customer exists in BC: never fail here, or a retry would create a duplicate.
+    console.error('[customers] created the customer but the number series commit failed:', err instanceof Error ? err.message : err);
+    warning = `Created ${number}, but the number series in Business Central could not be updated. Tell an admin.`;
+  }
 
   // BC can touch the record right after the POST; read it back for a fresh etag.
   const card = await deps.transport.get(CUSTOMER_CARD_SOURCE, { values: { No: number } }).catch(() => created as BcRecord);
@@ -161,7 +185,7 @@ export async function createCustomer(
     console.error('[customers] BC created the customer but the Nexus insert failed:', error?.message);
     throw recordedInBcOnly(number);
   }
-  return { id: String((data as DbRow).id), number };
+  return warning ? { id: String((data as DbRow).id), number, warning } : { id: String((data as DbRow).id), number };
 }
 
 export async function updateCustomer(
@@ -178,7 +202,7 @@ export async function updateCustomer(
   const key = cardKey(row);
   let record: BcRecord;
   try {
-    record = await deps.transport.patch(CUSTOMER_CARD_SOURCE, key, (row.bc_card_etag as string | null) ?? '', body);
+    record = await deps.transport.patch(CUSTOMER_CARD_SOURCE, key, await cardEtag(deps, row, key), body);
   } catch (err) {
     if (!(err instanceof BcConflictError)) throw err;
     const fresh = await deps.transport.get(CUSTOMER_CARD_SOURCE, key);
@@ -190,8 +214,15 @@ export async function updateCustomer(
     }
   }
 
-  const patch: DbRow = { bc_card_etag: record.etag || null, updated_at: deps.now() };
-  for (const name of changed) patch[name] = input.edited[name];
+  // Store what BC saved, mapped the way sync maps it, not the raw form values.
+  const cardColumns = mapCardToCustomerColumns(record);
+  const patch: DbRow = { bc_card_etag: cardColumns.bc_card_etag, updated_at: deps.now() };
+  for (const name of changed) {
+    const field = CUSTOMER_FIELDS.find((f) => f.name === name)!;
+    if (name in cardColumns) patch[name] = cardColumns[name];
+    else if (field.bcName in record.fields) patch[name] = syncValue(record.fields[field.bcName]);
+    else patch[name] = input.edited[name];
+  }
   const { error } = await deps.supabase
     .from(TABLE)
     .update(patch)
@@ -206,14 +237,18 @@ export async function updateCustomer(
 
 export async function deleteCustomer(deps: CustomerServiceDeps, id: string): Promise<void> {
   const row = await loadRow(deps, id);
+  const key = cardKey(row);
   try {
-    await deps.transport.remove(CUSTOMER_CARD_SOURCE, cardKey(row), (row.bc_card_etag as string | null) ?? '');
+    await deps.transport.remove(CUSTOMER_CARD_SOURCE, key, await cardEtag(deps, row, key));
   } catch (err) {
     if (err instanceof BcConflictError) throw new Error(DELETE_CONFLICT);
-    if (err instanceof BcReferenceError && err.status >= 400 && err.status < 500) {
-      throw new Error(`${err.bcMessage}${BLOCKED_HINT}`);
+    if (!(err instanceof BcReferenceError && err.status === 404)) {
+      if (err instanceof BcReferenceError && err.status >= 400 && err.status < 500) {
+        throw new Error(`${err.bcMessage}${BLOCKED_HINT}`);
+      }
+      throw err;
     }
-    throw err;
+    // 404: already gone from BC; fall through and remove the Nexus row.
   }
   const { error } = await deps.supabase
     .from(TABLE)

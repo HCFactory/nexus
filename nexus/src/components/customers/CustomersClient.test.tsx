@@ -49,4 +49,17 @@ describe('CustomersClient editing', () => {
     await waitFor(() => expect(actions.deleteCustomerAction).toHaveBeenCalledWith('c1'));
     expect(await screen.findByRole('alert')).toHaveTextContent('In use. You can set Blocked to All instead.');
   });
+
+  it('a pending delete does not show the Sync button as Syncing', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let finish: (v: unknown) => void = () => undefined;
+    actions.deleteCustomerAction.mockReturnValue(new Promise((r) => { finish = r; }));
+    render(<CustomersClient customers={customers} canSync={true} edit={edit} />);
+    fireEvent.click(screen.getByRole('button', { name: /delete acme/i }));
+    await waitFor(() => expect(actions.deleteCustomerAction).toHaveBeenCalledWith('c1'));
+    expect(screen.queryByText('Syncing…')).toBeNull();
+    expect(screen.getByRole('button', { name: /sync now/i })).toBeInTheDocument();
+    finish({ ok: true });
+    expect(await screen.findByText('Deleted Acme.')).toBeInTheDocument();
+  });
 });

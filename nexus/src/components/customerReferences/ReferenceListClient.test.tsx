@@ -125,7 +125,8 @@ describe('ReferenceListClient', () => {
     const busy = await screen.findByRole('button', { name: /syncing…/i });
     expect(busy.querySelector('svg')).toHaveClass('animate-spin');
     resolve({ ok: true, inserted: 0, updated: 0, deleted: 0 });
-    expect(await screen.findByRole('button', { name: /sync with bc/i })).toBeEnabled();
+    // The label flips before the transition ends; wait until the button is enabled too.
+    await waitFor(() => expect(screen.getByRole('button', { name: /sync with bc/i })).toBeEnabled());
     expect(screen.queryByRole('button', { name: /syncing…/i })).toBeNull();
   });
 

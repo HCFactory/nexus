@@ -46,7 +46,7 @@ function revalidateCustomers() {
 
 async function editScope(): Promise<Scope | null> {
   const scope = await requireActiveBusinessCentralScope();
-  return scope.access.canEditCustomers ? scope : null;
+  return scope.access.canEditCustomers && scope.access.canViewCustomers ? scope : null;
 }
 
 async function buildDeps(scope: Scope): Promise<CustomerServiceDeps> {
@@ -85,7 +85,10 @@ export async function getCustomerEditContext(): Promise<CustomerEditContext> {
     .eq('organization_id', scope.orgId)
     .eq('bc_connection_id', scope.bcConnectionId)
     .order('code', { ascending: true });
-  if (error) throw new Error(error.message);
+  if (error) {
+    console.error('[customers] could not load customer templates:', error.message);
+    return empty;
+  }
 
   const templates = ((data ?? []) as Row[]).map((r) => {
     const code = String(r.code);

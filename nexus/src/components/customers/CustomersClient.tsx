@@ -35,6 +35,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
   const [editError, setEditError] = useState<string | null>(null);
   const [search, setSearch] = useState(initialSearch ?? "");
   const [isPending, startTransition] = useTransition();
+  const [isDeleting, startDeleteTransition] = useTransition();
   const [syncResults, setSyncResults] = useState<SyncEntityResult[] | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
 
@@ -68,7 +69,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
     if (!window.confirm(DELETE_CONFIRM)) return;
     setEditError(null);
     setNotice(null);
-    startTransition(async () => {
+    startDeleteTransition(async () => {
       const res = await deleteCustomerAction(customer.id);
       if (!res.ok) {
         setEditError(res.error);
@@ -325,7 +326,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit }: Cus
                               variant="ghost"
                               size="icon-sm"
                               aria-label={`Delete ${customer.display_name}`}
-                              disabled={isPending}
+                              disabled={isPending || isDeleting}
                               onClick={() => removeCustomer(customer)}
                             >
                               <Trash2 className="size-4" />

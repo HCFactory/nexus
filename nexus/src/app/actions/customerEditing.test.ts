@@ -34,11 +34,11 @@ vi.mock('./customerReferenceLists', () => ({ getSelectOptions: mocks.getSelectOp
 import { createCustomerAction, deleteCustomerAction, getCustomerEditContext, updateCustomerAction } from './customerEditing';
 
 const NO_PERMISSION = "You don't have permission to change customers";
-const scope = (canEditCustomers: boolean) => ({
+const scope = (canEditCustomers: boolean, canViewCustomers = true) => ({
   orgId: 'org-1',
   bcConnectionId: 'conn-1',
   connection: { id: 'conn-1', time_zone: null },
-  access: { canEditCustomers, canViewCustomers: true },
+  access: { canEditCustomers, canViewCustomers },
 });
 
 const bc = { config: { companyId: 'c1', environment: 'TEST' }, getCompany: mocks.getCompany, listResourcePage: vi.fn() };
@@ -63,6 +63,17 @@ describe('permission', () => {
     expect(mocks.createCustomer).not.toHaveBeenCalled();
     expect(mocks.updateCustomer).not.toHaveBeenCalled();
     expect(mocks.deleteCustomer).not.toHaveBeenCalled();
+  });
+});
+
+describe('view permission', () => {
+  it('refuses writes when the user can edit but not view customers', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true, false));
+    expect(await createCustomerAction({ templateCode: 'T', values: {} })).toEqual({ ok: false, error: NO_PERMISSION });
+    expect(await updateCustomerAction({ id: 'x', original: {}, edited: {} })).toEqual({ ok: false, error: NO_PERMISSION });
+    expect(await deleteCustomerAction('x')).toEqual({ ok: false, error: NO_PERMISSION });
+    expect(await getCustomerEditContext()).toEqual({ canEdit: false, templates: [], selectOptions: {} });
+    expect(mocks.createCustomer).not.toHaveBeenCalled();
   });
 });
 
@@ -110,6 +121,16 @@ describe('getCustomerEditContext', () => {
   it('is empty without permission', async () => {
     mocks.requireScope.mockResolvedValue(scope(false));
     expect(await getCustomerEditContext()).toEqual({ canEdit: false, templates: [], selectOptions: {} });
+  });
+
+  it('a failed templates query logs and returns the empty context', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    const q = { select: () => q, eq: () => q, order: () => Promise.resolve({ data: null, error: { message: 'boom' } }) };
+    mocks.createClient.mockResolvedValue({ from: () => q });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(await getCustomerEditContext()).toEqual({ canEdit: false, templates: [], selectOptions: {} });
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 
   it('loads scoped templates and dropdown options', async () => {

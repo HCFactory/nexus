@@ -21,11 +21,14 @@ export class BcConflictError extends Error {
 export class BcReferenceError extends Error {
   readonly status: number;
   readonly bcMessage: string;
-  constructor(status: number, bcMessage: string) {
+  /** BC's error code (body.error.code), e.g. Internal_EntityWithSameKeyExists; '' when absent. */
+  readonly bcCode: string;
+  constructor(status: number, bcMessage: string, bcCode = '') {
     super(bcMessage);
     this.name = 'BcReferenceError';
     this.status = status;
     this.bcMessage = bcMessage;
+    this.bcCode = bcCode;
   }
 }
 

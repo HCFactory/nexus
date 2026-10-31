@@ -202,6 +202,7 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
           .select('bc_customer_number')
           .eq('organization_id', orgId)
           .eq('bc_connection_id', connection.id)
+          .order('bc_customer_number', { ascending: true })
           .range(from, from + 999);
         if (error) throw error;
         for (const r of data ?? []) if (r.bc_customer_number) known.add(r.bc_customer_number as string);
