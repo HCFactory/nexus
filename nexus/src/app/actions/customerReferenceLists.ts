@@ -119,8 +119,10 @@ function followUpLists(key: ListKey, input: { id: string | null; original: Row |
   }
   const renamed = 'code' in input.edited && input.original !== null && input.edited.code !== input.original.code;
   if (!renamed) return [];
-  if (key === 'taxAreas') return ['taxAreaLines'];
+  // BC carries a renamed payment term, price group or tax area into customer templates.
+  if (key === 'taxAreas') return ['taxAreaLines', 'customerTemplates'];
   if (key === 'taxJurisdictions') return ['taxAreaLines', 'taxDetails'];
+  if (key === 'paymentTerms' || key === 'customerPriceGroups') return ['customerTemplates'];
   return [];
 }
 
@@ -181,7 +183,10 @@ export async function deleteReferenceEntry(key: ListKey, id: string): Promise<{ 
 // Tax area lines have no list page of their own, so a tax areas sync also pulls
 // them; otherwise a fresh environment shows every area with no jurisdictions.
 function listsToSync(key: ListKey): ListKey[] {
-  return key === 'taxAreas' ? ['taxAreas', 'taxAreaLines'] : [key];
+  if (key === 'taxAreas') return ['taxAreas', 'taxAreaLines'];
+  // Templates pick their number series from this read-only list.
+  if (key === 'customerTemplates') return ['noSeries', 'customerTemplates'];
+  return [key];
 }
 
 export async function syncReferenceList(

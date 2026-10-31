@@ -5,7 +5,7 @@ import type { ListKey } from '@/types/customerReferences';
 
 export const dynamic = 'force-dynamic';
 
-const MANAGED: ListKey[] = ['paymentTerms', 'customerPriceGroups', 'taxAreas', 'taxJurisdictions', 'taxDetails'];
+const MANAGED: ListKey[] = ['customerTemplates', 'paymentTerms', 'customerPriceGroups', 'taxAreas', 'taxJurisdictions', 'taxDetails'];
 const COPIED: ListKey[] = ['locations', 'customerPostingGroups', 'generalBusinessPostingGroups'];
 
 function Group({ title, keys }: { title: string; keys: ListKey[] }) {

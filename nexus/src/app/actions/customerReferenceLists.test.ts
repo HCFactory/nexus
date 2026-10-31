@@ -173,13 +173,31 @@ describe('saveReferenceEntry', () => {
     mocks.requireScope.mockResolvedValue(scope(true));
     mocks.saveEntry.mockResolvedValue({ id: 'e' });
     await saveReferenceEntry('taxAreas', { id: 'e', original: { code: 'A1' }, edited: { code: 'A2' } });
-    expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['taxAreaLines']);
+    expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['taxAreaLines', 'customerTemplates']);
   });
 
-  it('renaming a payment term does not sync anything else', async () => {
+  it.each(['paymentTerms', 'customerPriceGroups'] as const)(
+    'renaming %s re-pulls customer templates only',
+    async (key) => {
+      mocks.requireScope.mockResolvedValue(scope(true));
+      mocks.saveEntry.mockResolvedValue({ id: 'e' });
+      await saveReferenceEntry(key, { id: 'e', original: { code: 'N30' }, edited: { code: 'N31' } });
+      expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['customerTemplates']);
+    },
+  );
+
+  it('rename follow-up failure on customerTemplates is a warning', async () => {
     mocks.requireScope.mockResolvedValue(scope(true));
     mocks.saveEntry.mockResolvedValue({ id: 'e' });
-    await saveReferenceEntry('paymentTerms', { id: 'e', original: { code: 'N30' }, edited: { code: 'N31' } });
+    mocks.syncList.mockRejectedValue(new Error('BC down'));
+    const res = await saveReferenceEntry('paymentTerms', { id: 'e', original: { code: 'N30' }, edited: { code: 'N31' } });
+    expect(res).toMatchObject({ ok: true, warning: expect.stringContaining('Customer templates') });
+  });
+
+  it('creating a customer template triggers no follow-up', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.saveEntry.mockResolvedValue({ id: 'e' });
+    await saveReferenceEntry('customerTemplates', { id: null, original: null, edited: { code: 'T1' } });
     expect(mocks.syncList).not.toHaveBeenCalled();
   });
 });
@@ -239,6 +257,15 @@ describe('syncReferenceList', () => {
       .mockResolvedValueOnce({ inserted: 10, updated: 20, deleted: 30 });
     expect(await syncReferenceList('taxAreas')).toEqual({ ok: true, inserted: 11, updated: 22, deleted: 33 });
     expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['taxAreas', 'taxAreaLines']);
+  });
+
+  it('syncing customer templates syncs number series first and sums the counts', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.syncList
+      .mockResolvedValueOnce({ inserted: 1, updated: 2, deleted: 3 })
+      .mockResolvedValueOnce({ inserted: 10, updated: 20, deleted: 30 });
+    expect(await syncReferenceList('customerTemplates')).toEqual({ ok: true, inserted: 11, updated: 22, deleted: 33 });
+    expect(mocks.syncList.mock.calls.map((c) => c[1].key)).toEqual(['noSeries', 'customerTemplates']);
   });
 });
 

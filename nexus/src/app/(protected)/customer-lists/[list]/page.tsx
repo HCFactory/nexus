@@ -17,8 +17,8 @@ export default async function CustomerReferenceListPage({
 }) {
   const { list } = await params;
   const { jurisdiction } = await searchParams;
-  // taxAreaLines is only reached through a tax area page.
-  if (!Object.hasOwn(LIST_DEFINITIONS, list) || list === 'taxAreaLines') notFound();
+  // taxAreaLines is only reached through a tax area page; noSeries is only a pick list.
+  if (!Object.hasOwn(LIST_DEFINITIONS, list) || list === 'taxAreaLines' || list === 'noSeries') notFound();
   const key = list as ListKey;
   const jurisdictionCode = key === 'taxDetails' && typeof jurisdiction === 'string' && jurisdiction ? jurisdiction : undefined;
 
