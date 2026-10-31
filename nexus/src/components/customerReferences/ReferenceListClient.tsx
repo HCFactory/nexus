@@ -72,7 +72,9 @@ export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFi
   }
 
   return (
-    <div className="space-y-4 p-5">
+    // Fills the page height so only the table body scrolls; min-h on the table keeps it usable
+    // when the add/edit form is open (the page itself scrolls then).
+    <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
       <header className="flex flex-wrap items-center gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">{data.title}</h1>
@@ -119,9 +121,9 @@ export function ReferenceListClient({ data, selectOptions, fixedValues, hiddenFi
         />
       )}
 
-      <div className="overflow-x-auto rounded-xl border border-border bg-surface-raised card-shadow">
+      <div className="min-h-48 flex-1 overflow-auto rounded-xl border border-border bg-surface-raised card-shadow">
         <table className="w-full text-sm">
-          <thead>
+          <thead className="sticky top-0 z-10 bg-surface-raised">
             <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-foreground-subtle">
               {shownFields.map((f) => (
                 <th key={f.name} className="px-3 py-2 font-medium">{f.label}</th>
