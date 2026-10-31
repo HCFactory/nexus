@@ -6,6 +6,7 @@ import { saveReferenceEntry } from '@/app/actions/customerReferenceLists';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { changedFields } from '@/lib/businessCentral/customerReferences/merge';
 import { validateEntry } from '@/lib/businessCentral/customerReferences/validation';
 import type { FieldSpec, ListKey, ReferenceEntry } from '@/types/customerReferences';
 import { ChangePreview } from './ChangePreview';
@@ -59,7 +60,12 @@ export function ReferenceEntryForm({ listKey, fields, entry, selectOptions, onDo
   function review() {
     const values: Row = {};
     for (const f of editable) values[f.name] = toValue(f, raw[f.name]);
-    const problems = validateEntry(editable, values);
+    // Creates validate every field; edits only what the admin changed, so an old
+    // BC value in an untouched field never blocks an unrelated edit.
+    const toCheck = entry
+      ? editable.filter((f) => changedFields(entry.values, values, editable).includes(f.name))
+      : editable;
+    const problems = validateEntry(toCheck, values);
     setErrors(problems);
     setServerError(null);
     if (problems.length === 0) setEdited(values);

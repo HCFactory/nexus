@@ -88,7 +88,8 @@ export const LIST_DEFINITIONS: Record<ListKey, ListDefinition> = {
       f('tax_type', 'Tax_Type', 'Tax type', 'text', true, { required: true, isKey: true }),
       f('effective_date', 'Effective_Date', 'Effective date', 'date', true, { required: true, isKey: true }),
       f('maximum_amount_qty', 'Maximum_Amount_Qty', 'Maximum amount/qty', 'number', true),
-      f('tax_below_maximum', 'Tax_Below_Maximum', 'Tax below maximum %', 'percent', true),
+      // Required: a blank rate would silently be sent to BC as 0%.
+      f('tax_below_maximum', 'Tax_Below_Maximum', 'Tax below maximum %', 'percent', true, { required: true }),
       f('tax_above_maximum', 'Tax_Above_Maximum', 'Tax above maximum %', 'percent', true),
     ],
   },

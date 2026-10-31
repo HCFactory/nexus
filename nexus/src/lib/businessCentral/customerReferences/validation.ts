@@ -1,7 +1,12 @@
 import type { FieldSpec } from '@/types/customerReferences';
 
-const TERM = '(?:\\d+[DWMQY]|C[DWMQY])';
-const DATE_FORMULA = new RegExp(`^(?:CM|CQ|CY|CW|[+-]?${TERM})(?:[+-]${TERM})*$`, 'i');
+// BC date formula units: D, WD (weekday), W, M, Q, Y. A term is a number then a
+// unit (10D, 5WD), C then a unit for "current period" (CM, CWD), or a unit then a
+// number for "next day/weekday N" (D10, WD2). Terms are joined with + or -, and
+// the first may carry a sign: CM+10D, 1M+CM, -1W.
+const UNIT = '(?:WD|[DWMQY])';
+const TERM = `(?:\\d+${UNIT}|C${UNIT}|${UNIT}\\d+)`;
+const DATE_FORMULA = new RegExp(`^[+-]?${TERM}(?:[+-]${TERM})*$`, 'i');
 
 function isBlank(v: unknown): boolean {
   return v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
@@ -12,8 +17,12 @@ function isRealDate(v: unknown): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.trim());
   if (!m) return false;
   const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  const dt = new Date(Date.UTC(y, mo - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+  // Checked by hand: Date.UTC maps years 0-99 to 1900-1999, which would reject
+  // BC's blank date 0001-01-01.
+  if (y < 1 || mo < 1 || mo > 12 || d < 1) return false;
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
+  return d <= daysInMonth;
 }
 
 /** Returns user-facing messages; [] means valid. Runs in the browser too. */

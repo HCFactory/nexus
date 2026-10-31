@@ -1,6 +1,7 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
+import { coerce } from '@/lib/businessCentral/customerReferences/mapping';
 import { changedFields } from '@/lib/businessCentral/customerReferences/merge';
 import type { FieldSpec } from '@/types/customerReferences';
 
@@ -13,6 +14,11 @@ interface ChangePreviewProps {
   disabled?: boolean;
 }
 
+/** Values as Business Central will store them: the same null coercion as toBcFields. */
+function asBc(fields: FieldSpec[], values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(fields.map((f) => [f.name, coerce(f, values[f.name])]));
+}
+
 function show(value: unknown, field: FieldSpec): string {
   if (value === null || value === undefined || value === '') return '(empty)';
   if (field.type === 'boolean') return value ? 'Yes' : 'No';
@@ -21,9 +27,10 @@ function show(value: unknown, field: FieldSpec): string {
 
 export function ChangePreview({ fields, original, edited, onConfirm, onCancel, disabled }: ChangePreviewProps) {
   const editable = fields.filter((f) => f.editable);
-  const names = original
-    ? changedFields(original, edited, editable)
-    : editable.filter((f) => edited[f.name] !== null && edited[f.name] !== undefined && edited[f.name] !== '').map((f) => f.name);
+  const before = original ? asBc(editable, original) : null;
+  const after = asBc(editable, edited);
+  // A create sends every editable field, so list them all.
+  const names = before ? changedFields(before, after, editable) : editable.map((f) => f.name);
   const shown = editable.filter((f) => names.includes(f.name));
 
   return (
@@ -35,9 +42,9 @@ export function ChangePreview({ fields, original, edited, onConfirm, onCancel, d
         <ul className="space-y-1 text-sm text-foreground">
           {shown.map((f) => (
             <li key={f.name}>
-              {original
-                ? `${f.label}: ${show(original[f.name], f)} → ${show(edited[f.name], f)}`
-                : `${f.label}: ${show(edited[f.name], f)}`}
+              {before
+                ? `${f.label}: ${show(before[f.name], f)} → ${show(after[f.name], f)}`
+                : `${f.label}: ${show(after[f.name], f)}`}
             </li>
           ))}
         </ul>

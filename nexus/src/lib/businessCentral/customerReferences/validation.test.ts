@@ -31,10 +31,27 @@ describe('validateEntry', () => {
     for (const bad of ['30 days', 'abc']) expect(validateEntry([df], { due_date_calculation: bad })).toEqual(['Use a BC date formula like 30D, 1M or CM']);
     expect(validateEntry([df], { due_date_calculation: '' })).toEqual([]);
   });
+  it('date formula accepts every BC unit, C prefix, signs and combinations', () => {
+    for (const ok of ['5WD', 'CWD', '10D', '2W', '1M', '1Q', '1Y', 'CD', 'CW', 'CM', 'CQ', 'CY', 'CM+10D', '1M+CM', '-1W', '+1W',
+      '-CM', 'CM-1D', '1Y-1D+CM', ' 30D ', '5wd', 'cm+10d', 'D10', 'WD2']) {
+      expect(validateEntry([df], { due_date_calculation: ok }), ok).toEqual([]);
+    }
+    for (const bad of ['10', 'D', 'CM+', '1X', '++1D', 'C', '1MM', 'CM 10D']) {
+      expect(validateEntry([df], { due_date_calculation: bad }), bad).toEqual(['Use a BC date formula like 30D, 1M or CM']);
+    }
+  });
   it('effective date required and real', () => {
     expect(validateEntry([eff], { effective_date: '' })).toEqual(['Effective Date is required']);
     expect(validateEntry([eff], { effective_date: '2025-02-30' })).toEqual(['Effective Date must be a valid date']);
     expect(validateEntry([eff], { effective_date: 'nope' })).toEqual(['Effective Date must be a valid date']);
     expect(validateEntry([eff], { effective_date: '2025-02-28' })).toEqual([]);
+  });
+  it("accepts BC's blank date 0001-01-01 and checks leap years without the two-digit-year pitfall", () => {
+    for (const ok of ['0001-01-01', '0099-12-31', '2024-02-29', '2000-02-29', '1999-12-31']) {
+      expect(validateEntry([eff], { effective_date: ok }), ok).toEqual([]);
+    }
+    for (const bad of ['2023-02-29', '1900-02-29', '2025-13-01', '2025-00-10', '2025-04-31', '0000-01-01', '2025-01-00']) {
+      expect(validateEntry([eff], { effective_date: bad }), bad).toEqual(['Effective Date must be a valid date']);
+    }
   });
 });

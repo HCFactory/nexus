@@ -2,8 +2,11 @@ import type { FieldSpec } from '@/types/customerReferences';
 import type { ListDefinition } from './listDefinition';
 import type { BcRecord } from './transport';
 
-/** BC fields are never null: coerce by type. Dates stay null. */
-function coerce(f: FieldSpec, v: unknown): unknown {
+// Client-safe: imported by ChangePreview, so this file must only take type imports
+// from server code.
+
+/** BC fields are never null: coerce by type. Dates stay null. The preview shows values through this too. */
+export function coerce(f: FieldSpec, v: unknown): unknown {
   if (v !== null && v !== undefined) return v;
   switch (f.type) {
     case 'text': case 'select': case 'dateFormula': return '';

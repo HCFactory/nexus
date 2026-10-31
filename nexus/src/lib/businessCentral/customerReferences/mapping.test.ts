@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { toBcFields, toDbValues } from './mapping';
+import { coerce, toBcFields, toDbValues } from './mapping';
+import type { FieldSpec } from '@/types/customerReferences';
 import type { ListDefinition } from './listDefinition';
 import { LIST_DEFINITIONS } from './definitions';
 
@@ -26,5 +27,14 @@ describe('mapping', () => {
   it('defaults missing numeric BC fields to 0', () => {
     const rec = { key: { bcId: '1' }, etag: 'e', fields: { Tax_Jurisdiction_Code: 'J' } } as never;
     expect(toDbValues(LIST_DEFINITIONS.taxDetails, rec)).toMatchObject({ tax_below_maximum: 0, maximum_amount_qty: 0, effective_date: null });
+  });
+  it('coerce is the single null rule shared with the change preview', () => {
+    const spec = (type: FieldSpec['type']) => ({ name: 'x', bcName: 'X', label: 'X', type, editable: true }) as FieldSpec;
+    expect(coerce(spec('percent'), null)).toBe(0);
+    expect(coerce(spec('number'), undefined)).toBe(0);
+    expect(coerce(spec('text'), null)).toBe('');
+    expect(coerce(spec('boolean'), null)).toBe(false);
+    expect(coerce(spec('date'), null)).toBeNull();
+    expect(coerce(spec('percent'), 4.5)).toBe(4.5);
   });
 });

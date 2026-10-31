@@ -73,6 +73,8 @@ describe('LIST_DEFINITIONS', () => {
     const f = (k: ListKey, n: string) => LIST_DEFINITIONS[k].fields.find((x) => x.name === n)!;
     expect(f('taxDetails', 'tax_group_code')).toMatchObject({ type: 'select', optionsFrom: 'taxGroups' });
     expect(f('taxDetails', 'tax_group_code').required).toBeFalsy();
+    // A blank rate would silently become 0% in BC.
+    expect(f('taxDetails', 'tax_below_maximum').required).toBe(true);
     expect(f('taxDetails', 'tax_jurisdiction_code').optionsFrom).toBe('taxJurisdictions');
     expect(f('taxAreaLines', 'tax_jurisdiction_code').optionsFrom).toBe('taxJurisdictions');
     expect(f('taxAreas', 'tax_type').editable).toBe(false);

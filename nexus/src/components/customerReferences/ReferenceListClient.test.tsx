@@ -64,6 +64,32 @@ describe('ReferenceListClient', () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it('an old invalid BC value in an untouched field does not block editing another field', async () => {
+    const fields: FieldSpec[] = [
+      ...termFields,
+      { name: 'due_date_calculation', bcName: 'dueDateCalculation', label: 'Due date calculation', type: 'dateFormula', editable: true },
+    ];
+    const entries = [{ id: 'e1', values: { code: 'NET30', display_name: 'Net 30', discount_percent: 2, due_date_calculation: '<weird>' }, bcLastModifiedAt: null, lastSyncedAt: null }];
+    render(<ReferenceListClient data={page({ fields, entries })} selectOptions={{}} />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit/i }));
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'Net thirty' } });
+    fireEvent.click(screen.getByRole('button', { name: /review changes/i }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Description: Net 30 → Net thirty')).toBeInTheDocument();
+  });
+
+  it('a changed invalid field is still rejected on edit', () => {
+    const fields: FieldSpec[] = [
+      ...termFields,
+      { name: 'due_date_calculation', bcName: 'dueDateCalculation', label: 'Due date calculation', type: 'dateFormula', editable: true },
+    ];
+    render(<ReferenceListClient data={page({ fields })} selectOptions={{}} />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit/i }));
+    fireEvent.change(screen.getByLabelText(/Due date calculation/), { target: { value: 'banana' } });
+    fireEvent.click(screen.getByRole('button', { name: /review changes/i }));
+    expect(screen.getByRole('alert').textContent).toMatch(/BC date formula/);
+  });
+
   it('action error is shown inline', async () => {
     actions.deleteReferenceEntry.mockResolvedValue({ ok: false, error: 'Used by 12 customers' });
     render(<ReferenceListClient data={page()} selectOptions={{}} />);
