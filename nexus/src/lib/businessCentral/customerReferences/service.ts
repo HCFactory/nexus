@@ -19,6 +19,19 @@ export interface ServiceDeps {
 
 type DbRow = Record<string, unknown>;
 
+const NEXUS_RECORD_FAILED = 'Saved in Business Central, but Nexus could not record it. Press Sync.';
+const DELETE_CONFLICT = 'This entry changed in Business Central. Press Sync and try again.';
+
+/** BC already holds the change; a Nexus write failure must not read as a failed BC save. */
+async function recordInNexus(write: () => Promise<DbRow>): Promise<DbRow> {
+  try {
+    return await write();
+  } catch (err) {
+    console.error('[customer-lists] BC accepted the change but the Nexus write failed:', err instanceof Error ? err.message : err);
+    throw new Error(NEXUS_RECORD_FAILED);
+  }
+}
+
 function toLocalRow(def: ListDefinition, row: DbRow): LocalRow {
   const keyValues: Record<string, string> = {};
   const values: Record<string, unknown> = {};
@@ -112,17 +125,19 @@ export async function saveEntry(
   def: ListDefinition,
   input: { id: string | null; original: Record<string, unknown> | null; edited: Record<string, unknown> },
 ): Promise<ReferenceEntry> {
-  const problems = validateEntry(def.fields, input.edited);
-  if (problems.length > 0) throw new Error(problems.join('\n'));
-
   if (input.id === null) {
+    // Creates validate every field.
+    assertValid(def.fields, input.edited);
     const record = await deps.transport.create(def.source, toBcFields(def, input.edited));
-    return toEntry(def, await insertRow(deps, def, record));
+    return toEntry(def, await recordInNexus(() => insertRow(deps, def, record)));
   }
 
   const row = await loadRow(deps, def, input.id);
   const changed = changedFields(input.original ?? toLocalRow(def, row).values, input.edited, def.fields);
   if (changed.length === 0) return toEntry(def, row);
+  // Edits validate only what the admin changed: an old BC value in an untouched
+  // field must never block an unrelated edit.
+  assertValid(def.fields.filter((f) => changed.includes(f.name)), input.edited);
 
   const body = toBcFields(def, Object.fromEntries(changed.map((name) => [name, input.edited[name]])));
   const key = keyForRow(def, row);
@@ -141,7 +156,23 @@ export async function saveEntry(
       throw err2;
     }
   }
-  return toEntry(def, await updateRow(deps, def, input.id, rowFromRecord(def, record, deps.now())));
+  const id = input.id;
+  return toEntry(def, await recordInNexus(() => updateRow(deps, def, id, rowFromRecord(def, record, deps.now()))));
+}
+
+function assertValid(fields: ListDefinition['fields'], values: Record<string, unknown>): void {
+  const problems = validateEntry(fields, values);
+  if (problems.length > 0) throw new Error(problems.join('\n'));
+}
+
+async function deleteScoped(deps: ServiceDeps, table: string, column: string, value: unknown): Promise<void> {
+  const { error } = await deps.supabase
+    .from(table)
+    .delete()
+    .eq(column, value)
+    .eq('organization_id', deps.orgId)
+    .eq('bc_connection_id', deps.connectionId);
+  if (error) throw new Error(error.message);
 }
 
 export async function deleteEntry(deps: ServiceDeps, def: ListDefinition, id: string): Promise<void> {
@@ -150,18 +181,19 @@ export async function deleteEntry(deps: ServiceDeps, def: ListDefinition, id: st
   const usage = await deps.countUsage(def, toLocalRow(def, row));
   if (usage) throw new ReferenceInUseError(usage);
 
-  await deps.transport.remove(def.source, keyForRow(def, row), (row.bc_etag as string | null) ?? '');
-
-  const scope = (q: any) => q.eq('organization_id', deps.orgId).eq('bc_connection_id', deps.connectionId);
-  const { error } = await scope(deps.supabase.from(def.table).delete().eq('id', id));
-  if (error) throw new Error(error.message);
-
-  if (def.key === 'taxAreas') {
-    const res = await scope(
-      deps.supabase.from('business_central_tax_area_lines').delete().eq('tax_area_code', row.code as string),
-    );
-    if (res.error) throw new Error(res.error.message);
+  try {
+    await deps.transport.remove(def.source, keyForRow(def, row), (row.bc_etag as string | null) ?? '');
+  } catch (err) {
+    if (err instanceof BcConflictError) throw new Error(DELETE_CONFLICT);
+    throw err;
   }
+
+  // BC deletes a tax area's lines with it; remove the Nexus lines first so a
+  // failure never leaves lines pointing at an area Nexus no longer has.
+  if (def.key === 'taxAreas') {
+    await deleteScoped(deps, 'business_central_tax_area_lines', 'tax_area_code', row.code);
+  }
+  await deleteScoped(deps, def.table, 'id', id);
 }
 
 export async function syncList(
@@ -178,16 +210,11 @@ export async function syncList(
   const rows = (data ?? []) as DbRow[];
   const plan = planSyncPull(def, rows.map((r) => toLocalRow(def, r)), remote);
 
-  for (const record of plan.inserts) await insertRow(deps, def, record);
+  // Deletes first, then updates, then inserts: an entry deleted and re-created in BC
+  // with the same code (new id) is a delete plus an insert, and the insert would hit
+  // the unique (org, connection, code) constraint while the old row still exists.
+  for (const id of plan.deletes) await deleteScoped(deps, def.table, 'id', id);
   for (const u of plan.updates) await updateRow(deps, def, u.id, rowFromRecord(def, u.record, deps.now()));
-  for (const id of plan.deletes) {
-    const res = await deps.supabase
-      .from(def.table)
-      .delete()
-      .eq('id', id)
-      .eq('organization_id', deps.orgId)
-      .eq('bc_connection_id', deps.connectionId);
-    if (res.error) throw new Error(res.error.message);
-  }
+  for (const record of plan.inserts) await insertRow(deps, def, record);
   return { inserted: plan.inserts.length, updated: plan.updates.length, deleted: plan.deletes.length };
 }
