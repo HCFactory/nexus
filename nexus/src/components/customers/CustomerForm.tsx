@@ -1,12 +1,12 @@
 'use client';
 
-import type { BillcomSaveStatus } from "@/lib/billcom/customerSyncHooks";
 import { useState, useTransition } from 'react';
 
 import { createCustomerAction, updateCustomerAction, type CustomerTemplateOption } from '@/app/actions/customerEditing';
 import { FieldInput, optionsFor, toRaw, toValue } from '@/components/customerReferences/ReferenceEntryForm';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import type { BillcomSaveStatus } from '@/lib/billcom/customerSyncHooks';
 import { normalizeBlocked } from '@/lib/businessCentral/customerMapper';
 import { changedFields } from '@/lib/businessCentral/customerReferences/merge';
 import { validateEntry } from '@/lib/businessCentral/customerReferences/validation';

@@ -175,7 +175,8 @@ export async function getBillcomCustomerView(customerNumber?: string): Promise<B
       pendingCount,
       links,
     };
-  } catch {
+  } catch (e) {
+    console.error('getBillcomCustomerView failed', e);
     return VIEW_OFF;
   }
 }

@@ -118,4 +118,81 @@ describe('BillcomPushPanel', () => {
     await flushAll();
     expect(actions.runPendingPush).toHaveBeenCalledTimes(1);
   });
+
+  it('stops when two batches in a row make no progress', async () => {
+    actions.runPendingPush.mockResolvedValue({ ok: true, result: result({ remaining: 5, stoppedReason: 'budget' }) });
+    render(<BillcomPushPanel pendingCount={5} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Send 5 waiting customers' }));
+    await flushAll();
+    expect(actions.runPendingPush).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      "Sending stalled — Bill.com didn't accept any customers. Try again in a few minutes.",
+    );
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('Try again repeats the step that failed (confirm)', async () => {
+    actions.previewInitialPush.mockResolvedValue({ ok: true, preview });
+    actions.confirmInitialPush
+      .mockResolvedValueOnce({ ok: false, error: 'Network down' })
+      .mockResolvedValueOnce({ ok: true, result: result({ created: 1 }) });
+    render(<BillcomPushPanel pendingCount={0} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Push to Bill.com' }));
+    await flushAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await flushAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await flushAll();
+    expect(actions.confirmInitialPush).toHaveBeenCalledTimes(2);
+    expect(actions.runPendingPush).not.toHaveBeenCalled();
+  });
+
+  it('startPending() does not overwrite an open preview or a loading preview', async () => {
+    let finishPreview: (v: unknown) => void = () => undefined;
+    actions.previewInitialPush.mockReturnValue(new Promise((r) => { finishPreview = r; }));
+    const ref = createRef<BillcomPushPanelHandle>();
+    render(<BillcomPushPanel ref={ref} pendingCount={3} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Push to Bill.com' }));
+    await act(async () => { ref.current?.startPending(); });
+    finishPreview({ ok: true, preview });
+    await flushAll();
+    await act(async () => { ref.current?.startPending(); });
+    await flushAll();
+    expect(actions.runPendingPush).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+  });
+
+  it('makes no further calls after unmount mid-run', async () => {
+    let finish: (v: unknown) => void = () => undefined;
+    actions.runPendingPush.mockReturnValueOnce(new Promise((r) => { finish = r; }));
+    const { unmount } = render(<BillcomPushPanel pendingCount={9} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Send 9 waiting customers' }));
+    unmount();
+    finish({ ok: true, result: result({ created: 1, remaining: 8 }) });
+    await flushAll();
+    expect(actions.runPendingPush).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the rate-limit timer on unmount', async () => {
+    vi.useFakeTimers();
+    actions.runPendingPush.mockResolvedValue({ ok: true, result: result({ created: 1, remaining: 5, stoppedReason: 'rate_limit' }) });
+    const { unmount } = render(<BillcomPushPanel pendingCount={6} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Send 6 waiting customers' }));
+    await flushAll();
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    await act(async () => { vi.advanceTimersByTime(60_000); });
+    expect(actions.runPendingPush).toHaveBeenCalledTimes(1);
+  });
+
+  it('a double-click on Send waiting starts one run', async () => {
+    actions.runPendingPush.mockReturnValue(new Promise(() => undefined));
+    render(<BillcomPushPanel pendingCount={2} />);
+    const button = screen.getByRole('button', { name: 'Send 2 waiting customers' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await flushAll();
+    expect(actions.runPendingPush).toHaveBeenCalledTimes(1);
+  });
 });

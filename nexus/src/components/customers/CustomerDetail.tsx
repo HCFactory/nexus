@@ -58,6 +58,9 @@ function FieldCard({
 
 export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom }: CustomerDetailProps) {
   const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
   const [notice, setNotice] = useState<string | null>(null);
   const [isRetrying, startRetry] = useTransition();
   const number = customer.bc_customer_number ?? "";
@@ -77,9 +80,6 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billco
     });
   };
   const canEdit = edit?.canEdit === true;
-  const [editing, setEditing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
 
   const remove = () => {
     if (!window.confirm(DELETE_CONFIRM)) return;

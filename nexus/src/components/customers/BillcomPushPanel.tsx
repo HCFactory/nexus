@@ -26,11 +26,16 @@ type RunState =
   | { kind: "preview"; preview: PushPreview }
   | { kind: "running"; sent: number; total: number; waiting: boolean }
   | { kind: "done"; total: number; failed: number; needsAttention: number }
-  | { kind: "error"; message: string; canRetry: boolean };
+  | { kind: "error"; message: string; retry?: Step };
+
+type Step = "confirm" | "pending";
 
 type Outcome = { ok: true; result: PushResult } | { ok: false; error: string };
 
 const n = (x: number) => x.toLocaleString("en-US");
+export const STALLED =
+  "Sending stalled — Bill.com didn't accept any customers. Try again in a few minutes.";
+const STALL_LIMIT = 2;
 const processed = (r: PushResult) => r.created + r.updated + r.linked + r.unchanged + r.failed + r.needsAttention;
 
 export function BillcomPushPanel({ pendingCount, ref }: Props) {
@@ -38,29 +43,39 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
   const [state, setState] = useState<RunState>({ kind: "idle" });
   const active = useRef(false);
   const mounted = useRef(true);
+  const stateRef = useRef<RunState>(state);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const show = (next: RunState) => {
+    stateRef.current = next;
+    setState(next);
+  };
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
     };
   }, []);
 
   /** Run batches until nothing remains, the page closes, or the list can't be read. */
-  async function run(first: () => Promise<Outcome>) {
+  async function run(step: Step) {
     if (active.current) return;
     active.current = true;
+    let stalled = 0;
     let sent = 0;
     let total = 0;
     let failed = 0;
     let needsAttention = 0;
-    let next = first;
+    let current: Step = step;
     try {
       while (mounted.current) {
-        const res = await next();
+        const res: Outcome = await (current === "confirm" ? confirmInitialPush() : runPendingPush());
         if (!mounted.current) return;
         if (!res.ok) {
-          setState({ kind: "error", message: res.error, canRetry: true });
+          show({ kind: "error", message: res.error, retry: current });
           return;
         }
         const r = res.result;
@@ -69,58 +84,71 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
         needsAttention += r.needsAttention;
         total = Math.max(total, sent + r.remaining);
         if (r.stoppedReason === "list_failed") {
-          setState({
+          show({
             kind: "error",
             message: `Couldn't read the customer list from Bill.com. ${r.error ?? ""}`.trim(),
-            canRetry: true,
+            retry: current,
           });
           return;
         }
         if (r.remaining <= 0) {
-          setState({ kind: "done", total, failed, needsAttention });
+          show({ kind: "done", total, failed, needsAttention });
           router.refresh();
           return;
         }
         const waiting = r.stoppedReason === "rate_limit";
-        setState({ kind: "running", sent, total, waiting });
-        if (waiting) {
-          await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
-          if (!mounted.current) return;
-          setState({ kind: "running", sent, total, waiting: false });
+        stalled = processed(r) === 0 && !waiting ? stalled + 1 : 0;
+        if (stalled >= STALL_LIMIT) {
+          show({ kind: "error", message: STALLED, retry: "pending" });
+          return;
         }
-        next = runPendingPush;
+        show({ kind: "running", sent, total, waiting });
+        if (waiting) {
+          await new Promise<void>((resolve) => {
+            timer.current = setTimeout(() => {
+              timer.current = null;
+              resolve();
+            }, RATE_LIMIT_WAIT_MS);
+          });
+          if (!mounted.current) return;
+          show({ kind: "running", sent, total, waiting: false });
+        }
+        current = "pending";
       }
     } catch (e) {
       if (mounted.current) {
-        setState({ kind: "error", message: e instanceof Error ? e.message : String(e), canRetry: true });
+        show({ kind: "error", message: e instanceof Error ? e.message : String(e), retry: current });
       }
     } finally {
       active.current = false;
     }
   }
 
-  const startPending = () => {
+  const begin = (step: Step) => {
     if (active.current) return;
-    setState({ kind: "running", sent: 0, total: pendingCount, waiting: false });
-    void run(runPendingPush);
+    show({ kind: "running", sent: 0, total: step === "pending" ? pendingCount : 0, waiting: false });
+    void run(step);
+  };
+
+  /** Only from a resting state: never over an open or loading preview, or a running batch. */
+  const startPending = () => {
+    const kind = stateRef.current.kind;
+    if (kind === "idle" || kind === "done") begin("pending");
   };
 
   useImperativeHandle(ref, () => ({ startPending }));
 
   const openPreview = async () => {
-    setState({ kind: "loadingPreview" });
+    show({ kind: "loadingPreview" });
     const res = await previewInitialPush().catch((e: unknown) => ({
       ok: false as const,
       error: e instanceof Error ? e.message : String(e),
     }));
     if (!mounted.current) return;
-    setState(res.ok ? { kind: "preview", preview: res.preview } : { kind: "error", message: res.error, canRetry: false });
+    show(res.ok ? { kind: "preview", preview: res.preview } : { kind: "error", message: res.error });
   };
 
-  const confirm = () => {
-    setState({ kind: "running", sent: 0, total: 0, waiting: false });
-    void run(confirmInitialPush);
-  };
+  const confirm = () => begin("confirm");
 
   const busy = state.kind === "running" || state.kind === "loadingPreview";
 
@@ -132,7 +160,7 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
           <Send className="size-4" />
           Push to Bill.com
         </Button>
-        {pendingCount > 0 && !busy && state.kind !== "preview" && (
+        {pendingCount > 0 && (state.kind === "idle" || state.kind === "done") && (
           <Button type="button" size="sm" variant="outline" onClick={startPending}>
             Send {n(pendingCount)} waiting customer{pendingCount === 1 ? "" : "s"}
           </Button>
@@ -141,7 +169,7 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
 
       {state.kind === "loadingPreview" && <p className="text-foreground-muted">Checking what would change…</p>}
 
-      {state.kind === "preview" && <PreviewView preview={state.preview} onConfirm={confirm} onCancel={() => setState({ kind: "idle" })} />}
+      {state.kind === "preview" && <PreviewView preview={state.preview} onConfirm={confirm} onCancel={() => show({ kind: "idle" })} />}
 
       {state.kind === "running" && (
         <p className="text-foreground-muted">
@@ -162,8 +190,8 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
       {state.kind === "error" && (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-destructive">
           <span>{state.message}</span>
-          {state.canRetry && (
-            <Button type="button" size="sm" variant="outline" onClick={startPending}>
+          {state.retry && (
+            <Button type="button" size="sm" variant="outline" onClick={() => begin(state.retry!)}>
               Try again
             </Button>
           )}
