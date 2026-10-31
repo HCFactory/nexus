@@ -968,11 +968,33 @@ export interface Database {
           | "tax_liable"
           | "bc_raw_payload"
           | "sync_status"
+          | "email_cc"
+          | "payment_terms_code"
+          | "tax_area_code"
+          | "tax_identification_type"
+          | "customer_price_group"
+          | "customer_posting_group"
+          | "gen_bus_posting_group"
+          | "application_method"
+          | "location_code"
+          | "credit_limit"
+          | "bc_card_etag"
         > & {
           id?: string;
           created_at?: string;
           updated_at?: string;
           tax_liable?: boolean;
+          email_cc?: string;
+          payment_terms_code?: string;
+          tax_area_code?: string;
+          tax_identification_type?: string;
+          customer_price_group?: string;
+          customer_posting_group?: string;
+          gen_bus_posting_group?: string;
+          application_method?: string;
+          location_code?: string;
+          credit_limit?: number;
+          bc_card_etag?: string | null;
           bc_raw_payload?: Record<string, unknown>;
           sync_status?: BusinessCentralSyncStatus;
         };
@@ -1185,6 +1207,17 @@ export interface BusinessCentralCustomer {
   blocked: string | null;
   balance: number | null;
   overdue_amount: number | null;
+  email_cc: string;
+  payment_terms_code: string;
+  tax_area_code: string;
+  tax_identification_type: string;
+  customer_price_group: string;
+  customer_posting_group: string;
+  gen_bus_posting_group: string;
+  application_method: string;
+  location_code: string;
+  credit_limit: number;
+  bc_card_etag: string | null;
   bc_raw_payload: Record<string, unknown>;
   sync_status: BusinessCentralSyncStatus;
   sync_error: string | null;
