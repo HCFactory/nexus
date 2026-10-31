@@ -4,6 +4,15 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
 
 ## To do
 
+1. **BC ↔ Bill.com customer sync — 4 projects, done one at a time.** Projects 1 and 2 are merged to `main` (not yet pushed to GitHub after project 2). **Next: project 3.**
+   1. ✅ Customer reference lists — see Done.
+   2. ✅ Customer templates — see Done.
+   3. **Customers ↔ BC** (next, not designed yet). Includes the New customer form: pick a template, then type Name (required), Invoice email → BC E-Mail (required), Invoice email CC → BC "Email CC", Phone no. (required), Address. Payment terms and Tax area start from the template's value and are editable per customer (both required). Template-only (not on the form): No. series, Tax liable, Tax identification type, Customer price group, Application method, Location, posting groups, contact type. When customers sync, re-enable price-group delete (disabled until now).
+   4. **Customers ↔ Bill.com**, matched on the BC customer number. Bill.com payment terms were dropped; piece E sends due dates calculated by BC.
+   - **Before using production BC:** publish the same web services there as in TEST — pages 7 (`CustomerPriceGroups`), 110 (`CustomerPostingGroups`), 312 (`GenBusinessPostingGroups`), 465 (`TaxAreaLines`), 466 (`TaxJurisdictions`), 468 (`TaxDetails`), Customer Templ. Card (`CustomerTemplates`), No. Series (`NoSeries`). Without `CustomerTemplates`, Nexus refuses every payment-term and tax-area delete.
+   - **Housekeeping:** old worktrees `../Artwork Review Tool-crl` and `../Artwork Review Tool-ct` (and their branches) are fully merged and can be deleted.
+   - **Unchecked minor:** the templates list has 7 columns; phone width passed a quick manual check but wasn't looked at closely.
+
 2. **Bill.com connector follow-ups** (non-blocking; from the whole-branch review).
    - **Partial delete is unrecoverable through the UI.** `deleteBillcomConnection` is not transactional: if the row delete fails after `delete_billcom_secrets` succeeds, the row survives with a dangling Vault pointer. `set_billcom_dev_key` then takes its "pointer is not null" branch and calls `vault.update_secret` on a deleted id, so **re-entering the key through Edit silently no-ops** while `hasCredentials` still renders true. The operator sees a connection that claims credentials, cannot fix it, and gets no error.
    - `saveBillcomConnection` clears other defaults before writing the row; a failed write leaves the org with no default and no explanation. Also non-transactional.
@@ -58,6 +67,9 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
    - **Related, benign:** migration **034 is missing** from the sequence (001–044 is otherwise contiguous, no duplicates). It never existed in git — it was applied live and never committed — and `035_revert_po_items_catalog.sql` undoes it with `IF EXISTS` on every statement, so it is a no-op on a fresh database. Same root cause as above; no fix needed, worth a comment in 035 so the gap doesn't get re-investigated.
 
 ## Done
+
+- **Customer templates (customer sync project 2)** — merged to `main` 2026-10-30 (`255acfe`). Migration **054** applied. Admins manage BC customer templates (13 fields) in Nexus with two-way sync; read-only copy of BC number series (No. series dropdown offers codes containing "CUST" — today CUST, CUSTCONTR, FUND-CUST, WHSL-CUST). Templates count as usage, so a payment term or tax area used by a template can't be deleted; renames of payment terms, price groups or tax areas re-pull templates. Sync now inserts in one batch and shows "Syncing…". Live-tested in BC TEST (create/edit/rename/delete, usage block, rename cascade, cleanup). 375 tests. Spec `docs/superpowers/specs/2026-10-30-customer-templates-design.md`, BC notes `docs/superpowers/notes/2026-10-30-bc-customer-templates-discovery.md`.
+- **Customer reference lists (customer sync project 1)** — merged and pushed to `main` 2026-10-30 (`379b9e6`). Migration **053** applied. Payment terms, price groups, tax areas/lines/jurisdictions/details managed in Nexus with BC sync; locations and posting groups read-only copies. Live-tested in BC TEST; live fixes: re-read etag after create, scrolling pages with fixed table headers. Spec `docs/superpowers/specs/2026-10-29-customer-reference-lists-design.md`, BC notes `docs/superpowers/notes/2026-10-30-bc-reference-pages-discovery.md`.
 
 - **Ship and verify the Bill.com connector (piece D plumbing slice)** — merged to `main` as **PR #6**; migrations 045 and 046 applied and verified 2026-09-05. End-to-end verification against a real Bill.com **sandbox** passed 2026-10-29:
   - **Error envelope question answered — v3 does *not* use v2's HTTP-200-with-error-body convention.** Probing `/connect/v3/login` returned real statuses (400 for a bad developer key, 401 for bad username/password). The status-based error handling stands.
