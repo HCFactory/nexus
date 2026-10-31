@@ -33,6 +33,8 @@ const OVERRIDE_FIELDS: Array<{
   { key: 'editInvoices', label: 'Edit invoices', description: 'Edit invoice header fields.' },
   { key: 'deleteInvoices', label: 'Delete invoices', description: 'Delete draft invoice records.' },
   { key: 'assignInvoices', label: 'Assign invoices', description: 'Assign and unassign PO items to invoice records.' },
+  { key: 'viewCustomers', label: 'View customers', description: 'Open the customers list synced from Business Central.' },
+  { key: 'editCustomers', label: 'Create and edit customers', description: 'Create, edit and delete customers in Business Central.' },
   { key: 'viewDesignerFields', label: 'View designer fields', description: 'Show version, artwork status, and related UI.' },
   { key: 'editDesignerFields', label: 'Edit designer fields', description: 'Edit version and artwork status.' },
   { key: 'openArtworkModal', label: 'Open artwork modal', description: 'Open the artwork upload/review modal.' },

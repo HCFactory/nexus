@@ -61,6 +61,7 @@ export interface PermissionOverrides {
   deleteInvoices?: boolean;
   assignInvoices?: boolean;
   viewCustomers?: boolean;
+  editCustomers?: boolean;
   viewReceivables?: boolean;
   viewDesignerFields?: boolean;
   editDesignerFields?: boolean;

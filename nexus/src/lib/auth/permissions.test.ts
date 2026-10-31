@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_FUNCTIONAL_ROLES, resolveUserAccess } from './permissions';
+import { DEFAULT_FUNCTIONAL_ROLES, resolveUserAccess, summarizeEffectiveAccess } from './permissions';
 import { User } from '@/types/database';
 
 const baseUser: User = {
@@ -97,5 +97,26 @@ describe('receivables permissions', () => {
     });
     expect(access.canViewCustomers).toBe(true);
     expect(access.canViewReceivables).toBe(false);
+  });
+});
+
+describe('canEditCustomers permission', () => {
+  it('is listed in ACCESS_KEYS', () => {
+    const access = resolveUserAccess({ role: 'admin', permissions: null });
+    expect(summarizeEffectiveAccess(access)).toContain('Edit Customers');
+  });
+
+  it('is true for admins and false by default for others', () => {
+    expect(resolveUserAccess({ role: 'admin', permissions: null }).canEditCustomers).toBe(true);
+    expect(resolveUserAccess({ role: 'user', permissions: null }).canEditCustomers).toBe(false);
+  });
+
+  it('is true when the per-user override is set', () => {
+    const access = resolveUserAccess({
+      role: 'user',
+      permissions: { functionalRoles: DEFAULT_FUNCTIONAL_ROLES, overrides: { editCustomers: true } },
+    });
+    expect(access.canEditCustomers).toBe(true);
+    expect(access.canViewCustomers).toBe(false);
   });
 });
