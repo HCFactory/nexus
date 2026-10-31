@@ -7,7 +7,7 @@ import {
   toBillcomCustomer,
   type BillcomCustomerPayload,
 } from './customerPayload';
-import { BillcomRateLimitError } from './errors';
+import { BillcomApiError, BillcomRateLimitError } from './errors';
 import { fetchAll } from './fetchAll';
 import type { BillcomCustomerLink, BusinessCentralCustomer } from '@/types/database';
 
@@ -70,6 +70,7 @@ const MAX_CONCURRENCY = 3;
 const SAMPLE_SIZE = 10;
 const DELETED_HASH = 'deleted';
 const LEASE_MS = 2 * 60_000;
+const MAX_LIST_PAGES = 200;
 
 // ---------- Supabase reads (paged past the 1,000-row cap) ----------
 
@@ -139,20 +140,40 @@ async function listBillcomCustomers(deps: PushDeps): Promise<BillcomCustomer[]> 
 
 async function listBillcomCustomersRaw(deps: PushDeps): Promise<BillcomCustomer[]> {
   const byId = new Map<string, BillcomCustomer>();
+  let pages = 0;
   for (const filter of [null, 'archived:eq:true']) {
     let page: string | undefined;
+    const seen = new Set<string>();
     do {
+      if (++pages > MAX_LIST_PAGES) throw new Error(`Bill.com customer list has more than ${MAX_LIST_PAGES} pages.`);
       const qs = new URLSearchParams({ max: String(BILLCOM_PAGE) });
       if (filter) qs.set('filters', filter);
       if (page) qs.set('page', page);
       const res = await deps.billcom.request<{ results?: BillcomCustomer[]; nextPage?: string }>(
         `/v3/customers?${qs.toString()}`,
       );
-      for (const c of res.results ?? []) byId.set(c.id, c);
+      const results = res.results ?? [];
+      for (const c of results) byId.set(c.id, c);
       page = res.nextPage || undefined;
+      // Never trust a short read: a full page must say where the next one is.
+      if (!page && results.length >= BILLCOM_PAGE) {
+        throw new Error('Bill.com returned a full page of customers with no next page.');
+      }
+      if (page && seen.has(page)) throw new Error('Bill.com repeated a customer list page.');
+      if (page) seen.add(page);
     } while (page);
   }
   return [...byId.values()];
+}
+
+/** One Bill.com customer by id, or null when Bill.com no longer has it. */
+async function getBillcomCustomer(deps: PushDeps, id: string): Promise<BillcomCustomer | null> {
+  try {
+    return await deps.billcom.request<BillcomCustomer>(`/v3/customers/${id}`);
+  } catch (err) {
+    if (err instanceof BillcomApiError && err.details.status === 404) return null;
+    throw err;
+  }
 }
 
 function indexByAccount(customers: BillcomCustomer[]) {
@@ -312,13 +333,18 @@ export async function pushCustomers(
   let next = 0;
   let done = 0;
 
+  /** The claimed_until value this run last wrote, per link id. */
+  const leases = new Map<string, string>();
+
   /** DB-checked lease: the update only matches a link with no live lease. */
   async function claim(link: BillcomCustomerLink): Promise<boolean> {
     const at = now();
     const nowIso = new Date(at).toISOString();
+    const until = new Date(at + LEASE_MS).toISOString();
+    leases.set(link.id, until);
     const { data, error } = await deps.supabase
       .from(LINKS)
-      .update({ claimed_until: new Date(at + LEASE_MS).toISOString(), updated_at: new Date().toISOString() })
+      .update({ claimed_until: until, updated_at: new Date().toISOString() })
       .eq('id', link.id)
       .eq('organization_id', deps.orgId)
       .eq('bc_connection_id', deps.bcConnectionId)
@@ -327,6 +353,26 @@ export async function pushCustomers(
       .select('id');
     if (error) throw new Error(`Could not claim Bill.com link: ${error.message}`);
     return Array.isArray(data) && data.length > 0;
+  }
+
+  /** Extend our lease only if it is still the one we set; false means another run took the link. */
+  async function renewLease(link: BillcomCustomerLink): Promise<boolean> {
+    const ours = leases.get(link.id);
+    if (!ours) return false;
+    const until = new Date(now() + LEASE_MS).toISOString();
+    const { data, error } = await deps.supabase
+      .from(LINKS)
+      .update({ claimed_until: until, updated_at: new Date().toISOString() })
+      .eq('id', link.id)
+      .eq('organization_id', deps.orgId)
+      .eq('bc_connection_id', deps.bcConnectionId)
+      .eq('billcom_connection_id', deps.billcomConnectionId)
+      .eq('claimed_until', ours)
+      .select('id');
+    if (error) throw new Error(`Could not renew Bill.com link lease: ${error.message}`);
+    if (!Array.isArray(data) || data.length === 0) return false;
+    leases.set(link.id, until);
+    return true;
   }
 
   async function currentBillcomId(link: BillcomCustomerLink): Promise<string | null> {
@@ -350,8 +396,8 @@ export async function pushCustomers(
     if (!row) {
       // Deleted in Nexus/BC: make it inactive in Bill.com.
       if (link.billcom_customer_id && link.last_pushed_hash !== DELETED_HASH) {
-        const { byId } = await getIndex();
-        if (!byId.get(link.billcom_customer_id)?.archived) {
+        const current = await getBillcomCustomer(deps, link.billcom_customer_id);
+        if (current && !current.archived) {
           await deps.billcom.request(`/v3/customers/${link.billcom_customer_id}/archive`, { method: 'POST' });
         }
       }
@@ -373,15 +419,21 @@ export async function pushCustomers(
       return 'unchanged';
     }
 
-    const { byAccount, byId } = await getIndex();
     let id = link.billcom_customer_id;
     let current: BillcomCustomer | undefined;
-    let outcome: Outcome;
+    let outcome: Outcome = 'updated';
 
     if (id) {
-      current = byId.get(id);
-      outcome = 'updated';
-    } else {
+      // Linked: read just this customer; the full list is only for matching.
+      current = (await getBillcomCustomer(deps, id)) ?? undefined;
+      if (!current) {
+        // Gone from Bill.com: forget the id and match again.
+        await writeLink(deps, link.id, { billcom_customer_id: null });
+        id = null;
+      }
+    }
+    if (!id) {
+      const { byAccount } = await getIndex();
       const matches = byAccount.get(link.bc_customer_number) ?? [];
       if (matches.length > 1) {
         await updateLink(deps, link.id, {
@@ -402,6 +454,8 @@ export async function pushCustomers(
           await updateLink(deps, link.id, {});
           return 'skipped';
         }
+        // The list read can outlast the lease; never POST without still holding it.
+        if (!(await renewLease(link))) return 'skipped';
         const createdCustomer = await deps.billcom.request<BillcomCustomer>('/v3/customers', {
           method: 'POST',
           body: JSON.stringify(payload),

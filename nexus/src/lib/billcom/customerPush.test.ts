@@ -93,7 +93,7 @@ function fakeBillcom(initial: BcCust[] = [], opts: { failOn?: (path: string, bod
       calls.push({ method, path, body });
       const err = opts.failOn?.(path, body);
       if (err) throw err;
-      if (method === 'GET' && path.startsWith('/v3/customers')) {
+      if (method === 'GET' && path.startsWith('/v3/customers?')) {
         const archivedOnly = path.includes('archived%3Aeq%3Atrue') || path.includes('archived:eq:true');
         return { results: customers.filter((c) => (archivedOnly ? c.archived : !c.archived)) } as T;
       }
@@ -516,5 +516,109 @@ describe('planInitialPush', () => {
     const p = await planInitialPush(deps);
     expect(p.link).toBe(1);
     expect(p.create).toBe(0);
+  });
+});
+
+describe('final review fixes', () => {
+  const listCalls = (bill: ReturnType<typeof fakeBillcom>) =>
+    bill.calls.filter((c) => c.method === 'GET' && c.path.startsWith('/v3/customers?'));
+
+  /** Replace list responses with `pages(qs)`; other calls pass through. */
+  function withListPages(bill: ReturnType<typeof fakeBillcom>, pages: (qs: URLSearchParams) => unknown) {
+    const orig = bill.client.request;
+    bill.client.request = async <T,>(p: string, i?: RequestInit): Promise<T> => {
+      if (p.startsWith('/v3/customers?')) {
+        bill.calls.push({ method: 'GET', path: p });
+        return pages(new URLSearchParams(p.split('?')[1])) as T;
+      }
+      return orig<T>(p, i);
+    };
+  }
+  const fullPage = (tag: string) =>
+    Array.from({ length: 100 }, (_, i) => ({ id: `0cu${tag}${i}`, archived: false, name: 'x', accountNumber: `X${tag}${i}` }));
+
+  it('I1: a full page with no next token stops the run as list_failed', async () => {
+    const bill = fakeBillcom();
+    withListPages(bill, () => ({ results: fullPage('a') }));
+    const { deps } = setup([bcRow('C1')], [link('C1')], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.stoppedReason).toBe('list_failed');
+    expect(writesToBillcom(bill)).toHaveLength(0);
+  });
+
+  it('I1: a repeated paging token stops the run as list_failed', async () => {
+    const bill = fakeBillcom();
+    withListPages(bill, () => ({ results: [], nextPage: 'same' }));
+    const { deps } = setup([bcRow('C1')], [link('C1')], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.stoppedReason).toBe('list_failed');
+    expect(listCalls(bill).length).toBeLessThanOrEqual(3);
+  });
+
+  it('I1: more than the page cap stops the run as list_failed', async () => {
+    const bill = fakeBillcom();
+    let n = 0;
+    withListPages(bill, () => ({ results: [], nextPage: `p${++n}` }));
+    const { deps } = setup([bcRow('C1')], [link('C1')], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.stoppedReason).toBe('list_failed');
+    expect(listCalls(bill).length).toBeLessThanOrEqual(201);
+  });
+
+  it('I1: following a fresh token reads every page', async () => {
+    const bill = fakeBillcom([{ id: '0cuC1', archived: false, name: 'x', accountNumber: 'C1' }]);
+    withListPages(bill, (qs) =>
+      qs.get('filters')
+        ? { results: [] }
+        : qs.get('page')
+          ? { results: [{ id: '0cuC1', archived: false, name: 'x', accountNumber: 'C1' }] }
+          : { results: fullPage('a'), nextPage: 'p2' },
+    );
+    const { deps, sb } = setup([bcRow('C1')], [link('C1')], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.linked).toBe(1);
+    expect(linkRow(sb, 'C1').billcom_customer_id).toBe('0cuC1');
+  });
+
+  it('I2: a linked save reads that customer only, no list call', async () => {
+    const bill = fakeBillcom([{ id: '0cuL', archived: true, name: 'L', accountNumber: 'C1' }]);
+    const { deps, sb } = setup([bcRow('C1')], [link('C1', { billcom_customer_id: '0cuL', last_pushed_hash: 'stale' })], bill);
+    const res = await pushCustomers(deps, { numbers: ['C1'], budgetMs: 10_000 });
+    expect(res.updated).toBe(1);
+    expect(listCalls(bill)).toHaveLength(0);
+    expect(bill.calls.some((c) => c.method === 'GET' && c.path === '/v3/customers/0cuL')).toBe(true);
+    expect(bill.calls.some((c) => c.path === '/v3/customers/0cuL/restore')).toBe(true);
+    expect(linkRow(sb, 'C1').status).toBe('synced');
+  });
+
+  it('I2: a linked id that 404s is cleared and matched again', async () => {
+    const bill = fakeBillcom([{ id: '0cuNew', archived: false, name: 'N', accountNumber: 'C1' }]);
+    const { deps, sb } = setup([bcRow('C1')], [link('C1', { billcom_customer_id: '0cuGone', last_pushed_hash: 'stale' })], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.linked).toBe(1);
+    expect(linkRow(sb, 'C1').billcom_customer_id).toBe('0cuNew');
+    expect(bill.calls.some((c) => c.method === 'POST' && c.path === '/v3/customers')).toBe(false);
+  });
+
+  it('I2: a deleted linked customer is archived without a list call', async () => {
+    const bill = fakeBillcom([{ id: '0cuD', archived: false, name: 'D', accountNumber: 'C9' }]);
+    const { deps } = setup([], [link('C9', { business_central_customer_id: null, billcom_customer_id: '0cuD', last_pushed_hash: 'old' })], bill);
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(listCalls(bill)).toHaveLength(0);
+    expect(bill.calls.some((c) => c.path === '/v3/customers/0cuD/archive')).toBe(true);
+  });
+
+  it('I3: a lease that expired and was re-claimed during the list read means no POST', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1')], [link('C1')], bill);
+    const orig = bill.client.request;
+    bill.client.request = async <T,>(p: string, i?: RequestInit): Promise<T> => {
+      const r = await orig<T>(p, i);
+      if (p.startsWith('/v3/customers?')) linkRow(sb, 'C1').claimed_until = '2999-01-01T00:00:00.000Z';
+      return r;
+    };
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(bill.calls.filter((c) => c.method === 'POST' && c.path === '/v3/customers')).toHaveLength(0);
+    expect(linkRow(sb, 'C1').claimed_until).toBe('2999-01-01T00:00:00.000Z');
   });
 });

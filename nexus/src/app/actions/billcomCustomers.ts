@@ -94,7 +94,16 @@ export async function retryCustomerPush(customerNumber: string): Promise<{ ok: t
     const scope = await requireActiveBusinessCentralScope();
     if (!scope.access.canEditCustomers || !scope.access.canViewCustomers) return { ok: false, error: NO_PERMISSION };
     if (!customerNumber) return { ok: false, error: 'Customer number is missing.' };
-    const billcom = await pushCustomerAfterSave(billcomScope(scope), customerNumber);
+    const bScope = billcomScope(scope);
+    const { data, error } = await bScope.supabase
+      .from('business_central_customers')
+      .select('id')
+      .eq('organization_id', scope.orgId)
+      .eq('bc_connection_id', scope.bcConnectionId)
+      .eq('bc_customer_number', customerNumber);
+    if (error) return { ok: false, error: error.message };
+    if (!data?.length) return { ok: false, error: "That customer wasn't found." };
+    const billcom = await pushCustomerAfterSave(bScope, customerNumber);
     revalidatePath('/customers', 'layout');
     return { ok: true, billcom };
   } catch (e) {

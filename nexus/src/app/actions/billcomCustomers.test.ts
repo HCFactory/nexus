@@ -118,9 +118,17 @@ describe('admin-only bulk actions', () => {
 describe('retryCustomerPush', () => {
   it('is allowed for customer editors', async () => {
     mocks.requireScope.mockResolvedValue(editor);
+    mocks.tables.business_central_customers = [{ organization_id: 'org-1', bc_connection_id: 'bc-1', bc_customer_number: 'C1' }];
     mocks.pushAfterSave.mockResolvedValue({ status: 'synced' });
     expect(await retryCustomerPush('C1')).toEqual({ ok: true, billcom: { status: 'synced' } });
     expect(mocks.pushAfterSave.mock.calls[0][1]).toBe('C1');
+  });
+
+  it('rejects a number with no customer row in scope', async () => {
+    mocks.requireScope.mockResolvedValue(editor);
+    mocks.tables.business_central_customers = [{ organization_id: 'org-1', bc_connection_id: 'other', bc_customer_number: 'C1' }];
+    expect(await retryCustomerPush('C1')).toEqual({ ok: false, error: "That customer wasn't found." });
+    expect(mocks.pushAfterSave).not.toHaveBeenCalled();
   });
 
   it('refuses users who cannot edit customers', async () => {
