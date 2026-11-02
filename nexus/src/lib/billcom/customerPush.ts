@@ -297,7 +297,7 @@ export async function markPending(deps: PushDeps, numbers: string[]): Promise<vo
 type Outcome = 'created' | 'updated' | 'linked' | 'unchanged' | 'failed' | 'needsAttention' | 'synced';
 
 /**
- * Push the given numbers (or every pending/failed link). Up to 3 customers run
+ * Push the given numbers (or every pending link). Up to 3 customers run
  * at once; the run stops at `budgetMs` or on a Bill.com rate limit, leaving
  * unprocessed links pending for the next run.
  */
@@ -311,7 +311,8 @@ export async function pushCustomers(
   // Mark every given number pending up front so a stop leaves them queued.
   if (opts.numbers) await markPending(deps, opts.numbers);
   const links = (await loadLinks(deps, opts.numbers)).filter(
-    (l) => opts.numbers || l.status === 'pending' || l.status === 'failed',
+    // Failed links wait for an explicit retry, a save or a detected change.
+    (l) => opts.numbers || l.status === 'pending',
   );
 
   const rows = await loadBcCustomers(deps);
@@ -414,6 +415,14 @@ export async function pushCustomers(
     const archived = shouldBeArchived(row);
     const hash = payloadHash(payload, archived);
 
+    if (!payload.name?.trim()) {
+      await updateLink(deps, link.id, {
+        status: 'needs_attention',
+        last_error: 'Add a name in Business Central, then retry.',
+      });
+      return 'needsAttention';
+    }
+
     if (link.billcom_customer_id && link.last_pushed_hash === hash) {
       await updateLink(deps, link.id, { status: 'synced', last_error: null });
       return 'unchanged';
@@ -453,6 +462,14 @@ export async function pushCustomers(
         if (await currentBillcomId(link)) {
           await updateLink(deps, link.id, {});
           return 'skipped';
+        }
+        // Bill.com requires an email when creating.
+        if (!payload.email?.trim()) {
+          await updateLink(deps, link.id, {
+            status: 'needs_attention',
+            last_error: 'Add an email in Business Central, then retry.',
+          });
+          return 'needsAttention';
         }
         // The list read can outlast the lease; never POST without still holding it.
         if (!(await renewLease(link))) return 'skipped';

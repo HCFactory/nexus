@@ -633,3 +633,54 @@ describe('final review fixes', () => {
     expect(linkRow(sb, 'C1').claimed_until).toBe('2999-01-01T00:00:00.000Z');
   });
 });
+
+describe('live-test fixes: failed links and missing fields', () => {
+  it('a run without numbers processes only pending links and ends with remaining 0', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup(
+      [bcRow('C1'), bcRow('C2')],
+      [link('C1'), link('C2', { status: 'failed', last_error: 'boom' })],
+      bill,
+    );
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.created).toBe(1);
+    expect(res.remaining).toBe(0);
+    expect(linkRow(sb, 'C2').status).toBe('failed');
+    expect(writesToBillcom(bill)).toHaveLength(1);
+  });
+
+  it('markPending turns a failed link into pending', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1')], [link('C1', { status: 'failed', last_error: 'x' })], bill);
+    await markPending(deps, ['C1']);
+    expect(linkRow(sb, 'C1').status).toBe('pending');
+  });
+
+  it('create without email needs attention and makes no POST', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1', { email: null })], [link('C1')], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.needsAttention).toBe(1);
+    expect(writesToBillcom(bill)).toHaveLength(0);
+    const l = linkRow(sb, 'C1');
+    expect(l.status).toBe('needs_attention');
+    expect(l.last_error).toBe('Add an email in Business Central, then retry.');
+    expect(l.claimed_until).toBeNull();
+  });
+
+  it('blank name needs attention on create and update, no calls', async () => {
+    const bill = fakeBillcom([{ id: '0cuX', archived: false, name: 'Old', accountNumber: 'C2' }]);
+    const { deps, sb } = setup(
+      [bcRow('C1', { display_name: '  ' }), bcRow('C2', { display_name: '' })],
+      [link('C1'), link('C2', { billcom_customer_id: '0cuX' })],
+      bill,
+    );
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.needsAttention).toBe(2);
+    expect(writesToBillcom(bill)).toHaveLength(0);
+    for (const no of ['C1', 'C2']) {
+      expect(linkRow(sb, no).status).toBe('needs_attention');
+      expect(linkRow(sb, no).last_error).toBe('Add a name in Business Central, then retry.');
+    }
+  });
+});
