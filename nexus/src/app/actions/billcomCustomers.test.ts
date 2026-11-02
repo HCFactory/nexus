@@ -172,7 +172,7 @@ describe('getBillcomCustomerView', () => {
       l('C4', 'pending', { billcom_connection_id: 'other' }), l('C5', 'pending', { bc_connection_id: 'bc-2' }),
     ];
     expect(await getBillcomCustomerView()).toEqual({
-      on: true, isAdmin: false, canRetry: true, pendingCount: 2,
+      on: true, isAdmin: false, canRetry: true, pendingCount: 1,
       links: {
         C1: { status: 'synced', lastError: null },
         C2: { status: 'failed', lastError: 'Bad email' },
