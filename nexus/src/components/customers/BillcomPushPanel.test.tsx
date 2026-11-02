@@ -46,6 +46,20 @@ describe('BillcomPushPanel', () => {
     expect(actions.confirmInitialPush).not.toHaveBeenCalled();
   });
 
+  it('keeps Confirm above a scrollable details box so it stays reachable', async () => {
+    actions.previewInitialPush.mockResolvedValue({ ok: true, preview });
+    render(<BillcomPushPanel pendingCount={0} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Push to Bill.com' }));
+    await flushAll();
+    const confirm = screen.getByRole('button', { name: 'Confirm' });
+    const sample = screen.getByText('name: Old Co → New Co');
+    expect(confirm.compareDocumentPosition(sample) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const box = screen.getByTestId('preview-details');
+    expect(box).toContainElement(sample);
+    expect(box.className).toMatch(/overflow-y-auto/);
+    expect(box.className).toMatch(/max-h-/);
+  });
+
   it('Confirm sends, then keeps sending while customers remain, showing progress', async () => {
     actions.previewInitialPush.mockResolvedValue({ ok: true, preview });
     actions.confirmInitialPush.mockResolvedValue({ ok: true, result: result({ created: 340, remaining: 1632 }) });

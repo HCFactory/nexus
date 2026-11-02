@@ -189,7 +189,7 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
 
       {state.kind === "error" && (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-destructive">
-          <span>{state.message}</span>
+          <span className="max-h-24 min-w-0 overflow-y-auto break-words">{state.message}</span>
           {state.retry && (
             <Button type="button" size="sm" variant="outline" onClick={() => begin(state.retry!)}>
               Try again
@@ -217,6 +217,15 @@ function PreviewView({ preview, onConfirm, onCancel }: { preview: PushPreview; o
         <li>{n(preview.deactivate)} will be made inactive</li>
         <li>{n(preview.needsAttention.length)} need attention and won&apos;t be sent</li>
       </ul>
+      <div className="flex gap-2">
+        <Button type="button" size="sm" onClick={onConfirm}>
+          Confirm
+        </Button>
+        <Button type="button" size="sm" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+      <div data-testid="preview-details" className="max-h-48 space-y-2 overflow-y-auto">
       {preview.needsAttention.length > 0 && (
         <div>
           <p className="font-medium text-foreground">Need attention</p>
@@ -246,13 +255,6 @@ function PreviewView({ preview, onConfirm, onCancel }: { preview: PushPreview; o
           </ul>
         </div>
       )}
-      <div className="flex gap-2">
-        <Button type="button" size="sm" onClick={onConfirm}>
-          Confirm
-        </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onCancel}>
-          Cancel
-        </Button>
       </div>
     </div>
   );
