@@ -172,7 +172,7 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
       {state.kind === "preview" && <PreviewView preview={state.preview} onConfirm={confirm} onCancel={() => show({ kind: "idle" })} />}
 
       {state.kind === "running" && (
-        <p className="text-foreground-muted">
+        <p data-testid="push-running" className="text-warning">
           <span>{state.total > 0 ? `Sent ${n(state.sent)} of ${n(state.total)}…` : "Sending customers to Bill.com…"}</span>
           {state.waiting && " Bill.com asked us to slow down, so we'll keep going in a minute."}
           {" "}Keep this page open until it finishes.

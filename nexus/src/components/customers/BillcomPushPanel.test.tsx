@@ -73,6 +73,7 @@ describe('BillcomPushPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await flushAll();
     expect(screen.getByText('Sent 340 of 1,972…')).toBeInTheDocument();
+    expect(screen.getByTestId('push-running')).toHaveClass('text-warning');
     finish({ ok: true, result: result({ updated: 1000, remaining: 632 }) });
     await flushAll();
     expect(actions.runPendingPush).toHaveBeenCalledTimes(2);
