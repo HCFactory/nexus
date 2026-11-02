@@ -73,7 +73,7 @@ export async function confirmInitialPush(): Promise<{ ok: true; result: PushResu
   }
 }
 
-/** Send the next time-limited batch of pending and failed customers. */
+/** Send the next time-limited batch of pending customers. */
 export async function runPendingPush(): Promise<{ ok: true; result: PushResult } | Fail> {
   try {
     const scope = await adminScope();
@@ -144,7 +144,7 @@ export interface BillcomCustomerView {
   isAdmin: boolean;
   /** May use Retry on one customer. */
   canRetry: boolean;
-  /** Customers waiting to be sent (pending or failed). */
+  /** Customers waiting to be sent (pending only; failed wait for a retry). */
   pendingCount: number;
   /** Link status by BC customer number. */
   links: Record<string, { status: BillcomCustomerLinkStatus; lastError: string | null }>;
@@ -175,7 +175,7 @@ export async function getBillcomCustomerView(customerNumber?: string): Promise<B
     let pendingCount = 0;
     for (const r of rows) {
       links[r.bc_customer_number] = { status: r.status, lastError: r.last_error };
-      if (r.status === 'pending' || r.status === 'failed') pendingCount++;
+      if (r.status === 'pending') pendingCount++;
     }
     return {
       on: true,
