@@ -510,6 +510,17 @@ describe('planInitialPush', () => {
     expect(writesToBillcom(bill)).toHaveLength(0);
   });
 
+  it('omitted address/email are not reported as changes', async () => {
+    const bill = fakeBillcom([
+      { id: '0cu1', archived: false, name: 'Old', accountNumber: 'C1', email: 'keep@x.com', billingAddress: { line1: 'Keep St', city: 'Z' } } as never,
+    ]);
+    const { deps } = setup([bcRow('C1', { email: null, city: null })], [], bill);
+    const p = await planInitialPush(deps);
+    const changes = p.sample.find((s) => s.number === 'C1')?.changes ?? {};
+    expect(Object.keys(changes).filter((k) => k === 'email' || k.startsWith('billingAddress'))).toEqual([]);
+    expect(changes.name).toEqual(['Old', 'Customer C1']);
+  });
+
   it('reads archived Bill.com customers and pages', async () => {
     const bill = fakeBillcom([{ id: '0cuA', archived: true, name: 'A', accountNumber: 'C1' }]);
     const { deps } = setup([bcRow('C1')], [], bill);

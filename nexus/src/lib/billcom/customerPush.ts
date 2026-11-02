@@ -201,7 +201,7 @@ function diff(current: BillcomCustomer | undefined, next: BillcomCustomerPayload
     if (k === 'billingAddress') continue;
     if ((cur[k] ?? '') !== v) changes[k] = [cur[k] ?? '', v];
   }
-  for (const [k, v] of Object.entries(next.billingAddress)) {
+  for (const [k, v] of Object.entries(next.billingAddress ?? {})) {
     if ((curAddr[k] ?? '') !== v) changes[`billingAddress.${k}`] = [curAddr[k] ?? '', v];
   }
   if (Boolean(current?.archived) !== archived) changes.archived = [Boolean(current?.archived), archived];
