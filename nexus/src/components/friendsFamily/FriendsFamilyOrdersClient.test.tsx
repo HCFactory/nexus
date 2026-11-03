@@ -26,6 +26,7 @@ const workspace: FriendsFamilyWorkspace = {
       category: 'Bundles',
       unit_price: 12.5,
       color_key: 'blue',
+      quantity_deals: [],
       active: true,
       created_by: 'user-1',
       created_at: '2026-10-01T00:00:00Z',
@@ -137,6 +138,32 @@ describe('FriendsFamilyOrdersClient', () => {
     expect(screen.getByLabelText('New product color')).toHaveValue('slate');
     expect(screen.getByLabelText('Color for Family Pack')).toHaveValue('blue');
     expect(screen.queryByDisplayValue(/^#/)).not.toBeInTheDocument();
+  });
+
+  it('adds a quantity deal to a product from product management', async () => {
+    actions.updateFriendsFamilyProduct.mockResolvedValue(workspace.products[0]);
+    render(<FriendsFamilyOrdersClient initialWorkspace={workspace} isAdmin />);
+
+    fireEvent.click(screen.getByRole('button', { name: /manage products/i }));
+    fireEvent.click(screen.getByRole('button', { name: /add deal/i }));
+    fireEvent.change(screen.getByLabelText('Deal minimum quantity for Family Pack'), { target: { value: '5' } });
+    fireEvent.change(screen.getByLabelText('Deal price for Family Pack'), { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(actions.updateFriendsFamilyProduct).toHaveBeenCalledWith(
+      'product-1',
+      expect.objectContaining({ quantity_deals: [{ min_quantity: 5, unit_price: 10 }] })
+    ));
+  });
+
+  it('prices order lines with a quantity deal once the minimum is reached', () => {
+    const dealProduct = { ...workspace.products[0], quantity_deals: [{ min_quantity: 5, unit_price: 10 }] };
+    render(<FriendsFamilyOrderForm products={[dealProduct]} initialOrder={workspace.orders[0]} />);
+
+    expect(screen.getAllByText('$25.00').length).toBeGreaterThan(0);
+    fireEvent.change(screen.getByLabelText('Quantity'), { target: { value: '5' } });
+    expect(screen.getByText('$10.00')).toBeInTheDocument();
+    expect(screen.getAllByText('$50.00').length).toBe(2);
   });
 
   it('edits header details and line items from the order card', async () => {

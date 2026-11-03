@@ -535,6 +535,11 @@ export interface OrderItemInvoicePatch {
   updated_at: string;
 }
 
+export interface FriendsFamilyQuantityDeal {
+  min_quantity: number;
+  unit_price: number;
+}
+
 export interface FriendsFamilyProduct {
   id: string;
   organization_id: string;
@@ -542,6 +547,7 @@ export interface FriendsFamilyProduct {
   category: string;
   unit_price: number;
   color_key: FriendsFamilyProductColor;
+  quantity_deals: FriendsFamilyQuantityDeal[];
   active: boolean;
   created_by: string | null;
   created_at: string;

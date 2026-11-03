@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { getFriendsFamilyUnitPrice } from '@/lib/friendsFamily/pricing';
 import { getFriendsFamilyProductColor } from '@/lib/friendsFamily/productColors';
 import type { FriendsFamilyOrderWithItems, FriendsFamilyProduct } from '@/types/database';
 import { Check, ImageDown, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
@@ -53,7 +54,7 @@ function downloadOrderImage({
   phone: string;
   email: string;
   notes: string;
-  lines: Array<{ product?: FriendsFamilyProduct; quantity: number; subtotal: number }>;
+  lines: Array<{ product?: FriendsFamilyProduct; quantity: number; unitPrice: number; subtotal: number }>;
   total: number;
 }) {
   const width = 800;
@@ -103,7 +104,7 @@ function downloadOrderImage({
     const productLabel = line.product ? `${line.product.name} - ${line.product.category}` : 'Product';
     context.fillText(productLabel.slice(0, 39), 56, y + 27);
     context.fillText(String(line.quantity), 395, y + 27);
-    context.fillText(line.product ? money(line.product.unit_price) : '—', 450, y + 27);
+    context.fillText(line.product ? money(line.unitPrice) : '—', 450, y + 27);
     context.fillText(money(line.subtotal), 625, y + 27);
   });
 
@@ -181,7 +182,9 @@ export function FriendsFamilyOrderForm({
   const lineDetails = lines.map((line) => {
     const product = products.find((candidate) => candidate.id === line.productId);
     const quantity = Math.max(0, Number(line.quantity) || 0);
-    return { ...line, quantityText: line.quantity, product, quantity, subtotal: product ? product.unit_price * quantity : 0 };
+    const unitPrice = product ? getFriendsFamilyUnitPrice(product, quantity) : 0;
+    const dealApplied = Boolean(product && unitPrice !== product.unit_price);
+    return { ...line, quantityText: line.quantity, product, quantity, unitPrice, dealApplied, subtotal: unitPrice * quantity };
   });
   const total = lineDetails.reduce((sum, line) => sum + line.subtotal, 0);
 
@@ -358,7 +361,16 @@ export function FriendsFamilyOrderForm({
                     <td className="p-1">
                       <input aria-label="Quantity" required min="1" step="1" type="number" value={line.quantityText} onChange={(event) => setLines((current) => current.map((candidate) => candidate.key === line.key ? { ...candidate, quantity: event.target.value } : candidate))} className="w-full rounded-lg border border-border bg-surface-raised px-1.5 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
                     </td>
-                    <td className="px-1 py-2 text-right tabular-nums text-foreground-muted">{line.product ? money(line.product.unit_price) : '—'}</td>
+                    <td className="px-1 py-2 text-right tabular-nums text-foreground-muted">
+                      {line.product ? (
+                        line.dealApplied ? (
+                          <span className="flex flex-col items-end leading-tight">
+                            <span className="text-[11px] text-foreground-subtle line-through">{money(line.product.unit_price)}</span>
+                            <span className="font-semibold text-success">{money(line.unitPrice)}</span>
+                          </span>
+                        ) : money(line.unitPrice)
+                      ) : '—'}
+                    </td>
                     <td className="px-1 py-2 text-right font-semibold tabular-nums text-foreground">{money(line.subtotal)}</td>
                     <td className="p-1 text-right">
                       <button type="button" disabled={lines.length === 1 || readOnly} onClick={() => setLines((current) => current.filter((candidate) => candidate.key !== line.key))} className="rounded p-2 text-foreground-subtle hover:bg-destructive-subtle hover:text-destructive disabled:cursor-not-allowed disabled:opacity-30" aria-label="Remove line item"><Trash2 className="size-4" /></button>
