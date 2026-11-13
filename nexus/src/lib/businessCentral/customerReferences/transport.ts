@@ -16,7 +16,8 @@ export interface BcRecord {
 
 export interface ReferenceTransport {
   /** `filter` is an OData $filter expression; the caller quotes string literals. */
-  list(source: ReferenceSource, options?: { filter?: string }): Promise<BcRecord[]>;
+  /** `select` limits the fields BC returns; include the key fields for OData sources. */
+  list(source: ReferenceSource, options?: { filter?: string; select?: string[] }): Promise<BcRecord[]>;
   get(source: ReferenceSource, key: BcKey): Promise<BcRecord>;
   create(source: ReferenceSource, fields: Record<string, unknown>): Promise<BcRecord>;
   patch(source: ReferenceSource, key: BcKey, etag: string, fields: Record<string, unknown>): Promise<BcRecord>;
@@ -130,7 +131,10 @@ export function createReferenceTransport(
     async list(source, options = {}) {
       const out: BcRecord[] = [];
       const filter = options.filter?.trim();
-      let url: string | undefined = collectionUrl(source) + (filter ? `?$filter=${encodeURIComponent(filter)}` : '');
+      const params: string[] = [];
+      if (filter) params.push(`$filter=${encodeURIComponent(filter)}`);
+      if (options.select?.length) params.push(`$select=${options.select.map(encodeURIComponent).join(',')}`);
+      let url: string | undefined = collectionUrl(source) + (params.length ? `?${params.join('&')}` : '');
       while (url) {
         const res = await send(source, url, { isList: true });
         const json = (await res.json()) as { value?: Record<string, unknown>[]; '@odata.nextLink'?: string };

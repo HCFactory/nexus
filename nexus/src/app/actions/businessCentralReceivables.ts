@@ -1,5 +1,6 @@
 'use server';
 
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import { revalidatePath } from 'next/cache';
 import { requirePermission } from '@/lib/auth/currentUserAccess';
 import {
@@ -196,17 +197,19 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
     try {
       const transport = await createReferenceTransportForOrg(orgId, connection.id);
       const cards = await transport.list(CUSTOMER_CARD_SOURCE);
-      const known = new Set<string>();
+      const known = new Map<string, string | null>();
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
           .from('business_central_customers')
-          .select('bc_customer_number')
+          .select('bc_customer_number, bc_card_etag')
           .eq('organization_id', orgId)
           .eq('bc_connection_id', connection.id)
           .order('bc_customer_number', { ascending: true })
           .range(from, from + 999);
         if (error) throw error;
-        for (const r of data ?? []) if (r.bc_customer_number) known.add(r.bc_customer_number as string);
+        for (const r of data ?? []) {
+          if (r.bc_customer_number) known.set(r.bc_customer_number as string, (r.bc_card_etag as string | null) ?? null);
+        }
         if ((data ?? []).length < 1000) break;
       }
       await fillCustomerCardFields(cards, known, async (number, patch) => {
@@ -356,32 +359,46 @@ export async function getCustomerDetail(id: string): Promise<{
 
   if (!customer) return null;
 
-  const [{ data: invoices }, ledgerResult] = await Promise.all([
-    supabase
-      .from('business_central_sales_invoices')
-      .select('*')
-      .eq('organization_id', orgId)
-      .eq('bc_connection_id', connection.id)
-      .eq('bc_customer_id', customer.bc_customer_id)
-      .order('posting_date', { ascending: false, nullsFirst: false }),
+  // Paged: a customer can have more than the 1,000 rows one query returns.
+  // `id` breaks ties so pages never repeat or skip rows.
+  const [invoices, ledgerEntries] = await Promise.all([
+    fetchAll<BusinessCentralSalesInvoice>(
+      () =>
+        supabase
+          .from('business_central_sales_invoices')
+          .select('*')
+          .eq('organization_id', orgId)
+          .eq('bc_connection_id', connection.id)
+          .eq('bc_customer_id', customer.bc_customer_id)
+          .order('posting_date', { ascending: false, nullsFirst: false })
+          .order('id'),
+      1000,
+      'invoices',
+    ),
     // Guard: A null or empty customer number cannot legitimately match ledger entries
     // by number, and querying for empty string ('') would incorrectly return orphaned
     // ledger rows whose customer_no was stored as empty. Return empty results instead.
     customer.bc_customer_number?.trim()
-      ? supabase
-          .from('business_central_customer_ledger_entries')
-          .select('*')
-          .eq('organization_id', orgId)
-          .eq('bc_connection_id', connection.id)
-          .eq('customer_no', customer.bc_customer_number)
-          .order('posting_date', { ascending: false, nullsFirst: false })
-      : Promise.resolve({ data: [] as BusinessCentralCustomerLedgerEntry[] }),
+      ? fetchAll<BusinessCentralCustomerLedgerEntry>(
+          () =>
+            supabase
+              .from('business_central_customer_ledger_entries')
+              .select('*')
+              .eq('organization_id', orgId)
+              .eq('bc_connection_id', connection.id)
+              .eq('customer_no', customer.bc_customer_number)
+              .order('posting_date', { ascending: false, nullsFirst: false })
+              .order('id'),
+          1000,
+          'ledger entries',
+        )
+      : Promise.resolve([] as BusinessCentralCustomerLedgerEntry[]),
   ]);
 
   return {
     customer: customer as BusinessCentralCustomer,
-    invoices: (invoices ?? []) as BusinessCentralSalesInvoice[],
-    ledgerEntries: (ledgerResult.data ?? []) as BusinessCentralCustomerLedgerEntry[],
+    invoices,
+    ledgerEntries,
   };
 }
 

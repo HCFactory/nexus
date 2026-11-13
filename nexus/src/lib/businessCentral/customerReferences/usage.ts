@@ -22,6 +22,7 @@ export function createUsageCounter(bc: BcClient, transport: ReferenceTransport):
     const rows = await bc.listResourcePage<unknown>('customers', {
       filter: `${field} eq ${bcId}`,
       top: CUSTOMER_PAGE,
+      select: 'id',
     });
     if (rows.length === 0) return null;
     if (rows.length >= CUSTOMER_PAGE) return `${CUSTOMER_PAGE} or more customers`;
@@ -32,6 +33,7 @@ export function createUsageCounter(bc: BcClient, transport: ReferenceTransport):
   async function templatesUsing(bcField: string, code: string): Promise<string[]> {
     const rows = await transport.list(LIST_DEFINITIONS.customerTemplates.source, {
       filter: `${bcField} eq ${odataString(code)}`,
+      select: ['Code'],
     });
     return rows.map((r) => String(r.fields.Code ?? ''));
   }
@@ -40,6 +42,7 @@ export function createUsageCounter(bc: BcClient, transport: ReferenceTransport):
   async function priceGroupCustomersUsing(code: string): Promise<string | null> {
     const rows = await transport.list(CUSTOMER_CARD_SOURCE, {
       filter: `Customer_Price_Group eq ${odataString(code)}`,
+      select: ['No'],
     });
     return rows.length === 0 ? null : plural(rows.length, 'customer', 'customers');
   }

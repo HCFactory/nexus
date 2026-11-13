@@ -33,17 +33,23 @@ export function mapCardToCustomerColumns(card: Pick<BcRecord, 'etag' | 'fields'>
 /**
  * Fill card columns onto customers already in our database. Cards whose number
  * has no customer row are skipped; customers with no card are left untouched.
- * Returns how many customers were updated.
+ * A card whose etag matches the one stored on the row is unchanged since the
+ * last fill (or the last Nexus save, which stores the new etag) and is
+ * skipped. Returns how many customers were updated.
+ *
+ * `known` maps each customer number in our database to its stored card etag.
  */
 export async function fillCustomerCardFields(
   cards: BcRecord[],
-  knownNumbers: Set<string>,
+  known: Map<string, string | null>,
   update: (customerNumber: string, patch: Record<string, unknown>) => Promise<void>,
   concurrency = 10,
 ): Promise<number> {
   const matched = cards.filter((c) => {
     const no = 'values' in c.key ? c.key.values.No : '';
-    return no !== '' && knownNumbers.has(no);
+    if (no === '' || !known.has(no)) return false;
+    const stored = known.get(no);
+    return !(c.etag && stored && c.etag === stored);
   });
   for (let i = 0; i < matched.length; i += concurrency) {
     await Promise.all(

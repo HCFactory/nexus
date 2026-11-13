@@ -52,7 +52,7 @@ describe('createUsageCounter', () => {
     const count = createUsageCounter(bc, none());
     expect(await count(def('paymentTerms'), row(withCode))).toBe('Used by 3 customers');
     expect(listResourcePage).toHaveBeenCalledWith('customers', {
-      filter: 'paymentTermsId eq 3fa85f64-5717-4562-b3fc-2c963f66afa6', top: 1000,
+      filter: 'paymentTermsId eq 3fa85f64-5717-4562-b3fc-2c963f66afa6', top: 1000, select: 'id',
     });
   });
 
@@ -206,10 +206,13 @@ describe('createUsageCounter', () => {
     const { transport, list } = priceGroupTransport(3, []);
     expect(await createUsageCounter(bc, transport)(def('customerPriceGroups'), row({ bcId: null, ...pg })))
       .toBe('Used by 3 customers');
-    const calls = list.mock.calls.map(([s, o]) => [s.kind === 'odata' ? s.service : '', o?.filter]).sort();
+    const calls = list.mock.calls
+      .map(([s, o]) => [s.kind === 'odata' ? s.service : '', o?.filter, (o as { select?: string[] })?.select])
+      .sort();
+    // Only the key field is downloaded, not the whole customer card / template.
     expect(calls).toEqual([
-      ['CustomerTemplates', "Customer_Price_Group eq 'WHSL-DLVRY'"],
-      ['Customer_Card_Excel', "Customer_Price_Group eq 'WHSL-DLVRY'"],
+      ['CustomerTemplates', "Customer_Price_Group eq 'WHSL-DLVRY'", ['Code']],
+      ['Customer_Card_Excel', "Customer_Price_Group eq 'WHSL-DLVRY'", ['No']],
     ].sort());
     expect(listResourcePage).not.toHaveBeenCalled();
   });

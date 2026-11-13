@@ -8,7 +8,7 @@ import {
   resolveBillcomConnection,
   type BillcomSaveStatus,
 } from '@/lib/billcom/customerSyncHooks';
-import { fetchAll } from '@/lib/billcom/fetchAll';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import { createServiceClient } from '@/lib/supabase/server';
 import type { BillcomCustomerLinkStatus } from '@/types/database';

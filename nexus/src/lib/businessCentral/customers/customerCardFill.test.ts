@@ -42,7 +42,7 @@ describe('fillCustomerCardFields', () => {
     const update = vi.fn(async () => {});
     const n = await fillCustomerCardFields(
       [{ key: { values: { No: 'W00010' } }, etag: 'e1', fields: card }],
-      new Set(['W00010', 'W00011']),
+      new Map([['W00010', null], ['W00011', null]]),
       update,
     );
     expect(n).toBe(1);
@@ -52,9 +52,35 @@ describe('fillCustomerCardFields', () => {
   it('skips cards with no matching customer row', async () => {
     const update = vi.fn(async () => {});
     const n = await fillCustomerCardFields(
-      [{ key: { values: { No: 'ZZ' } }, etag: 'e', fields: { No: 'ZZ' } }], new Set(['A']), update,
+      [{ key: { values: { No: 'ZZ' } }, etag: 'e', fields: { No: 'ZZ' } }], new Map([['A', null]]), update,
     );
     expect(n).toBe(0);
     expect(update).not.toHaveBeenCalled();
+  });
+  it('skips a customer whose stored card etag matches BC', async () => {
+    const update = vi.fn(async () => {});
+    const n = await fillCustomerCardFields(
+      [
+        { key: { values: { No: 'W00010' } }, etag: 'e1', fields: card },
+        { key: { values: { No: 'W00011' } }, etag: 'e2-new', fields: { ...card, No: 'W00011' } },
+      ],
+      new Map([['W00010', 'e1'], ['W00011', 'e2-old']]),
+      update,
+    );
+    expect(n).toBe(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith('W00011', expect.objectContaining({ bc_card_etag: 'e2-new' }));
+  });
+  it('fills a customer with no stored etag, and a card with no etag is never skipped', async () => {
+    const update = vi.fn(async () => {});
+    const n = await fillCustomerCardFields(
+      [
+        { key: { values: { No: 'A' } }, etag: 'e1', fields: card },
+        { key: { values: { No: 'B' } }, etag: '', fields: card },
+      ],
+      new Map([['A', null], ['B', '']]),
+      update,
+    );
+    expect(n).toBe(2);
   });
 });

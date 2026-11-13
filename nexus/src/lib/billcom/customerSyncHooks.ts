@@ -7,7 +7,7 @@ import { createBillcomClientForConnection } from './connection';
 import { payloadHash, shouldBeArchived, toBillcomCustomer } from './customerPayload';
 import { markPending, pushCustomers, type PushDeps, type PushResult } from './customerPush';
 import { BillcomConnectionDisabledError } from './errors';
-import { fetchAll } from './fetchAll';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import type { BillcomCustomerLink, BusinessCentralCustomer } from '@/types/database';
 
 /**

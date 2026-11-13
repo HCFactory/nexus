@@ -60,6 +60,12 @@ describe('reference transport', () => {
     expect(calls[1].url).toBe('https://next/p2');
   });
 
+  it('list with select asks BC for only those fields', async () => {
+    const { transport, calls } = setup([json({ value: [] })]);
+    await transport.list(odataSource, { filter: "A eq 'x'", select: ['No', 'Name'] });
+    expect(calls[0].url).toContain("?$filter=A%20eq%20'x'&$select=No,Name");
+  });
+
   it('list without a filter sends no query string', async () => {
     const { transport, calls } = setup([json({ value: [] })]);
     await transport.list(odataSource, {});

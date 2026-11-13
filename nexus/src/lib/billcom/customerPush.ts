@@ -8,7 +8,7 @@ import {
   type BillcomCustomerPayload,
 } from './customerPayload';
 import { BillcomApiError, BillcomRateLimitError } from './errors';
-import { fetchAll } from './fetchAll';
+import { fetchAll } from '@/lib/supabase/fetchAll';
 import type { BillcomCustomerLink, BusinessCentralCustomer } from '@/types/database';
 
 /**
