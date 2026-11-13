@@ -46,7 +46,7 @@ A Nexus sales order must **match a BC sales order**: same fields, same meaning. 
 - Two-way sync.
 - Posting, shipping or invoicing (that's project 2).
 - Friends & Family orders (the existing `friends_family_*` tables). They stay a separate internal feature and never go to BC.
-- Line types other than Item, line discounts, invoice discounts, item variants and salesperson. None are used today; they can be added later.
+- Line types other than Item, invoice discounts, item variants and salesperson. None are used today; they can be added later. (Line discount % **is** in scope.)
 - Partial quantities to ship. Not needed in project 1.
 
 ## Anti-goals: failures even if it "works"
@@ -82,6 +82,18 @@ A Nexus sales order must **match a BC sales order**: same fields, same meaning. 
 The user picked **B**.
 
 ## Design
+
+### Order numbers, Customer PO and notes (decided)
+
+- **External Document No. is the invoice number.** BC's `externalDocumentNumber` holds the number used as the invoice number in Nexus and in Bill.com (project 2 sends it as Bill.com's `invoiceNumber`).
+  - It **defaults to the sales order number.** BC assigns that number on create, so the first sync creates the order and then sets `externalDocumentNumber` to the new number in the same run, unless the rep typed one.
+  - The rep can change it.
+  - This changes current practice: today reps put the customer's PO in this field (74/76 TEST orders).
+- **Customer PO is a separate Nexus field.** It's stored in Nexus and **never sent to BC**. Project 2 sends it to Bill.com.
+  - Bill.com's v3 invoice API documents no PO number field and no custom fields; the only free text is the per-line `description`.
+  - Bill.com's own screens do show a PO number on invoices, so project 2 starts by testing in the Bill.com sandbox whether the API accepts one.
+  - If it doesn't, **the user decides where the PO goes then.** The options already raised: the first line's description, or Bill.com's older API.
+- **Notes:** a free-text field on the order, **stored in Nexus only** (my call). BC API v2.0 sales orders have no notes field and Bill.com invoices have no memo field.
 
 ### Sync state: separate from the order's business status
 
@@ -125,30 +137,42 @@ My call: if the rep leaves a line's price blank, BC fills it in (customer price 
 ### The order page
 
 ```
-Sales Orders › SO-10234                                   ● In BC
-──────────────────────────────────────────────────────────────────
-Customer      [ C00125 – Acme Foods          ▾]   Order date   [2026-11-13]
-Customer PO   [ PO-88812     ]                    Requested    [2026-11-20]
-Ship to       Acme Foods DC, 12 Main St, Toronto ON   (edit)
-Payment terms [ Net 30 ▾]   Shipment method [ Ground ▾]   Dimension 2 [ ▾]
+Sales Orders › SO-10234                                         ● In BC
+────────────────────────────────────────────────────────────────────────
+Customer       [ C00125 – Acme Foods        ▾]   Order date   [2026-11-13]
+Invoice # (Ext. Doc No.) [ SO-10234 ]            Requested    [2026-11-20]
+Customer PO    [ PO-88812     ]  (Nexus + Bill.com only, not BC)
+Ship to        Acme Foods, 12 Main St, Toronto ON   (edit)
+Payment terms  [ Net 30 ▾]   Shipment method [ Ground ▾]   Dimension 2 [ ▾]
 
-  Item                 Qty   UoM   Location   Unit price    Amount
-  10023 Tomato Sauce    48   CS    MAIN       24.50          1,176.00
-  10031 Pesto Jar       12   CS    MAIN       31.00 (est.)     372.00
-  [+ Add line]
-                                         Subtotal           1,548.00
-                                         Tax (from BC)        201.24
-                                         Total              1,749.24
-                                        [Delete]  [Save]
+  Item                          Qty    Unit price   Disc %   Amount incl. tax
+  10023 – Tomato Sauce           48    24.50          5        1,250.77
+  10031 – Pesto Jar              12    31.00 (est.)   0             —
+  [ click to pick an item ▾ ]
+                                              Subtotal             1,548.00
+                                              Tax (from BC)          201.24
+                                              Total                1,749.24
+Notes
+[ Customer called, wants delivery before 10am.                         ]
+                                                    [Delete]  [Save]
 ```
 
 - **Customer:** pick from synced BC customers, with blocked customers excluded. Picking one fills in ship-to address, payment terms and shipment method from the customer. All three can be changed.
 - **Ship-to:** the customer's own address, which the rep can type over for a one-off. My call, from the data: 75 of 76 TEST orders ship to the customer's own address. Picking from BC's saved ship-to addresses ("Ship-to Codes") is out of scope. It would need a BC-published page, since the standard API doesn't expose them.
 - **Shipment method and Dimension 2:** these dropdowns need two new synced reference lists, following migration 053's pattern. My call; Nexus doesn't sync either list yet.
-- **Lines:** item (pick from synced, non-blocked BC items), quantity, unit of measure (defaults to the item's base unit), location (defaults to the org's usual location; my call is the most-used location from existing data or a setting, chosen by the builder) and an optional price override.
+- **Lines table (decided):** a table inside the order, built in the style of the purchase invoice items table (`InvoiceItemsTable` and `ItemPicker` in `src/components/invoices/InvoicesClient.tsx`).
+  - **Columns:** Item, Qty, Unit price, Discount %, Amount incl. tax.
+  - **Amount incl. tax is read-only.** It comes from BC's last sync and shows "—" until then.
+  - **There is always one blank row at the bottom.** Clicking its Item field opens a searchable dropdown of synced, non-blocked BC items showing item number and name. Picking one turns it into a real line, and a new blank row appears.
+  - Removing a line is a per-row delete.
+  - The blank row is never saved or sent to BC.
+- **Hidden line defaults (my call):** these aren't shown as columns but are still set on every BC line.
+  - Unit of measure: the item's base unit.
+  - Location: the org's usual location; the builder picks most-used-from-data or a setting.
+- **Discount %** is sent to BC as the line's `discountPercent`. Bill.com invoice lines have no discount field, so project 2 sends Bill.com the price after discount.
 - **Totals and tax:** shown only from BC's last sync. While `pending`, they read "calculated when sent to BC".
 
-The **Sales Orders list** shows: BC order number (or "Not yet in BC"), customer, customer PO, order date, total and sync state, with filters for "needs attention" (`failed` + `conflict`).
+The **Sales Orders list** shows: BC order number (or "Not yet in BC"), invoice # (External Document No.), customer, customer PO, order date, total and sync state, with filters for "needs attention" (`failed` + `conflict`).
 
 ### Permissions
 
