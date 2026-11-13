@@ -17,6 +17,7 @@ import {
   CUSTOMER_CARD_SOURCE,
   fillCustomerCardFields,
 } from '@/lib/businessCentral/customers/customerCardFill';
+import { pullShipTos } from '@/lib/businessCentral/shipTo/shipToService';
 import { createCustomerLedgerClientForOrg } from '@/lib/businessCentral/customerLedgerClient';
 import {
   runAllEntitySyncs,
@@ -228,6 +229,27 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
         complete: false,
         cursor: null,
         error: `Customer card fields: ${cardError instanceof Error ? cardError.message : 'failed'}`,
+      });
+    }
+
+    // Pull ship-to addresses (page 300) for every customer. Same contract as
+    // the card fill: a failure is reported, never blocks the rest of the sync.
+    try {
+      const shipToTransport = await createReferenceTransportForOrg(orgId, connection.id);
+      await pullShipTos({
+        supabase,
+        transport: shipToTransport,
+        orgId,
+        connectionId: connection.id,
+        now: () => new Date().toISOString(),
+      });
+    } catch (shipToError) {
+      results.push({
+        entityType: 'customer',
+        recordsSynced: 0,
+        complete: false,
+        cursor: null,
+        error: `Ship-to addresses: ${shipToError instanceof Error ? shipToError.message : 'failed'}`,
       });
     }
 

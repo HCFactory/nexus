@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   queueChanged: vi.fn(),
   fillCards: vi.fn(),
+  pullShipTos: vi.fn(),
   calls: [] as string[],
 }));
 
@@ -35,6 +36,9 @@ vi.mock('@/lib/businessCentral/customers/customerCardFill', () => ({
   CUSTOMER_CARD_SOURCE: 'card',
   fillCustomerCardFields: (...a: unknown[]) => (mocks.calls.push('fill'), mocks.fillCards(...a)),
 }));
+vi.mock('@/lib/businessCentral/shipTo/shipToService', () => ({
+  pullShipTos: (...a: unknown[]) => mocks.pullShipTos(...a),
+}));
 vi.mock('@/lib/billcom/customerSyncHooks', () => ({
   queueChangedCustomers: (...a: unknown[]) => (mocks.calls.push('queue'), mocks.queueChanged(...a)),
 }));
@@ -45,6 +49,7 @@ beforeEach(() => {
   mocks.calls.length = 0;
   mocks.queueChanged.mockReset().mockResolvedValue(3);
   mocks.fillCards.mockReset().mockResolvedValue(undefined);
+  mocks.pullShipTos.mockReset().mockResolvedValue({ upserted: 0, deleted: 0 });
 });
 
 describe('sync queues changed customers for Bill.com', () => {
@@ -61,5 +66,28 @@ describe('sync queues changed customers for Bill.com', () => {
     expect(results.some((r) => r.error)).toBe(false);
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe('sync pulls ship-to addresses', () => {
+  it('calls pullShipTos once with no customer number', async () => {
+    await syncBusinessCentralReceivables();
+    expect(mocks.pullShipTos).toHaveBeenCalledTimes(1);
+    expect(mocks.pullShipTos.mock.calls[0]).toHaveLength(1);
+    expect(mocks.pullShipTos.mock.calls[0][0]).toMatchObject({ orgId: 'org-1', connectionId: 'bc-1' });
+  });
+
+  it('a pull failure is reported and the rest of the sync still finishes', async () => {
+    mocks.pullShipTos.mockRejectedValue(new Error('page 300 down'));
+    const results = await syncBusinessCentralReceivables();
+    expect(results).toContainEqual({
+      entityType: 'customer',
+      recordsSynced: 0,
+      complete: false,
+      cursor: null,
+      error: 'Ship-to addresses: page 300 down',
+    });
+    expect(results.some((r) => r.entityType === 'sales_invoice_line')).toBe(true);
+    expect(mocks.calls).toContain('queue');
   });
 });
