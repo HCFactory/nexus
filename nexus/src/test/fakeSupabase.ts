@@ -77,6 +77,11 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
         filters.push((r) => r[k] !== null && r[k] !== undefined);
         return b;
       },
+      is: (k: string, v: null) => {
+        if (v !== null) throw new Error('fakeSupabase: only is(col, null)');
+        filters.push((r) => r[k] === null || r[k] === undefined);
+        return b;
+      },
       in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
       or: (expr: string) => { filters.push((r) => orMatches(r, expr)); return b; },
       order: (k: string, o?: { ascending?: boolean }) => { orders.push([k, o?.ascending !== false]); return b; },

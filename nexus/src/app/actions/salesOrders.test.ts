@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   getCompany: vi.fn(),
   syncSalesOrder: vi.fn(),
   deleteSalesOrderInBc: vi.fn(),
+  findBcOrderByMarker: vi.fn(),
   getSelectOptions: vi.fn(),
 }));
 
@@ -26,6 +27,7 @@ vi.mock('@/lib/businessCentral/customerReferences/transport', () => ({ createRef
 vi.mock('@/lib/salesOrders/orderSync', () => ({
   syncSalesOrder: mocks.syncSalesOrder,
   deleteSalesOrderInBc: mocks.deleteSalesOrderInBc,
+  findBcOrderByMarker: mocks.findBcOrderByMarker,
 }));
 vi.mock('./customerReferenceLists', () => ({ getSelectOptions: mocks.getSelectOptions }));
 
@@ -179,7 +181,7 @@ describe('saveSalesOrder: update', () => {
     setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
     const res = await saveSalesOrder({ ...input({ customer_po: 'PO-2', lines: [line('k1', { id: 'l1', quantity: 5 })] }), id: 'o1' });
     expect(res).toEqual({ ok: true, id: 'o1' });
-    expect(db.tables.sales_orders[0]).toMatchObject({ local_version: 4, sync_state: 'pending', customer_po: 'PO-2' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ local_version: 5, sync_state: 'pending', customer_po: 'PO-2' });
     expect(db.tables.sales_order_lines[0]).toMatchObject({ id: 'l1', quantity: 5 });
     expect(mocks.after).toHaveBeenCalledTimes(1);
   });
@@ -224,6 +226,58 @@ describe('saveSalesOrder: update', () => {
     expect(added).toHaveLength(1);
     expect(added[0]).toMatchObject({ position: 0, sales_order_id: 'o1', organization_id: 'org-1', bc_connection_id: 'conn-1' });
     expect(db.tables.sales_order_lines.some((l) => l.item_number === '')).toBe(false);
+  });
+
+  it('bumps the version before writing lines and again after, so a sync reading mid-save ends pending', async () => {
+    setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
+    const versionsAtLineWrite: unknown[] = [];
+    db.failOn = (table, op) => {
+      if (table === 'sales_order_lines' && op !== 'select') versionsAtLineWrite.push(db.tables.sales_orders[0].local_version);
+      return null;
+    };
+    const res = await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 7 })] }), id: 'o1' });
+    expect(res).toEqual({ ok: true, id: 'o1' });
+    expect(versionsAtLineWrite).toEqual([4]);
+    expect(db.tables.sales_orders[0]).toMatchObject({ local_version: 5, sync_state: 'pending' });
+  });
+
+  it('a sync that marks the order synced during the save is undone by the final bump', async () => {
+    setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
+    db.failOn = (table, op) => {
+      if (op === 'select') return null;
+      // A sync that read version 4 finishes while the lines are being written.
+      if (table === 'sales_order_lines') Object.assign(db.tables.sales_orders[0], { sync_state: 'synced', synced_version: 4 });
+      return null;
+    };
+    await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 7 })] }), id: 'o1' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ local_version: 5, sync_state: 'pending', synced_version: 4 });
+  });
+
+  it('refuses when someone else saved since the order was read, without writing lines', async () => {
+    setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
+    let first = true;
+    db.failOn = (table, op) => {
+      if (table === 'sales_orders' && op === 'update' && first) {
+        first = false;
+        db.tables.sales_orders[0].local_version = 9; // another save got in first
+      }
+      return null;
+    };
+    const res = await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 7 })] }), id: 'o1' });
+    expect(res).toEqual({ ok: false, error: 'This order was changed by someone else. Reload and try again.' });
+    expect(db.writes.filter(([t]) => t === 'sales_order_lines')).toEqual([]);
+    expect(db.tables.sales_order_lines[0].quantity).toBe(2);
+    expect(mocks.after).not.toHaveBeenCalled();
+  });
+
+  it('an empty order date keeps the current one, also on a locked order', async () => {
+    setup({ sales_orders: [orderRow('o1', { status: 'final' })], sales_order_lines: [lineRow('l1')] });
+    const res = await saveSalesOrder({ ...input({ status: 'final', order_date: '', notes: 'n', lines: [line('k1', { id: 'l1' })] }), id: 'o1' });
+    expect(res).toEqual({ ok: true, id: 'o1' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ order_date: '2026-11-13', notes: 'n' });
+    setup({ sales_orders: [orderRow('o2')], sales_order_lines: [lineRow('l2', { sales_order_id: 'o2' })] });
+    await saveSalesOrder({ ...input({ order_date: '', lines: [line('k2', { id: 'l2' })] }), id: 'o2' });
+    expect(db.tables.sales_orders[0].order_date).toBe('2026-11-13');
   });
 
   it('does not touch an order of another organization', async () => {
@@ -272,6 +326,31 @@ describe('deleteSalesOrder', () => {
     expect(db.tables.sales_orders).toEqual([]);
   });
 
+  it('with only a create marker, finds the BC order by marker and deletes it in BC first', async () => {
+    setup({ sales_orders: [orderRow('o1', { bc_create_marker: 'NX-o1' })] });
+    mocks.findBcOrderByMarker.mockResolvedValue({ key: {}, etag: 'e', fields: { No: 'SO9' } });
+    expect(await deleteSalesOrder('o1')).toEqual({ ok: true });
+    expect(mocks.findBcOrderByMarker.mock.calls[0][1]).toBe('NX-o1');
+    expect(mocks.deleteSalesOrderInBc.mock.calls[0][1]).toMatchObject({ id: 'o1', bc_order_number: 'SO9' });
+    expect(db.tables.sales_orders).toEqual([]);
+  });
+
+  it('with only a create marker and no BC order, deletes locally without a BC delete', async () => {
+    setup({ sales_orders: [orderRow('o1', { bc_create_marker: 'NX-o1' })] });
+    mocks.findBcOrderByMarker.mockResolvedValue(null);
+    expect(await deleteSalesOrder('o1')).toEqual({ ok: true });
+    expect(mocks.deleteSalesOrderInBc).not.toHaveBeenCalled();
+    expect(db.tables.sales_orders).toEqual([]);
+  });
+
+  it('keeps the order as failed when the marker lookup fails', async () => {
+    setup({ sales_orders: [orderRow('o1', { bc_create_marker: 'NX-o1' })] });
+    mocks.findBcOrderByMarker.mockRejectedValue(new Error('BC is down'));
+    expect(await deleteSalesOrder('o1')).toEqual({ ok: false, error: 'BC is down' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ sync_state: 'failed', sync_error: 'BC is down', claimed_until: null });
+    expect(mocks.deleteSalesOrderInBc).not.toHaveBeenCalled();
+  });
+
   it('keeps the order as failed when the BC delete fails', async () => {
     setup({ sales_orders: [orderRow('o1', { bc_order_number: 'SO1' })] });
     mocks.deleteSalesOrderInBc.mockRejectedValue(new Error('Order is released'));
@@ -312,6 +391,14 @@ describe('reads', () => {
     expect(mocks.syncSalesOrder.mock.calls.map((c) => c[1])).toEqual(['o1']);
   });
 
+  it('getSalesOrder still loads an order whose customer is now blocked', async () => {
+    setup({
+      sales_orders: [orderRow('o1', { customer_id: 'cb' })],
+      business_central_customers: [{ id: 'cb', organization_id: 'org-1', bc_connection_id: 'conn-1', blocked: 'All' }],
+    });
+    expect((await getSalesOrder('o1'))?.order.id).toBe('o1');
+  });
+
   it('getSalesOrder returns the order and its non-removed lines', async () => {
     setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1'), lineRow('l2', { removed: true })] });
     const res = await getSalesOrder('o1');
@@ -326,6 +413,8 @@ describe('reads', () => {
         { id: 'c2', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C2', display_name: 'B', location_code: 'MAIN' },
         { id: 'c3', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C3', display_name: 'C', location_code: 'EAST' },
         { id: 'c4', organization_id: 'org-2', bc_connection_id: 'conn-1', bc_customer_number: 'C4', display_name: 'D', location_code: 'EAST' },
+        { id: 'c5', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C5', display_name: 'E', location_code: 'EAST', blocked: 'All' },
+        { id: 'c6', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C6', display_name: 'F', location_code: 'EAST', blocked: 'Ship' },
       ],
       business_central_items: [
         { id: 'i1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', blocked: false },

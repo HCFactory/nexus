@@ -7,7 +7,7 @@ import { createReferenceTransport } from '@/lib/businessCentral/customerReferenc
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import { claimOrder, leaseUntil, releaseOrder, sweepPendingOrders, syncWithClaim } from '@/lib/salesOrders/orderClaim';
 import { canChangeStatus, canDelete, editableFields, todayIn } from '@/lib/salesOrders/orderRules';
-import { deleteSalesOrderInBc, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
+import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type { ListKey } from '@/types/customerReferences';
@@ -271,6 +271,8 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
           .eq('organization_id', scope.orgId)
           .eq('bc_connection_id', scope.bcConnectionId)
           .not('bc_customer_number', 'is', null)
+          // Blocked customers can't take new orders; "not blocked" is stored as null (normalizeBlocked).
+          .is('blocked', null)
           .order('display_name', { ascending: true })
           .order('id', { ascending: true }),
       1000,
@@ -370,6 +372,11 @@ function lockedChange(existing: SalesOrderRow, existingLines: SalesOrderLineRow[
       !sameNumber(v.discount_percent, row.discount_percent)
     );
   });
+}
+
+/** Limit a query to the active organization and connection. */
+function scoped<Q extends { eq: (k: string, v: unknown) => Q }>(scope: Scope, q: Q): Q {
+  return q.eq('organization_id', scope.orgId).eq('bc_connection_id', scope.bcConnectionId);
 }
 
 function check<T>(res: { data: T; error: { message: string } | null }, what: string): T {
@@ -488,35 +495,50 @@ export async function saveSalesOrder(
       return { ok: false, error: HAND_STATUS_ONLY };
     }
     const existingLines = await loadLines(scope, existing.id);
+    // An empty order date means "keep the current one", for the lock check and the write alike.
+    const edited: SalesOrderInput = { ...input, order_date: input.order_date || existing.order_date };
     const locked = editableFields(existing.status) !== 'all';
-    if (locked && lockedChange(existing, existingLines, input)) {
+    if (locked && lockedChange(existing, existingLines, edited)) {
       return { ok: false, error: lockedMessage(existing.status) };
     }
 
-    // Lines first, header (version bump) last: a sync that starts in between
-    // reads the old version and so ends 'pending', never 'synced' on stale data.
-    if (!locked) await writeLines(scope, existing.id, existingLines, input);
-    const updated = check(
-      await createServiceClient()
-        .from(ORDERS)
-        .update({
-          ...(locked ? {} : headerValues(input)),
-          ...(locked || input.order_date ? {} : { order_date: existing.order_date }),
-          status,
-          notes: input.notes ?? '',
-          local_version: existing.local_version + 1,
-          sync_state: 'pending',
-          sync_error: null,
-          updated_at: nowIso(),
-        })
-        .eq('id', existing.id)
-        .eq('organization_id', scope.orgId)
-        .eq('bc_connection_id', scope.bcConnectionId)
-        .eq('local_version', existing.local_version)
+    // 1. Take the save: bump the version only if nobody saved since we read
+    //    it. A sync already running now ends 'pending', not 'synced'.
+    const v = existing.local_version;
+    const taken = check(
+      await scoped(scope, createServiceClient().from(ORDERS).update({
+        local_version: v + 1,
+        sync_state: 'pending',
+        sync_error: null,
+        updated_at: nowIso(),
+      }).eq('id', existing.id))
+        .eq('local_version', v)
         .select('id'),
       'Could not save the sales order',
     ) as { id: string }[] | null;
-    if (!updated || updated.length === 0) return { ok: false, error: CHANGED_ELSEWHERE };
+    if (!taken || taken.length === 0) return { ok: false, error: CHANGED_ELSEWHERE };
+
+    // 2. Write the lines and header.
+    if (!locked) await writeLines(scope, existing.id, existingLines, edited);
+    check(
+      await scoped(scope, createServiceClient().from(ORDERS).update({
+        ...(locked ? {} : headerValues(edited)),
+        status,
+        notes: input.notes ?? '',
+        updated_at: nowIso(),
+      }).eq('id', existing.id)),
+      'Could not save the sales order',
+    );
+
+    // 3. Bump again, so a sync that read the order during step 2 (version
+    //    v+1, half-written lines) can't mark it 'synced'. If another save has
+    //    already moved past v+1, its own final bump does the same job.
+    check(
+      await scoped(scope, createServiceClient().from(ORDERS).update({ local_version: v + 2, sync_state: 'pending' })
+        .eq('id', existing.id))
+        .eq('local_version', v + 1),
+      'Could not save the sales order',
+    );
 
     syncInBackground(scope, existing.id);
     revalidateSalesOrders();
@@ -572,9 +594,16 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | Fail>
       const order = await loadOrder(scope, id);
       if (!order) return { ok: false, error: NOT_FOUND };
       if (!canDelete(order.status)) return { ok: false, error: DELETE_RULE };
-      if (order.bc_order_number) {
+      if (order.bc_order_number || order.bc_create_marker) {
         try {
-          await deleteSalesOrderInBc(await buildDeps(scope), order);
+          const deps = await buildDeps(scope);
+          let bcNumber = order.bc_order_number;
+          if (!bcNumber && order.bc_create_marker) {
+            // A create whose answer never reached Nexus may still have made the BC order.
+            const found = await findBcOrderByMarker(deps, order.bc_create_marker);
+            bcNumber = found ? String(found.fields.No ?? '') || null : null;
+          }
+          if (bcNumber) await deleteSalesOrderInBc(deps, { ...order, bc_order_number: bcNumber });
         } catch (e) {
           const message = errorMessage(e) || 'BC error';
           check(

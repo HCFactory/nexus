@@ -131,16 +131,28 @@ function changedLineFields(wanted: Record<string, unknown>, current: Record<stri
 
 const is404 = (err: unknown) => err instanceof BcReferenceError && err.status === 404
 
-/** Steps 2.1-2.3: find or create the BC order and store its number right away. */
-async function ensureBcOrder(deps: OrderSyncDeps, order: SalesOrderRow): Promise<string> {
-  const marker = order.bc_create_marker ?? createMarker(order.id)
+/**
+ * The BC order created for this Nexus order (found by its create marker in
+ * External_Document_No), or null. More than one match is an error to resolve in BC.
+ */
+export async function findBcOrderByMarker(
+  deps: Pick<OrderSyncDeps, 'transport'>,
+  marker: string,
+): Promise<BcRecord | null> {
   const found = await deps.transport.list(SALES_ORDER_SOURCE, {
     filter: `Document_Type eq 'Order' and External_Document_No eq ${quote(marker)}`,
   })
   if (found.length > 1) throw new Error(`Found ${found.length} BC orders with marker ${marker}; resolve in BC`)
+  return found[0] ?? null
+}
+
+/** Steps 2.1-2.3: find or create the BC order and store its number right away. */
+async function ensureBcOrder(deps: OrderSyncDeps, order: SalesOrderRow): Promise<string> {
+  const marker = order.bc_create_marker ?? createMarker(order.id)
+  const found = await findBcOrderByMarker(deps, marker)
   let no: string
-  if (found.length === 1) {
-    no = String(found[0].fields.No ?? '')
+  if (found) {
+    no = String(found.fields.No ?? '')
   } else {
     if (order.bc_create_marker === null) await updateOrder(deps, order.id, { bc_create_marker: marker })
     const created = await deps.transport.create(SALES_ORDER_SOURCE, toBcCreate(order, marker))
