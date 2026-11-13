@@ -1,0 +1,327 @@
+import '@testing-library/jest-dom/vitest';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SalesOrderFormContext } from '@/app/actions/salesOrders';
+import type { CustomerRow, SalesOrderLineRow, SalesOrderRow, ShipToRow } from '@/types/salesOrders';
+import { SalesOrderForm } from './SalesOrderForm';
+
+const orderActions = vi.hoisted(() => ({
+  saveSalesOrder: vi.fn(),
+  deleteSalesOrder: vi.fn(),
+  retrySalesOrderSync: vi.fn(),
+  overwriteBcWithNexus: vi.fn(),
+}));
+const shipActions = vi.hoisted(() => ({ refreshShipTos: vi.fn(), saveShipToAction: vi.fn() }));
+const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
+vi.mock('@/app/actions/salesOrders', () => orderActions);
+vi.mock('@/app/actions/shipToAddresses', () => shipActions);
+vi.mock('next/navigation', () => ({ useRouter: () => nav }));
+vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+
+const customer = (over: Partial<CustomerRow>): CustomerRow => ({
+  id: 'cust-1', bc_customer_number: 'C1', display_name: 'Acme Foods', address_line_1: '1 Main St', address_line_2: '',
+  city: 'Austin', state: 'TX', postal_code: '78701', country: 'US', phone_number: '555-0100', email: 'a@acme.test',
+  email_cc: 'cc@acme.test', contact_no: 'CT1', mobile_phone_no: '555-0101', ship_to_code: 'DOCK',
+  shipment_method_code: 'UPS', payment_terms_code: 'NET30', tax_area_code: 'TX', tax_liable: true,
+  customer_posting_group: 'DOMESTIC', gen_bus_posting_group: 'DOM', location_code: 'W1', ...over,
+});
+const acme = customer({});
+const beta = customer({
+  id: 'cust-2', bc_customer_number: 'C2', display_name: 'Beta Bakery', address_line_1: '9 Oak Ave', city: 'Hilo',
+  state: 'HI', postal_code: '96720', phone_number: '555-0200', email: 'b@beta.test', email_cc: '', contact_no: 'CT2',
+  mobile_phone_no: '', ship_to_code: '', shipment_method_code: 'GROUND', payment_terms_code: 'NET15',
+  tax_area_code: 'HI', tax_liable: false, customer_posting_group: 'EXPORT', gen_bus_posting_group: 'EXP',
+});
+
+const opts = (...codes: string[]) => codes.map((c) => ({ code: c, label: c }));
+const context: SalesOrderFormContext = {
+  customers: [acme, beta],
+  items: [{ bc_item_number: 'P100', display_name: 'Pesto sauce', unit_price: 12.5, base_unit_of_measure_code: 'CASE' }],
+  selectOptions: {
+    paymentTerms: opts('NET30', 'NET15'),
+    taxAreas: opts('TX', 'HI'),
+    generalBusinessPostingGroups: opts('DOM', 'EXP'),
+    customerPostingGroups: opts('DOMESTIC', 'EXPORT'),
+    shipmentMethods: opts('UPS', 'GROUND'),
+  },
+  companyLocation: 'MAIN',
+  today: '2026-11-13',
+};
+
+const dock = {
+  id: 'st-1', customer_number: 'C1', code: 'DOCK', name: 'Loading dock', address: '2 Dock Rd', address_2: '',
+  city: 'Austin', state: 'TX', post_code: '78702', country: 'US', contact: 'Sam', phone: '555-0111', email: '',
+  tax_area_code: '', location_code: '', shipment_method_code: '', tax_liable: false,
+} as unknown as ShipToRow;
+
+const order = (over: Partial<SalesOrderRow> = {}): SalesOrderRow => ({
+  id: 'so-1', status: 'draft', customer_id: 'cust-1', customer_number: 'C1', order_date: '2026-11-10',
+  requested_delivery_date: null, invoice_number: null, customer_po: 'PO-1', notes: 'Call first',
+  bill_name: 'Acme Foods', bill_address: '1 Main St', bill_address_2: '', bill_city: 'Austin', bill_state: 'TX',
+  bill_post_code: '78701', bill_country: 'US', bill_contact_no: 'CT1', bill_phone: '555-0100', bill_mobile: '',
+  bill_email: 'a@acme.test', bill_email_cc: '', ship_to_code: 'DOCK', ship_to_name: 'Loading dock',
+  ship_to_address: '2 Dock Rd', ship_to_address_2: '', ship_to_city: 'Austin', ship_to_state: 'TX',
+  ship_to_post_code: '78702', ship_to_country: 'US', ship_to_contact: 'Sam', ship_to_phone: '555-0111',
+  payment_terms_code: 'NET30', tax_area_code: 'TX', gen_bus_posting_group: 'DOM', customer_posting_group: 'DOMESTIC',
+  shipment_method_code: 'UPS', location_code: 'W1', tax_liable: true, bc_order_number: 'SO-10234', bc_etag: null,
+  bc_create_marker: null, bc_due_date: '2026-12-10', bc_document_date: null, bc_posting_date: null,
+  total_excl_tax: 100, total_tax: 8.25, total_incl_tax: 108.25, sync_state: 'synced', sync_error: null,
+  sync_attempts: 0, claimed_until: null, last_synced_at: null, local_version: 3, synced_version: 3,
+  created_by: null, created_at: '', updated_at: '', organization_id: 'o', bc_connection_id: 'b', ...over,
+});
+const lineRow = { id: 'l1', item_number: 'P100', description: 'Pesto sauce', quantity: 2, unit_price: null,
+  discount_percent: 0, unit_of_measure_code: 'CASE', amount_incl_tax: 27, position: 0 } as unknown as SalesOrderLineRow;
+
+type Props = React.ComponentProps<typeof SalesOrderForm>;
+const renderForm = (over: Partial<Props> = {}) =>
+  render(
+    <SalesOrderForm
+      order={null}
+      lines={[]}
+      context={context}
+      shipTos={[]}
+      canEdit
+      canSaveShipTo
+      {...over}
+    />,
+  );
+
+const billing = () => within(screen.getByRole('group', { name: 'Billing address' }));
+const pickCustomer = (label: string) => {
+  const input = screen.getByRole('combobox', { name: 'Customer' });
+  fireEvent.focus(input);
+  fireEvent.change(input, { target: { value: label.split(' ')[0] } });
+  fireEvent.click(screen.getByRole('option', { name: label }));
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  shipActions.refreshShipTos.mockResolvedValue([]);
+});
+afterEach(cleanup);
+
+describe('SalesOrderForm — picking a customer', () => {
+  it('fills billing, terms, tax liable and the default ship-to, and refreshes ship-tos once', async () => {
+    shipActions.refreshShipTos.mockResolvedValue([dock]);
+    renderForm();
+    pickCustomer('C1 – Acme Foods');
+
+    expect(billing().getByLabelText('Address')).toHaveValue('1 Main St');
+    expect(billing().getByLabelText('City')).toHaveValue('Austin');
+    expect(billing().getByLabelText('Contact no.')).toHaveValue('CT1');
+    expect(billing().getByLabelText('Email CC')).toHaveValue('cc@acme.test');
+    expect(screen.getByLabelText('Payment terms')).toHaveValue('NET30');
+    expect(screen.getByLabelText('Shipment method')).toHaveValue('UPS');
+    expect(screen.getByLabelText('Tax area')).toHaveValue('TX');
+    expect(screen.getByLabelText('Gen. bus. posting group')).toHaveValue('DOM');
+    expect(screen.getByLabelText('Customer posting group')).toHaveValue('DOMESTIC');
+    expect(screen.getByRole('switch', { name: 'Tax liable' })).toBeChecked();
+
+    expect(shipActions.refreshShipTos).toHaveBeenCalledTimes(1);
+    expect(shipActions.refreshShipTos).toHaveBeenCalledWith('C1');
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Ship to' })).toHaveValue('saved:DOCK'));
+    expect(screen.getByRole('option', { name: '★ DOCK – Loading dock' })).toBeInTheDocument();
+  });
+
+  it('keeps going when the ship-to refresh throws', async () => {
+    shipActions.refreshShipTos.mockRejectedValue(new Error('Select a Business Central environment first'));
+    renderForm();
+    pickCustomer('C1 – Acme Foods');
+    await waitFor(() => expect(shipActions.refreshShipTos).toHaveBeenCalled());
+    expect(billing().getByLabelText('Address')).toHaveValue('1 Main St');
+    expect(screen.getByRole('combobox', { name: 'Ship to' })).toHaveValue('billing');
+  });
+
+  it('switching customer silently refills, keeping lines, notes, customer PO and invoice #', async () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Keep me' } });
+    fireEvent.change(screen.getByLabelText('Customer PO'), { target: { value: 'PO-9' } });
+    fireEvent.change(screen.getByLabelText('Invoice # (Ext. Doc No.)'), { target: { value: 'INV-7' } });
+
+    pickCustomer('C2 – Beta Bakery');
+
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(billing().getByLabelText('Address')).toHaveValue('9 Oak Ave');
+    expect(billing().getByLabelText('City')).toHaveValue('Hilo');
+    expect(screen.getByLabelText('Payment terms')).toHaveValue('NET15');
+    expect(screen.getByLabelText('Tax area')).toHaveValue('HI');
+    expect(screen.getByRole('switch', { name: 'Tax liable' })).not.toBeChecked();
+    expect(screen.getByLabelText('Notes')).toHaveValue('Keep me');
+    expect(screen.getByLabelText('Customer PO')).toHaveValue('PO-9');
+    expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveValue('INV-7');
+    expect(screen.getByText('Pesto sauce')).toBeInTheDocument();
+    await waitFor(() => expect(shipActions.refreshShipTos).toHaveBeenCalledWith('C2'));
+  });
+});
+
+describe('SalesOrderForm — ship-to', () => {
+  it('a one-off with Save to customer saves the ship-to first and uses its code', async () => {
+    shipActions.saveShipToAction.mockResolvedValue({ ok: true, row: { ...dock, id: 'st-9', code: 'NEWDOCK', name: 'New dock' } });
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-new' });
+    renderForm();
+    pickCustomer('C2 – Beta Bakery');
+    await waitFor(() => expect(shipActions.refreshShipTos).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Ship to' }), { target: { value: 'oneoff' } });
+    fireEvent.change(screen.getByLabelText('Ship-to name'), { target: { value: 'New dock' } });
+    fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '5 Pier St' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Save to customer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
+    expect(shipActions.saveShipToAction).toHaveBeenCalledTimes(1);
+    const shipArg = shipActions.saveShipToAction.mock.calls[0][0];
+    expect(shipArg.customerNumber).toBe('C2');
+    expect(shipArg.values).toMatchObject({ name: 'New dock', address: '5 Pier St' });
+    expect(shipActions.saveShipToAction.mock.invocationCallOrder[0]).toBeLessThan(
+      orderActions.saveSalesOrder.mock.invocationCallOrder[0],
+    );
+    const input = orderActions.saveSalesOrder.mock.calls[0][0];
+    expect(input.ship_to_code).toBe('NEWDOCK');
+    expect(input.customer_number).toBe('C2');
+    expect(input.id).toBeUndefined();
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/sales-orders/so-new'));
+  });
+
+  it('an unsaved one-off travels as ship_to_* fields with an empty code', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-new' });
+    renderForm();
+    pickCustomer('C2 – Beta Bakery');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Ship to' }), { target: { value: 'oneoff' } });
+    fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '5 Pier St' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
+    expect(shipActions.saveShipToAction).not.toHaveBeenCalled();
+    const input = orderActions.saveSalesOrder.mock.calls[0][0];
+    expect(input.ship_to_code).toBe('');
+    expect(input.ship_to_address).toBe('5 Pier St');
+  });
+
+  it('does not save the order when saving the ship-to fails', async () => {
+    shipActions.saveShipToAction.mockResolvedValue({ ok: false, error: 'BC said no' });
+    renderForm();
+    pickCustomer('C2 – Beta Bakery');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Ship to' }), { target: { value: 'oneoff' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Save to customer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('BC said no')).toBeInTheDocument();
+    expect(orderActions.saveSalesOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesOrderForm — fields', () => {
+  it('Invoice # placeholder and Customer PO helper text', () => {
+    renderForm();
+    expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('placeholder', 'Same as order number');
+    expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('maxlength', '35');
+    expect(screen.getByText('Nexus and Bill.com only, not sent to BC')).toBeInTheDocument();
+  });
+
+  it('dates: document and posting are set when invoiced; due date comes from BC', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getAllByText('Set when invoiced')).toHaveLength(2);
+    expect(screen.getByTestId('due-date')).toHaveTextContent('2026-12-10');
+    expect(screen.getByLabelText('Order date')).toHaveValue('2026-11-10');
+  });
+
+  it('due date shows — before BC has one; a new order defaults its order date to today', () => {
+    renderForm();
+    expect(screen.getByTestId('due-date')).toHaveTextContent('—');
+    expect(screen.getByLabelText('Order date')).toHaveValue('2026-11-13');
+  });
+
+  it('totals come from the BC read-back', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getByTestId('total-subtotal')).toHaveTextContent('100.00');
+    expect(screen.getByTestId('total-tax')).toHaveTextContent('8.25');
+    expect(screen.getByTestId('total-total')).toHaveTextContent('108.25');
+    expect(screen.getByText('Tax (from BC)')).toBeInTheDocument();
+  });
+
+  it('totals read "Calculated when sent to BC" while pending', () => {
+    renderForm({ order: order({ sync_state: 'pending' }), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getAllByText('Calculated when sent to BC')).toHaveLength(3);
+    expect(screen.getByText('Sending to BC…')).toBeInTheDocument();
+  });
+
+  it('a new order shows no sync badge and no Delete', () => {
+    renderForm();
+    expect(screen.queryByText('In BC')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.getAllByText('Calculated when sent to BC')).toHaveLength(3);
+  });
+});
+
+describe('SalesOrderForm — status and locking', () => {
+  it('a Final order disables every field except Status and Notes', () => {
+    renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeEnabled();
+    expect(screen.getByLabelText('Notes')).toBeEnabled();
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toBeDisabled();
+    expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toBeDisabled();
+    expect(screen.getByLabelText('Customer PO')).toBeDisabled();
+    expect(billing().getByLabelText('Address')).toBeDisabled();
+    expect(screen.getByLabelText('Order date')).toBeDisabled();
+    expect(screen.getByLabelText('Requested delivery date')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Ship to' })).toBeDisabled();
+    expect(screen.getByLabelText('Payment terms')).toBeDisabled();
+    expect(screen.getByRole('switch', { name: 'Tax liable' })).toBeDisabled();
+    expect(screen.getByLabelText('Qty')).toBeDisabled();
+    expect(screen.queryByPlaceholderText('Add item…')).toBeNull();
+  });
+
+  it('saving a Final order sends the status and notes', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
+    renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'draft' } });
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Unlocked' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
+    const input = orderActions.saveSalesOrder.mock.calls[0][0];
+    expect(input).toMatchObject({ id: 'so-1', status: 'draft', notes: 'Unlocked', customer_id: 'cust-1', ship_to_code: 'DOCK' });
+    expect(input.lines).toHaveLength(1);
+    expect(input.lines[0]).toMatchObject({ id: 'l1', item_number: 'P100', quantity: 2 });
+    await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+  });
+
+  it('Delete shows for Draft and Final only', () => {
+    renderForm({ order: order({ status: 'pulled' }), lines: [lineRow], shipTos: [dock] });
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    cleanup();
+    renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('Delete asks for confirmation, then deletes and goes back to the list', async () => {
+    orderActions.deleteSalesOrder.mockResolvedValue({ ok: true });
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(orderActions.deleteSalesOrder).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete order' }));
+    await waitFor(() => expect(orderActions.deleteSalesOrder).toHaveBeenCalledWith('so-1'));
+    await waitFor(() => expect(nav.push).toHaveBeenCalledWith('/sales-orders'));
+  });
+
+  it('read-only without edit permission', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock], canEdit: false });
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeDisabled();
+    expect(screen.getByLabelText('Notes')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('shows a blocked/missing customer by its stored number and name', () => {
+    renderForm({ order: order({ customer_number: 'C9', customer_id: 'cust-9', bill_name: 'Gone Co' }), lines: [], shipTos: [] });
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toHaveValue('C9 – Gone Co');
+  });
+
+  it('Try again on a failed order calls the retry action', async () => {
+    orderActions.retrySalesOrderSync.mockResolvedValue({ ok: true, state: 'synced' });
+    renderForm({ order: order({ sync_state: 'failed', sync_error: 'Boom' }), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getByText('Failed: Boom')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(orderActions.retrySalesOrderSync).toHaveBeenCalledWith('so-1'));
+    await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+  });
+});
