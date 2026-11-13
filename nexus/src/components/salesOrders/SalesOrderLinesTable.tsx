@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type { SalesOrderItemOption } from '@/app/actions/salesOrders';
 import type { LineDraft } from '@/types/salesOrders';
 
@@ -21,8 +21,10 @@ const parseNumber = (raw: string): number | null => {
 };
 
 function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: (item: SalesOrderItemOption) => void }) {
+  const listId = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = q
@@ -30,11 +32,25 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
       : items;
     return list.slice(0, 50);
   }, [items, query]);
+  const activeIndex = Math.min(active, Math.max(matches.length - 1, 0));
+  const optionId = (i: number) => `${listId}-opt-${i}`;
+
+  const pick = (item: SalesOrderItemOption) => {
+    onPick(item);
+    setQuery('');
+    setActive(0);
+    setOpen(false);
+  };
 
   return (
     <div className="relative">
       <input
         type="text"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        aria-activedescendant={open && matches.length > 0 ? optionId(activeIndex) : undefined}
         value={query}
         placeholder="Add item…"
         aria-label="Add item"
@@ -45,37 +61,97 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
         onBlur={() => setOpen(false)}
         onChange={(e) => {
           setQuery(e.target.value);
+          setActive(0);
           setOpen(true);
         }}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setOpen(true);
+            setActive(Math.min(activeIndex + 1, matches.length - 1));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setActive(Math.max(activeIndex - 1, 0));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (open && matches[activeIndex]) pick(matches[activeIndex]);
+          } else if (e.key === 'Escape') {
+            setOpen(false);
+          }
+        }}
       />
-      {open && (
-        <ul
-          role="listbox"
-          className="absolute left-0 z-20 mt-1 max-h-64 w-80 overflow-y-auto rounded border border-border bg-surface shadow-lg"
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          {matches.length === 0 ? (
+      <ul
+        id={listId}
+        role="listbox"
+        hidden={!open}
+        className="absolute left-0 z-20 mt-1 max-h-64 w-80 overflow-y-auto rounded border border-border bg-surface shadow-lg"
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        {open &&
+          (matches.length === 0 ? (
             <li className="px-3 py-2 text-xs text-foreground-subtle">No matching items.</li>
           ) : (
-            matches.map((item) => (
-              <li key={item.bc_item_number} role="option" aria-selected={false}>
-                <button
-                  type="button"
-                  className="block w-full px-3 py-1.5 text-left text-sm text-foreground hover:bg-surface-raised"
-                  onClick={() => {
-                    onPick(item);
-                    setQuery('');
-                    setOpen(false);
-                  }}
-                >
-                  {`${item.bc_item_number} – ${item.display_name}`}
-                </button>
+            matches.map((item, i) => (
+              <li
+                key={item.bc_item_number}
+                id={optionId(i)}
+                role="option"
+                aria-selected={i === activeIndex}
+                className={`cursor-pointer px-3 py-1.5 text-sm text-foreground hover:bg-surface-raised ${
+                  i === activeIndex ? 'bg-surface-raised' : ''
+                }`}
+                onClick={() => pick(item)}
+              >
+                {`${item.bc_item_number} – ${item.display_name}`}
               </li>
             ))
-          )}
-        </ul>
-      )}
+          ))}
+      </ul>
     </div>
+  );
+}
+
+/**
+ * Number cell that keeps the raw text while editing so it can be empty
+ * mid-edit. Valid values commit on change; blur reverts invalid input, and an
+ * empty field commits `emptyValue` (or reverts when that is null).
+ */
+function NumberCell({
+  label,
+  value,
+  disabled,
+  step,
+  valid,
+  emptyValue,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  disabled: boolean;
+  step?: string;
+  valid: (n: number) => boolean;
+  emptyValue: number | null;
+  onCommit: (n: number) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      aria-label={label}
+      step={step}
+      disabled={disabled}
+      value={text ?? String(value)}
+      className={cellInput}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = parseNumber(e.target.value);
+        if (n !== null && valid(n)) onCommit(n);
+      }}
+      onBlur={() => {
+        if (text !== null && text.trim() === '' && emptyValue !== null) onCommit(emptyValue);
+        setText(null);
+      }}
+    />
   );
 }
 
@@ -120,14 +196,13 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                 {line.description && <span className="ml-2">{line.description}</span>}
               </td>
               <td className="w-24 px-3 py-2">
-                <input
-                  type="number"
-                  aria-label="Qty"
-                  min={0}
+                <NumberCell
+                  label="Qty"
                   disabled={locked}
                   value={line.quantity}
-                  className={cellInput}
-                  onChange={(e) => update(line.key, { quantity: parseNumber(e.target.value) ?? 0 })}
+                  valid={(n) => n > 0}
+                  emptyValue={null}
+                  onCommit={(n) => update(line.key, { quantity: n })}
                 />
               </td>
               <td className="w-36 px-3 py-2">
@@ -148,16 +223,14 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                 )}
               </td>
               <td className="w-24 px-3 py-2">
-                <input
-                  type="number"
-                  aria-label="Disc %"
-                  min={0}
-                  max={100}
+                <NumberCell
+                  label="Disc %"
                   step="0.01"
                   disabled={locked}
                   value={line.discount_percent}
-                  className={cellInput}
-                  onChange={(e) => update(line.key, { discount_percent: parseNumber(e.target.value) ?? 0 })}
+                  valid={(n) => n >= 0 && n <= 100}
+                  emptyValue={0}
+                  onCommit={(n) => update(line.key, { discount_percent: n })}
                 />
               </td>
               <td className="whitespace-nowrap px-3 py-2 text-right text-foreground-muted">

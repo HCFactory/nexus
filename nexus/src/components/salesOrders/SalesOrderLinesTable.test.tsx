@@ -75,4 +75,62 @@ describe('SalesOrderLinesTable', () => {
     for (const el of screen.getAllByRole('spinbutton')) expect(el).toBeDisabled();
     expect(screen.getByLabelText('Remove line')).toBeDisabled();
   });
+
+  it('keyboard: ArrowDown + Enter picks the active item without submitting a form', () => {
+    const onChange = vi.fn();
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <SalesOrderLinesTable lines={[]} items={items} locked={false} onChange={onChange} />
+      </form>,
+    );
+    const box = screen.getByRole('combobox');
+    fireEvent.focus(box);
+    expect(box).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true');
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    expect(box.getAttribute('aria-activedescendant')).toBe(screen.getAllByRole('option')[1].id);
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect((onChange.mock.calls[0][0] as LineDraft[])[0].item_number).toBe('M200');
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('keyboard: typing filters, Escape closes', () => {
+    setup([]);
+    const box = screen.getByRole('combobox');
+    fireEvent.change(box, { target: { value: 'pesto' } });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(box).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+
+  it('Qty can be cleared and retyped; empty reverts on blur', () => {
+    const onChange = setup([line({ quantity: 12 })]);
+    const qty = screen.getByLabelText('Qty') as HTMLInputElement;
+    expect(qty.value).toBe('12');
+    fireEvent.change(qty, { target: { value: '' } });
+    expect(qty.value).toBe('');
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.change(qty, { target: { value: '5' } });
+    expect(qty.value).toBe('5');
+    expect((onChange.mock.calls.at(-1)![0] as LineDraft[])[0].quantity).toBe(5);
+    fireEvent.change(qty, { target: { value: '' } });
+    fireEvent.blur(qty);
+    expect(qty.value).toBe('12');
+    fireEvent.change(qty, { target: { value: '0' } });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it('Disc %: empty commits 0, over 100 reverts', () => {
+    const onChange = setup([line({ discount_percent: 10 })]);
+    const disc = screen.getByLabelText('Disc %') as HTMLInputElement;
+    fireEvent.change(disc, { target: { value: '150' } });
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.blur(disc);
+    expect(disc.value).toBe('10');
+    fireEvent.change(disc, { target: { value: '' } });
+    fireEvent.blur(disc);
+    expect((onChange.mock.calls.at(-1)![0] as LineDraft[])[0].discount_percent).toBe(0);
+  });
 });
