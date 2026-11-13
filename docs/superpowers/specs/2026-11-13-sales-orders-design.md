@@ -43,9 +43,10 @@ A Nexus sales order must **match a BC sales order**: same fields, same meaning. 
 
 - Reading orders automatically from EDI or email. Reps keep typing them in, just in Nexus.
 - Editing sales orders in BC. After go-live, Nexus is the only place orders are created or edited (decided). Orders that already exist in BC are not imported.
-- Two-way sync.
+- Two-way sync **of orders**. (Ship-to addresses do sync both ways; see below.)
 - Posting, shipping or invoicing (that's project 2).
 - Friends & Family orders (the existing `friends_family_*` tables). They stay a separate internal feature and never go to BC.
+- A scheduled background sync.
 - Line types other than Item, invoice discounts, item variants and salesperson. None are used today; they can be added later. (Line discount % **is** in scope.)
 - Partial quantities to ship. Not needed in project 1.
 
@@ -58,7 +59,7 @@ A Nexus sales order must **match a BC sales order**: same fields, same meaning. 
 
 ## Constraints
 
-- **Writes go through BC's published Sales Order page, not API v2.0.** API v2.0 `salesOrders` lacks most of the required header fields: document date, due date, tax area, both posting groups, tax liable, contact no., mobile and Email CC. TEST BC already publishes Page 42 as the OData service **`SalesOrder`**, with lines as **`SalesOrderSalesLines`**.
+- **Writes go through BC's published Sales Order page, not API v2.0.** All the header fields are ordinary BC sales order fields. But BC's simplified standard API (v2.0 `salesOrders`) exposes only a subset of them, leaving out document date, due date, tax area, both posting groups, tax liable, contact no., mobile and Email CC. The published page exposes all of them. TEST BC already publishes Page 42 as the OData service **`SalesOrder`**, with lines as **`SalesOrderSalesLines`**.
   - Verified 2026-11-13: these carry every field this doc needs, including the Email CC extension field `EMailCCHCABG`.
   - This is the same pattern Nexus uses for customers with `Customer_Card_Excel`.
   - **Production BC must publish the same two services** before go-live. Add this to the backlog #1 go-live list.
@@ -99,7 +100,9 @@ BC field names are from the `SalesOrder` page.
 | Requested delivery date | Blank by default; the rep can enter one. |
 | Payment terms, Tax area code, Gen. bus. posting group, Customer posting group, Shipment method | **Dropdowns** of BC values synced into Nexus. Filled in from the customer profile when the customer is picked; the rep can change them for a one-off order. |
 | Tax liable | **Switch.** Filled in from the customer profile, and can be changed for a one-off order. |
-| Customer info: Address, Address 2, City, State, ZIP code, Country/Region, Contact no., Phone no., Mobile phone no., Email, Email CC | Filled in from the customer profile (BC's `Sell_to_*` fields and `EMailCCHCABG`). Each can be changed for a one-off order. Shown on the order, and carried onto the invoice. |
+| **Billing address** (Nexus's label for the BC customer card address): Address, Address 2, City, State, ZIP code, Country/Region, Contact no., Phone no., Mobile phone no., Email, Email CC | Filled in from the customer profile (BC's `Sell_to_*` fields and `EMailCCHCABG`). Each can be changed for a one-off order. Shown on the order, and carried onto the invoice. |
+| **Ship-to** | See "Customer ship-to addresses" below. |
+| Location (hidden, `Location_Code`) | Ship-to's location, else the customer's, else the company default. Lines take the header's location. |
 | Status | See "Status" below. |
 
 **Dropdown lists:**
@@ -108,12 +111,56 @@ BC field names are from the `SalesOrder` page.
 - Customer fields (`tax_area_code`, `gen_bus_posting_group`, `customer_posting_group`, `payment_terms_code`, `email_cc`, `tax_liable`, phone, email) already exist on `business_central_customers`.
 - Contact no. and mobile phone may need adding to the customer card fill. The builder checks.
 
+### Customer ship-to addresses (decided)
+
+**Data.** Each customer has a list of ship-to addresses that mirror BC's **Ship-to Address** records (page 300) and sync **both ways**.
+- Fields: code (BC limit of 10 characters, stored in capitals), name, address 1–2, city, state, ZIP, country, contact, phone, email, **tax area, location, shipment method**.
+- The customer's **default** ship-to is the BC customer card field `Ship_to_Code`.
+- TEST BC has no ship-to codes in use yet (0 of 500 customers, 0 of 76 orders).
+
+**Customer profile screen.**
+- The main address section is labelled **"Billing address"**.
+- Below it is a **"Ship-to addresses"** table: ★ default, code, name, city/state, Edit, delete.
+- **+ Add** and **Edit** open a popup form with all the fields above.
+- Clicking ★ sets the default.
+- Editing uses the existing "Edit customers" permission.
+
+```
+Billing address
+  165 Kaiholu St, Kailua HI 96734 US
+
+Ship-to addresses                     [+ Add]
+  ★ Code        Name           City / State
+  ★ 165KAIHOLU  Kailua School  Kailua, HI   [Edit][✕]
+  ☆ WAREHOUSE   Main DC        Honolulu, HI [Edit][✕]
+```
+
+**Automatic code.** A ship-to saved without a code gets one made from the street address: capitals, spaces and punctuation removed, cut to 10 characters ("165 Kaiholu St" → `165KAIHOLU`). If that code is already taken for the customer, it is cut shorter and ends in a number (`165KAIHO-2`).
+
+**Sync.**
+- **Nexus → BC:** adding, editing, deleting or changing the default pushes to BC right away. This works the same way as customer editing.
+- **BC → Nexus:** ship-tos come over with every **customer Sync**, and are refreshed for one customer whenever that customer is picked on a sales order.
+- **If both sides changed the same ship-to, the latest edit wins** (decided). Nexus compares its last-edited time with BC's last-modified time where the page exposes one; otherwise the builder picks a safe equivalent and records it.
+- **Deleting** a ship-to never changes existing orders, which keep the address copied onto them. Deleting the default clears `Ship_to_Code`, and new orders fall back to the billing address.
+
+**On the sales order.**
+- Picking a customer fills in the **default ship-to**, or the billing address if there is no default.
+- The rep can pick another saved ship-to, or type a **one-off** address with a **"Save to customer"** checkbox. The checkbox saves it as a new ship-to and generates a code if it's left blank.
+- Picking a ship-to that has a tax area, location or shipment method replaces the order's values. Blank ones keep the customer's. Tax follows the delivery address.
+- BC fields written: `Ship_to_Code` (blank for a one-off or the billing address), `Ship_to_Name`, `Ship_to_Address`, `Ship_to_Address_2`, `Ship_to_City`, `Ship_to_County`, `Ship_to_Post_Code`, `Ship_to_Country_Region_Code`, `Ship_to_Contact`, `Ship_to_Phone_No`.
+
+**Switching customer** on a Draft order silently refills every customer-driven field: billing address, ship-to, terms, posting groups, tax area, tax liable, shipment method and location. Lines, notes, customer PO and invoice # stay as they are, and BC re-prices lines on the next sync.
+
+**BC setup needed.** Publish page 300 as web service **`ShipToAddresses`**. The user is doing this in TEST; production goes on the backlog #1 go-live list.
+
 ### Status (decided)
 
 A dropdown with colours: **Draft** (gray), **Final** (yellow), **Pulled** (orange), **Shipped** (blue), **Invoiced** (green).
 
 - **Status is Nexus-only.** It never changes the BC order, which stays Open. Every status, including Draft, is synced to BC as a normal open order.
 - Reps pick **Draft, Final and Pulled** by hand.
+- **Locks (decided):** Draft is fully editable. From **Final** onward (Final, Pulled, Shipped, Invoiced), only **status and notes** can change. Moving an order back to Draft unlocks everything. Anyone with "Edit sales orders" can move it back.
+- **Delete (decided):** only **Draft and Final** orders can be deleted, with a confirm step. Deleting also deletes the BC order.
 - **Shipped and Invoiced are set automatically** when project 2's Ship and Create invoice actions succeed in BC, and can't be picked by hand. In project 1 they show in the dropdown but are disabled.
 
 ### Order numbers, Customer PO and notes (decided)
@@ -180,7 +227,7 @@ Sales Orders › SO-10234                         [ Final ▾ ] (yellow)   ● I
 Customer      [ C00125 – Acme Foods      ▾]   Invoice # (Ext. Doc No.) [ SO-10234 ]
 Customer PO   [ PO-88812 ]  (Nexus + Bill.com only, not BC)
 
-Customer info                                  Dates
+Billing address                                Dates
   Address    [165 Kaiholu St      ]              Order date      [2026-11-13]
   Address 2  [                    ]              Requested deliv.[          ]
   City [Kailua] State [HI] ZIP [96734] [US ▾]    Document date   set at invoice
@@ -188,6 +235,8 @@ Customer info                                  Dates
   Mobile     [        ]                          Due date        2026-12-13 (BC)
   Email      [angela…@k12.hi.us]
   Email CC   [angela…@k12.hi.us]
+
+Ship to  [ ★ 165KAIHOLU – Kailua School ▾ ]  (or type a one-off  ☐ Save to customer)
 
 Terms & posting
   Payment terms [Net 30 ▾]  Shipment method [Ground ▾]  Tax liable [on]
@@ -205,8 +254,7 @@ Notes
                                                          [Delete]  [Save]
 ```
 
-- **Customer:** pick from synced BC customers, with blocked customers excluded. Picking one fills in the customer info, terms and posting fields from the customer profile (see "Header fields"). Re-picking a different customer refills them.
-- **Ship-to (my call):** BC's ship-to fields are kept equal to the customer info. 75 of 76 TEST orders ship to the customer's own address, and the user's field list has no separate ship-to. A separate ship-to and BC's saved ship-to codes are out of scope.
+- **Customer:** pick from synced BC customers, with blocked customers excluded. Picking one fills in the customer info, terms and posting fields from the customer profile (see "Header fields"). Switching to a different customer refills them silently (see "Customer ship-to addresses").
 - **Dimension 2 is dropped (my call).** It isn't in the user's field list and was used on only 5 of 76 orders. BC fills in any customer default dimension on its own.
 - **Lines table (decided):** a table inside the order, built in the style of the purchase invoice items table (`InvoiceItemsTable` and `ItemPicker` in `src/components/invoices/InvoicesClient.tsx`).
   - **Columns:** Item, Qty, Unit price, Discount %, Amount incl. tax.
@@ -216,7 +264,7 @@ Notes
   - The blank row is never saved or sent to BC.
 - **Hidden line defaults (my call):** these aren't shown as columns but are still set on every BC line.
   - Unit of measure: the item's base unit.
-  - Location: the org's usual location; the builder picks most-used-from-data or a setting.
+  - Location: the header's location (ship-to, then customer, then company default).
 - **Discount %** is sent to BC as the line's `Line_Discount_Percent`. Bill.com invoice lines have no discount field, so project 2 sends Bill.com the price after discount.
 - **Totals and tax:** shown only from BC's last sync. While `pending`, they read "calculated when sent to BC".
 
@@ -224,17 +272,26 @@ The **Sales Orders list** shows: BC order number (or "Not yet in BC"), invoice #
 
 ### Permissions
 
-My call: new flags `canViewSalesOrders` and `canEditSalesOrders`, which covers create, edit and delete. Admins get both by default; others get them per user, like the existing flags.
+New flags `canViewSalesOrders` and `canEditSalesOrders`. **One level (decided):** "Edit" covers create, edit, moving orders back to Draft and deleting. Admins get both by default; others get them per user, like the existing flags. Ship-to editing uses the existing `canEditCustomers`.
 
 ### Data
 
-My call on shape; the builder finalizes names. Two new tables, one for order headers and one for order lines, each scoped by `organization_id` + `bc_connection_id`. They hold:
+My call on shape; the builder finalizes names. Three new tables: order headers, order lines, and customer ship-to addresses (mirroring BC, with a last-synced marker for the latest-edit-wins rule), each scoped by `organization_id` + `bc_connection_id`. They hold:
 - the Nexus-entered fields above
 - the BC ids (order id, line ids), BC number and etag
 - BC's computed values
 - sync state, last error, attempt count and `claimed_until`
 
 RLS lets users read their own org's orders. All writes go through server actions using the service client.
+
+## Done test (decided)
+
+On TEST:
+1. Re-enter 5 real recent orders in Nexus: one to a saved ship-to, one to a one-off ship-to, one with a discount.
+   - Each appears in BC with every field matching.
+   - BC's tax and totals match what Nexus shows.
+2. Edit a ship-to in BC and see it in Nexus after customer Sync. Edit one in Nexus and see it in BC.
+3. Change a synced order in BC and see Nexus flag it as "Changed in BC". "Overwrite BC" then restores Nexus's version.
 
 ## Notes for project 2 (not built here)
 
@@ -247,5 +304,5 @@ RLS lets users read their own org's orders. All writes go through server actions
 - How to mark a BC order so the "no duplicates" check can find it (see "How a sync talks to BC"), verified against TEST.
 - Confirm against TEST that the `SalesOrder` and `SalesOrderSalesLines` pages accept insert, modify and delete over OData with the app's credentials. Also confirm that every field in "Header fields" is editable there. Anything that can't be set goes back to the user before being dropped.
 - Batch size and lease length for the list-load sweep.
-- How the default location is chosen.
+- The company-default location used when neither the ship-to nor the customer has one: a setting, or BC's company location.
 - Table and column names.
