@@ -231,7 +231,7 @@ export function ItemCategoriesClient({ rows: initialRows, canManage, references 
       )}
 
       <CreateCategoryDialog
-        key={createOpen ? 'open' : 'closed'}
+        key={createOpen ? 'create-open' : 'create-closed'}
         open={createOpen}
         onOpenChange={setCreateOpen}
         onCreate={handleCreated}
@@ -240,7 +240,7 @@ export function ItemCategoriesClient({ rows: initialRows, canManage, references 
 
       {selectedRow && (
         <DeleteCategoryDialog
-          key={deleteOpen ? `${selectedRow.category.id}-open` : "closed"}
+          key={deleteOpen ? `delete-${selectedRow.category.id}-open` : "delete-closed"}
           open={deleteOpen}
           onOpenChange={setDeleteOpen}
           category={selectedRow.category}
