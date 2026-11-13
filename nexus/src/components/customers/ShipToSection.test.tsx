@@ -98,4 +98,21 @@ describe('ShipToSection', () => {
     await waitFor(() => expect(actions.deleteShipToAction).toHaveBeenCalledWith('id-SIDE'));
     expect(window.confirm).not.toHaveBeenCalled();
   });
+
+  it('Cancel in the delete dialog does not delete', () => {
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete SIDE' }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    expect(actions.deleteShipToAction).not.toHaveBeenCalled();
+  });
+
+  it('editing row A then row B shows row B values', () => {
+    renderSection();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit MAIN' }));
+    expect(screen.getByLabelText('Name')).toHaveValue('Main dock');
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit SIDE' }));
+    expect(screen.getByLabelText('Name')).toHaveValue('Side door');
+    expect(screen.getByLabelText('Code')).toHaveValue('SIDE');
+  });
 });

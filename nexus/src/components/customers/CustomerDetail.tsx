@@ -187,7 +187,7 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billco
           {number && (
             <ShipToSection
               customerNumber={number}
-              defaultCode={(customer as { ship_to_code?: string | null }).ship_to_code ?? ""}
+              defaultCode={customer.ship_to_code ?? ""}
               rows={shipTos}
               canEdit={canEdit}
               options={shipToOptions}

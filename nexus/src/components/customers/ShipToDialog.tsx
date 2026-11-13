@@ -35,6 +35,9 @@ const EMPTY: ShipToValues = {
   contact: '', phone: '', email: '', tax_area_code: '', location_code: '', shipment_method_code: '', tax_liable: false,
 };
 
+const pickValues = (row: ShipToValues): ShipToValues =>
+  Object.fromEntries(Object.keys(EMPTY).map((k) => [k, row[k as keyof ShipToValues] ?? EMPTY[k as keyof ShipToValues]])) as unknown as ShipToValues;
+
 type TextKey = Exclude<keyof ShipToValues, 'tax_liable' | 'tax_area_code' | 'location_code' | 'shipment_method_code'>;
 
 const TEXT_FIELDS: { key: TextKey; label: string; maxLength?: number; placeholder?: string }[] = [
@@ -58,7 +61,7 @@ const SELECT_FIELDS: { key: 'tax_area_code' | 'location_code' | 'shipment_method
 ];
 
 export function ShipToDialog({ customerNumber, row, options, onClose, onSaved }: Props) {
-  const [values, setValues] = useState<ShipToValues>(() => (row ? { ...EMPTY, ...row } : EMPTY));
+  const [values, setValues] = useState<ShipToValues>(() => (row ? pickValues(row) : EMPTY));
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 

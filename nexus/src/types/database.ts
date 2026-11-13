@@ -1283,6 +1283,7 @@ export interface BusinessCentralCustomer {
   location_code: string;
   credit_limit: number;
   bc_card_etag: string | null;
+  ship_to_code: string | null;
   bc_raw_payload: Record<string, unknown>;
   sync_status: BusinessCentralSyncStatus;
   sync_error: string | null;
