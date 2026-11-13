@@ -9,6 +9,7 @@ import {
   overwriteBcWithNexus,
   retrySalesOrderSync,
   saveSalesOrder,
+  setSalesOrderStatus,
   type SalesOrderFormContext,
 } from '@/app/actions/salesOrders';
 import { refreshShipTos, saveShipToAction } from '@/app/actions/shipToAddresses';
@@ -130,6 +131,7 @@ function lineDraftOf(row: SalesOrderLineRow, estimates: Map<string, number | nul
     unit_of_measure_code: row.unit_of_measure_code ?? '',
     amount_incl_tax: num(row.amount_incl_tax),
     estimate_price: estimates.get(row.item_number) ?? null,
+    bc_unit_price: num(row.bc_unit_price),
   };
 }
 
@@ -226,9 +228,12 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const currentCustomer = (): CustomerRow =>
     customers.find((c) => c.id === customerId) ?? customerFromHeader(customerId, customerNumber, defaultShipCode, header);
 
-  // Read-back amounts arrive on refresh; show them without discarding the rep's unsaved edits.
-  const amounts = new Map(lines.map((l) => [l.id, num(l.amount_incl_tax)]));
-  const shownLines = draftLines.map((l) => (l.id && amounts.has(l.id) ? { ...l, amount_incl_tax: amounts.get(l.id) ?? null } : l));
+  // Read-back amounts and BC prices arrive on refresh; show them without discarding the rep's unsaved edits.
+  const readBack = new Map(lines.map((l) => [l.id, { amount: num(l.amount_incl_tax), price: num(l.bc_unit_price) }]));
+  const shownLines = draftLines.map((l) => {
+    const r = l.id ? readBack.get(l.id) : undefined;
+    return r ? { ...l, amount_incl_tax: r.amount, bc_unit_price: r.price } : l;
+  });
 
   const setField = <K extends keyof OrderHeaderDefaults>(key: K, value: OrderHeaderDefaults[K]) =>
     setHeader((h) => ({ ...h, [key]: value }));
@@ -286,6 +291,13 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
       return;
     }
     startTransition(async () => {
+      // Locked order, only the status changed: status is Nexus-only, so skip the save (and its BC sync).
+      if (order && locked && notes === order.notes && status !== order.status) {
+        const res = await setSalesOrderStatus(order.id, status);
+        if (!res.ok) setError(res.error);
+        else router.refresh();
+        return;
+      }
       let h = header;
       if (shipChoice.kind === 'oneoff' && saveToCustomer && canSaveShipTo && !locked) {
         const res = await saveShipToAction({

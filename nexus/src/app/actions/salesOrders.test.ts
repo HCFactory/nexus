@@ -65,7 +65,7 @@ const header = {
 
 const line = (key: string, extra: Partial<LineDraft> = {}): LineDraft => ({
   key, item_number: '1000', description: 'Box', quantity: 2, unit_price: null, discount_percent: 0,
-  unit_of_measure_code: 'EA', amount_incl_tax: null, estimate_price: null, ...extra,
+  unit_of_measure_code: 'EA', amount_incl_tax: null, estimate_price: null, bc_unit_price: null, ...extra,
 });
 
 const input = (extra: Partial<SalesOrderInput> = {}): SalesOrderInput => ({

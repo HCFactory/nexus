@@ -189,6 +189,8 @@ export interface LineDraft {
   unit_of_measure_code: string
   amount_incl_tax: number | null
   estimate_price: number | null
+  /** BC's unit price from the last sync; shown for a blank price once synced. */
+  bc_unit_price: number | null
 }
 
 /**

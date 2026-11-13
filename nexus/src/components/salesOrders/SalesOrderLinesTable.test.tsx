@@ -14,7 +14,7 @@ const items: SalesOrderItemOption[] = [
 ];
 const line = (over: Partial<LineDraft> = {}): LineDraft => ({
   key: 'k1', id: 'l1', item_number: 'P100', description: 'Pesto sauce', quantity: 2, unit_price: null,
-  discount_percent: 0, unit_of_measure_code: 'CASE', amount_incl_tax: null, estimate_price: 12.5, ...over,
+  discount_percent: 0, unit_of_measure_code: 'CASE', amount_incl_tax: null, estimate_price: 12.5, bc_unit_price: null, ...over,
 });
 afterEach(cleanup);
 
@@ -44,7 +44,7 @@ describe('SalesOrderLinesTable', () => {
     const next = onChange.mock.calls[0][0] as LineDraft[];
     expect(next).toHaveLength(2);
     expect(next[1]).toMatchObject({
-      item_number: 'P100', quantity: 1, unit_of_measure_code: 'CASE', estimate_price: 12.5, unit_price: null,
+      item_number: 'P100', quantity: 1, unit_of_measure_code: 'CASE', estimate_price: 12.5, unit_price: null, bc_unit_price: null,
     });
     expect(next[1].key).toBeTruthy();
     expect(next[1].id).toBeUndefined();
@@ -55,6 +55,17 @@ describe('SalesOrderLinesTable', () => {
     expect(screen.getByText('12.50 (est.)')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Unit price'), { target: { value: '9.75' } });
     expect((onChange.mock.calls[0][0] as LineDraft[])[0].unit_price).toBe(9.75);
+  });
+
+  it('a synced blank-price line shows BC’s price without (est.)', () => {
+    setup([line({ bc_unit_price: 11.25 })]);
+    expect(screen.getByText('11.25')).toBeInTheDocument();
+    expect(screen.queryByText(/\(est\.\)/)).toBeNull();
+  });
+
+  it('an unsynced blank-price line shows the estimate with (est.)', () => {
+    setup([line({ bc_unit_price: null })]);
+    expect(screen.getByText('12.50 (est.)')).toBeInTheDocument();
   });
 
   it('amount incl. tax is read-only and shows a dash when null', () => {

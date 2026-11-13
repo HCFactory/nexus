@@ -7,6 +7,7 @@ import { SalesOrderForm } from './SalesOrderForm';
 
 const orderActions = vi.hoisted(() => ({
   saveSalesOrder: vi.fn(),
+  setSalesOrderStatus: vi.fn(),
   deleteSalesOrder: vi.fn(),
   retrySalesOrderSync: vi.fn(),
   overwriteBcWithNexus: vi.fn(),
@@ -230,6 +231,14 @@ describe('SalesOrderForm — fields', () => {
     expect(screen.getByLabelText('Order date')).toHaveValue('2026-11-13');
   });
 
+  it('a synced blank-price line shows BC’s unit price; an unsynced one shows the estimate', () => {
+    const synced = { ...lineRow, bc_unit_price: 11.25 } as SalesOrderLineRow;
+    const unsynced = { ...lineRow, id: 'l2', bc_unit_price: null } as SalesOrderLineRow;
+    renderForm({ order: order(), lines: [synced, unsynced], shipTos: [dock] });
+    expect(screen.getByText('11.25')).toBeInTheDocument();
+    expect(screen.getAllByText('12.50 (est.)')).toHaveLength(1);
+  });
+
   it('totals come from the BC read-back', () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
     expect(screen.getByTestId('total-subtotal')).toHaveTextContent('100.00');
@@ -270,6 +279,24 @@ describe('SalesOrderForm — status and locking', () => {
     expect(screen.queryByPlaceholderText('Add item…')).toBeNull();
   });
 
+  it('a status-only change on a locked order uses setSalesOrderStatus (no BC sync)', async () => {
+    orderActions.setSalesOrderStatus.mockResolvedValue({ ok: true });
+    renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'pulled' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(orderActions.setSalesOrderStatus).toHaveBeenCalledWith('so-1', 'pulled'));
+    expect(orderActions.saveSalesOrder).not.toHaveBeenCalled();
+    await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+  });
+
+  it('a failed status change shows the error', async () => {
+    orderActions.setSalesOrderStatus.mockResolvedValue({ ok: false, error: 'Status refused' });
+    renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'draft' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Status refused');
+  });
+
   it('saving a Final order sends the status and notes', async () => {
     orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
     renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
@@ -281,7 +308,16 @@ describe('SalesOrderForm — status and locking', () => {
     expect(input).toMatchObject({ id: 'so-1', status: 'draft', notes: 'Unlocked', customer_id: 'cust-1', ship_to_code: 'DOCK' });
     expect(input.lines).toHaveLength(1);
     expect(input.lines[0]).toMatchObject({ id: 'l1', item_number: 'P100', quantity: 2 });
+    expect(orderActions.setSalesOrderStatus).not.toHaveBeenCalled();
     await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+  });
+
+  it('a failed save shows the error in the alert banner', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: false, error: 'This order was changed by someone else. Reload and try again.' });
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This order was changed by someone else. Reload and try again.');
+    expect(nav.refresh).not.toHaveBeenCalled();
   });
 
   it('Delete shows for Draft and Final only', () => {

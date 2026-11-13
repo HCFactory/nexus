@@ -172,6 +172,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
         unit_of_measure_code: item.base_unit_of_measure_code ?? '',
         amount_incl_tax: null,
         estimate_price: item.unit_price,
+        bc_unit_price: null,
       },
     ]);
 
@@ -216,11 +217,18 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   className={cellInput}
                   onChange={(e) => update(line.key, { unit_price: parseNumber(e.target.value) })}
                 />
-                {line.unit_price === null && line.estimate_price !== null && (
-                  <span className="mt-0.5 block text-right text-xs text-foreground-subtle">
-                    {`${money(line.estimate_price)} (est.)`}
-                  </span>
-                )}
+                {line.unit_price === null &&
+                  (line.bc_unit_price !== null ? (
+                    <span className="mt-0.5 block text-right text-xs text-foreground-subtle">
+                      {money(line.bc_unit_price)}
+                    </span>
+                  ) : (
+                    line.estimate_price !== null && (
+                      <span className="mt-0.5 block text-right text-xs text-foreground-subtle">
+                        {`${money(line.estimate_price)} (est.)`}
+                      </span>
+                    )
+                  ))}
               </td>
               <td className="w-24 px-3 py-2">
                 <NumberCell
