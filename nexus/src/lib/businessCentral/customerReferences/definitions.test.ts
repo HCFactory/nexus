@@ -16,6 +16,7 @@ const COLUMNS: Record<ListKey, string[]> = {
   customerTemplates: ['code', 'display_name', 'contact_type', 'no_series', 'customer_posting_group', 'gen_bus_posting_group',
     'customer_price_group', 'payment_terms_code', 'tax_area_code', 'tax_liable', 'tax_identification_type', 'application_method', 'location_code'],
   noSeries: ['code', 'display_name'],
+  shipmentMethods: ['code', 'display_name'],
 };
 const TABLES: Record<ListKey, string> = {
   paymentTerms: 'business_central_payment_terms',
@@ -29,12 +30,22 @@ const TABLES: Record<ListKey, string> = {
   generalBusinessPostingGroups: 'business_central_general_business_posting_groups',
   customerTemplates: 'business_central_customer_templates',
   noSeries: 'business_central_no_series',
+  shipmentMethods: 'business_central_shipment_methods',
 };
 const defs = Object.entries(LIST_DEFINITIONS);
 
 describe('LIST_DEFINITIONS', () => {
-  it('covers all eleven lists with matching keys', () => {
-    expect(defs).toHaveLength(11);
+  it('shipmentMethods is a read-only api list keyed by code', () => {
+    const d = LIST_DEFINITIONS.shipmentMethods;
+    expect(d.mode).toBe('readOnly');
+    expect(d.source).toEqual({ kind: 'api', resource: 'shipmentMethods' });
+    const code = d.fields.find((x) => x.name === 'code')!;
+    expect(code).toMatchObject({ bcName: 'code', isKey: true, maxLength: 10 });
+    expect(d.fields.find((x) => x.name === 'display_name')!.bcName).toBe('displayName');
+  });
+
+  it('covers all twelve lists with matching keys', () => {
+    expect(defs).toHaveLength(12);
     for (const [k, d] of defs) expect(d.key).toBe(k);
   });
 
@@ -56,7 +67,7 @@ describe('LIST_DEFINITIONS', () => {
 
   it('read-only lists have no editable fields', () => {
     const ro = defs.filter(([, d]) => d.mode === 'readOnly').map(([k]) => k).sort();
-    expect(ro).toEqual(['customerPostingGroups', 'generalBusinessPostingGroups', 'locations', 'noSeries']);
+    expect(ro).toEqual(['customerPostingGroups', 'generalBusinessPostingGroups', 'locations', 'noSeries', 'shipmentMethods']);
     for (const [, d] of defs) if (d.mode === 'readOnly') expect(d.fields.every((f) => !f.editable)).toBe(true);
   });
 

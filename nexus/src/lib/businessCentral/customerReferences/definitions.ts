@@ -122,6 +122,14 @@ export const LIST_DEFINITIONS: Record<ListKey, ListDefinition> = {
       f('auto_insert_default', 'Auto_Insert_Default', 'Auto insert default', 'boolean', false),
     ]),
   },
+  shipmentMethods: {
+    key: 'shipmentMethods', title: 'Shipment methods', table: 'business_central_shipment_methods', mode: 'readOnly',
+    source: { kind: 'api', resource: 'shipmentMethods' }, renameField: 'code',
+    fields: readOnly([
+      f('code', 'code', 'Code', 'text', false, { isKey: true, maxLength: 10 }),
+      f('display_name', 'displayName', 'Description', 'text', false, { maxLength: 100 }),
+    ]),
+  },
   customerTemplates: {
     key: 'customerTemplates', title: 'Customer templates', table: 'business_central_customer_templates', mode: 'managed',
     source: odata('CustomerTemplates', 1382, ['Code']), renameField: 'code',

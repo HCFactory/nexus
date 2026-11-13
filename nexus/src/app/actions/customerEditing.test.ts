@@ -158,7 +158,7 @@ describe('getCustomerEditContext', () => {
     expect(ctx.templates).toEqual([{ code: 'RETAIL', label: 'RETAIL — Retail', values: { payment_terms_code: 'N30', tax_area_code: 'CA' } }]);
     expect(ctx.selectOptions.paymentTerms).toEqual([{ code: 'paymentTerms-1', label: 'paymentTerms-1' }]);
     expect(Object.keys(ctx.selectOptions).sort()).toEqual(
-      ['customerPostingGroups', 'customerPriceGroups', 'generalBusinessPostingGroups', 'locations', 'paymentTerms', 'taxAreas'],
+      ['customerPostingGroups', 'customerPriceGroups', 'generalBusinessPostingGroups', 'locations', 'paymentTerms', 'shipmentMethods', 'taxAreas'],
     );
   });
 });

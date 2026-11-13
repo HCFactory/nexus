@@ -29,6 +29,10 @@ export function mapCardToCustomerColumns(card: Pick<BcRecord, 'etag' | 'fields'>
     application_method: str(x.Application_Method),
     location_code: str(x.Location_Code),
     credit_limit: limit,
+    contact_no: str(x.Primary_Contact_No),
+    mobile_phone_no: str(x.MobilePhoneNo),
+    ship_to_code: str(x.Ship_to_Code),
+    shipment_method_code: str(x.Shipment_Method_Code),
     blocked: normalizeBlocked(x.Blocked),
     bc_card_etag: card.etag || null,
   };
