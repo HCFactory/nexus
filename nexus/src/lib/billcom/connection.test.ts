@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createBillcomClientForConnection } from './connection';
-import { BillcomConnectionDisabledError } from './errors';
+import { BillcomApiError, BillcomConnectionDisabledError } from './errors';
 
 const row = {
   id: 'conn-1',
@@ -42,6 +42,13 @@ describe('Bill.com connection factory', () => {
     ).rejects.toBeInstanceOf(BillcomConnectionDisabledError);
 
     expect(supabase.rpc).not.toHaveBeenCalled();
+  });
+
+  it('the disabled error is a BillcomApiError, so a catch for Bill.com errors sees it', async () => {
+    const { supabase } = stubSupabase({ ...row, is_enabled: false }, {});
+    const err = await createBillcomClientForConnection('conn-1', 'org-1', { supabase: supabase as never }).catch((e) => e);
+    expect(err).toBeInstanceOf(BillcomApiError);
+    expect(err.message).toMatch(/is disabled/);
   });
 
   it('throws a clear error when the connection does not exist', async () => {

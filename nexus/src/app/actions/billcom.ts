@@ -138,33 +138,26 @@ export async function saveBillcomConnection(input: BillcomConnectionInput): Prom
     api_base_url: apiBaseUrl,
     username: input.username,
     billcom_organization_id: input.billcomOrganizationId,
-    is_default: input.isDefault,
     updated_at: new Date().toISOString(),
   };
 
-  // Clear any other default first — the partial unique index allows only one.
-  if (input.isDefault) {
-    const { error } = await supabase
-      .from('billcom_connections')
-      .update({ is_default: false })
-      .eq('organization_id', orgId)
-      .neq('id', input.id ?? '00000000-0000-0000-0000-000000000000');
-    if (error) throw error;
-  }
-
+  // The default flag is set last, by one database function that clears the
+  // other default and sets this one together (migration 059). So the row write
+  // never touches an existing default: an edit leaves is_default as it is, a
+  // new row starts non-default. A failure anywhere leaves the old default.
   let connectionId = input.id;
 
   if (connectionId) {
     const { error } = await supabase
       .from('billcom_connections')
-      .update(row)
+      .update(input.isDefault ? row : { ...row, is_default: false })
       .eq('id', connectionId)
       .eq('organization_id', orgId);
     if (error) throw error;
   } else {
     const { data, error } = await supabase
       .from('billcom_connections')
-      .insert(row)
+      .insert({ ...row, is_default: false })
       .select('id')
       .single();
     if (error) throw error;
@@ -183,6 +176,14 @@ export async function saveBillcomConnection(input: BillcomConnectionInput): Prom
     const { error } = await supabase.rpc('set_billcom_password', {
       p_connection_id: connectionId,
       p_secret: input.password,
+    });
+    if (error) throw error;
+  }
+
+  if (input.isDefault) {
+    const { error } = await supabase.rpc('set_default_billcom_connection', {
+      p_connection_id: connectionId,
+      p_org_id: orgId,
     });
     if (error) throw error;
   }
@@ -224,21 +225,17 @@ export async function deleteBillcomConnection(connectionId: string): Promise<voi
   const { orgId } = await requireAdmin();
   const supabase = createServiceClient();
 
-  await requireOwnedConnection(supabase, orgId, connectionId);
-
-  // Drop the Vault secrets first, while the pointers on the row are still
-  // readable. Deleting the row first would orphan them permanently.
-  const { error: secretsError } = await supabase.rpc('delete_billcom_secrets', {
+  // One database function deletes the row and its Vault secrets together
+  // (migration 059), so a failure can never leave a row pointing at deleted
+  // secrets. It is scoped to the org and reports whether anything matched.
+  const { data: deleted, error } = await supabase.rpc('delete_billcom_connection', {
     p_connection_id: connectionId,
+    p_org_id: orgId,
   });
-  if (secretsError) throw secretsError;
-
-  const { error } = await supabase
-    .from('billcom_connections')
-    .delete()
-    .eq('id', connectionId)
-    .eq('organization_id', orgId);
   if (error) throw error;
+  if (!deleted) {
+    throw new Error(`Bill.com connection ${connectionId} was not found.`);
+  }
 
   revalidatePath('/admin');
 }

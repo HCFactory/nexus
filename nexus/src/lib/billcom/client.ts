@@ -209,7 +209,11 @@ export function createBillcomClient(config: BillcomClientConfig): BillcomClient 
       // a gateway retry. Clear it, log in once, and retry. A second 401
       // propagates rather than looping.
       if (response.status === 401 && !reloggedIn) {
-        await response.body?.cancel().catch(() => undefined);
+        // Bill.com can report its rate limit as a 401. That is not a dead
+        // session: logging in again would cost a second request and throw
+        // away a valid session.
+        const details = await readErrorDetails(response, url);
+        if (details.code === 'BDC_1144') throw new BillcomRateLimitError(details);
         await config.sessionStore.clear();
         sessionId = await login();
         reloggedIn = true;

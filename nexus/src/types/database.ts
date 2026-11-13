@@ -1,3 +1,5 @@
+import type { BillcomConnection } from './billcom';
+
 export type UserRole = "user" | "admin";
 export type DimensionUnit = "mm" | "cm" | "in";
 export type UploadStatus = "uploaded" | "approved" | "rejected";
@@ -1062,6 +1064,32 @@ export interface Database {
           'display_name'
         >;
         Update: Partial<Omit<BusinessCentralLocation, "id">>;
+      };
+      billcom_connections: {
+        Row: BillcomConnection;
+        Insert: Omit<
+          BillcomConnection,
+          | 'id'
+          | 'created_at'
+          | 'updated_at'
+          | 'dev_key_secret_id'
+          | 'password_secret_id'
+          | 'is_enabled'
+          | 'is_default'
+          | 'session_id'
+          | 'session_last_used_at'
+        > & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          dev_key_secret_id?: string | null;
+          password_secret_id?: string | null;
+          is_enabled?: boolean;
+          is_default?: boolean;
+          session_id?: string | null;
+          session_last_used_at?: string | null;
+        };
+        Update: Partial<Omit<BillcomConnection, 'id'>>;
       };
       billcom_customer_links: {
         Row: BillcomCustomerLink;

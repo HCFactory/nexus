@@ -166,9 +166,20 @@ describe('Bill.com client', () => {
     });
   });
 
-  it('discards the first 401 body before logging in again', async () => {
+  it('a 401 carrying the rate-limit code is a rate limit: no re-login, session kept', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse([{ code: 'BDC_1144', message: 'Too many requests' }], { status: 401 }));
+    const store = memoryStore({ sessionId: 'session-1', lastUsedAt: new Date() });
+    const client = createBillcomClient({ ...config, sessionStore: store, fetchImpl });
+
+    await expect(client.request('/v3/customers')).rejects.toBeInstanceOf(BillcomRateLimitError);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(store.clear).not.toHaveBeenCalled();
+  });
+
+  it('consumes the first 401 body (to check for a rate limit) before logging in again', async () => {
     const first = new Response('expired', { status: 401, statusText: 'Unauthorized' });
-    const cancel = vi.spyOn(first.body!, 'cancel');
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(first)
@@ -178,7 +189,8 @@ describe('Bill.com client', () => {
     const client = createBillcomClient({ ...config, sessionStore: store, fetchImpl });
 
     await client.request('/v3/customers');
-    expect(cancel).toHaveBeenCalled();
+    // A read body is released, so the connection is not left open.
+    expect(first.bodyUsed).toBe(true);
   });
 
   describe('transient gateway errors', () => {

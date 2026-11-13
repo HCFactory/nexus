@@ -38,11 +38,18 @@ export class BillcomRateLimitError extends BillcomApiError {
   }
 }
 
-export class BillcomConnectionDisabledError extends Error {
+/**
+ * Raised before any request is sent, so there is no HTTP status (status 0).
+ * Extends BillcomApiError so a caller catching Bill.com errors also sees it.
+ */
+export class BillcomConnectionDisabledError extends BillcomApiError {
   constructor(connectionId: string) {
-    super(
-      `Bill.com connection ${connectionId} is disabled. Enable it in Admin before making requests.`,
-    );
+    super({
+      status: 0,
+      statusText: 'Disabled',
+      message: `Bill.com connection ${connectionId} is disabled. Enable it in Admin before making requests.`,
+      url: '',
+    });
     this.name = 'BillcomConnectionDisabledError';
   }
 }

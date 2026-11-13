@@ -74,7 +74,8 @@ function BillcomConnectionForm({ connection, onSubmit, onCancel }: BillcomConnec
         username: username.trim(),
         billcomOrganizationId: billcomOrganizationId.trim(),
         devKey: devKey.trim() || undefined,
-        password: password.trim() || undefined,
+        // Never trim the password itself: spaces can be part of it. Blank means "unchanged".
+        password: password.trim() ? password : undefined,
         isDefault,
       });
     } catch (err) {

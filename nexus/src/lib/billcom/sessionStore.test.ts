@@ -84,6 +84,41 @@ describe('Bill.com DB session store', () => {
     expect(update).toHaveBeenCalledTimes(1);
   });
 
+  it('touch after get reuses the value just read: no second database read', async () => {
+    const { supabase, selectEq, update } = stubSupabase({
+      session_id: 'session-1',
+      session_last_used_at: new Date().toISOString(),
+    });
+    const store = createDbSessionStore(supabase as never, 'conn-1');
+
+    await store.get();
+    await store.touch();
+    await store.touch();
+
+    expect(selectEq).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('touch after set needs no read, and writes nothing inside the window', async () => {
+    const { supabase, selectEq, update } = stubSupabase(null);
+    const store = createDbSessionStore(supabase as never, 'conn-1');
+
+    await store.set('session-2');
+    await store.touch();
+
+    expect(selectEq).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1); // only the set
+  });
+
+  it('touch with nothing known yet still reads once', async () => {
+    const { supabase, selectEq } = stubSupabase({ session_id: 'session-1', session_last_used_at: new Date().toISOString() });
+    const store = createDbSessionStore(supabase as never, 'conn-1');
+
+    await store.touch();
+
+    expect(selectEq).toHaveBeenCalledTimes(1);
+  });
+
   it('nulls both session columns on clear', async () => {
     const { supabase, update, updateEq } = stubSupabase({
       session_id: 'session-1',

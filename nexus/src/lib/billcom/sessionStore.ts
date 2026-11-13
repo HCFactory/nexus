@@ -15,6 +15,13 @@ export function createDbSessionStore(
   supabase: SupabaseClient,
   connectionId: string,
 ): SessionStore {
+  /**
+   * session_last_used_at as this store last read or wrote it: undefined when
+   * unknown, null when there is no session. touch() runs right after a request
+   * whose get() just read it, so it can decide without reading again.
+   */
+  let known: Date | null | undefined;
+
   async function readRow(): Promise<StoredSession | null> {
     const { data, error } = await supabase
       .from('billcom_connections')
@@ -26,11 +33,13 @@ export function createDbSessionStore(
       throw new Error(`Failed to read the Bill.com session: ${error.message}`);
     }
     if (!data?.session_id || !data.session_last_used_at) {
+      known = null;
       return null;
     }
+    known = new Date(data.session_last_used_at as string);
     return {
       sessionId: data.session_id as string,
-      lastUsedAt: new Date(data.session_last_used_at as string),
+      lastUsedAt: known,
     };
   }
 
@@ -48,21 +57,26 @@ export function createDbSessionStore(
     get: readRow,
 
     async set(sessionId: string) {
+      const now = new Date();
       await write({
         session_id: sessionId,
-        session_last_used_at: new Date().toISOString(),
+        session_last_used_at: now.toISOString(),
       });
+      known = now;
     },
 
     async touch() {
-      const stored = await readRow();
-      if (!stored) return;
-      if (Date.now() - stored.lastUsedAt.getTime() < SESSION_TOUCH_THROTTLE_MS) return;
-      await write({ session_last_used_at: new Date().toISOString() });
+      if (known === undefined) await readRow();
+      if (!known) return;
+      if (Date.now() - known.getTime() < SESSION_TOUCH_THROTTLE_MS) return;
+      const now = new Date();
+      await write({ session_last_used_at: now.toISOString() });
+      known = now;
     },
 
     async clear() {
       await write({ session_id: null, session_last_used_at: null });
+      known = null;
     },
   };
 }
