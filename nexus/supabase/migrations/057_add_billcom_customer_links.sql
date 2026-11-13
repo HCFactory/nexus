@@ -1,4 +1,4 @@
--- 056_add_billcom_customer_links.sql
+-- 057_add_billcom_customer_links.sql
 -- Links a Business Central customer to its Bill.com customer for the one-way
 -- Nexus/BC -> Bill.com customer push. Re-runnable: every statement is guarded.
 -- Members of the organization can read; writes go through service-role code.
