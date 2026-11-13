@@ -1,0 +1,427 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { BcConflictError, BcReferenceError } from '@/lib/businessCentral/customerReferences/errors'
+import type { BcKey, BcRecord, ReferenceSource } from '@/lib/businessCentral/customerReferences/transport'
+import type { SalesOrderLineRow, SalesOrderRow } from '@/types/salesOrders'
+import { createMarker } from './bcOrderMapping'
+import { deleteSalesOrderInBc, syncSalesOrder, type OrderSyncDeps } from './orderSync'
+
+type Row = Record<string, unknown>
+type Result = { data: Row[]; error: { message: string } | null }
+
+function fakeSupabase(tables: Record<string, Row[]>): SupabaseClient {
+  let nextId = 1
+  const from = (table: string) => {
+    tables[table] ??= []
+    const filters: [string, unknown][] = []
+    let op: 'select' | 'insert' | 'update' | 'delete' = 'select'
+    let payload: Row = {}
+    let orderBy: string | null = null
+    const exec = (): Result => {
+      if (op === 'insert') {
+        const row = { id: `gen-${nextId++}`, ...payload }
+        tables[table].push(row)
+        return { data: [row], error: null }
+      }
+      const rows = tables[table].filter((r) => filters.every(([k, v]) => r[k] === v))
+      if (op === 'update') rows.forEach((r) => Object.assign(r, payload))
+      if (op === 'delete') tables[table] = tables[table].filter((r) => !rows.includes(r))
+      const out = rows.map((r) => ({ ...r }))
+      if (orderBy) out.sort((a, b) => Number(a[orderBy!]) - Number(b[orderBy!]))
+      return { data: out, error: null }
+    }
+    const b = {
+      select: () => b,
+      insert: (p: Row) => { op = 'insert'; payload = p; return b },
+      update: (p: Row) => { op = 'update'; payload = p; return b },
+      delete: () => { op = 'delete'; return b },
+      eq: (k: string, v: unknown) => { filters.push([k, v]); return b },
+      order: (k: string) => { orderBy = k; return b },
+      maybeSingle: async () => { const r = exec(); return { data: r.data[0] ?? null, error: r.error } },
+      single: async () => { const r = exec(); return { data: r.data[0] ?? null, error: r.data[0] ? null : { message: 'no row' } } },
+      then: (res: (r: Result) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(exec()).then(res, rej),
+    }
+    return b
+  }
+  return { from } as unknown as SupabaseClient
+}
+
+/** Fake BC: SalesOrder headers by No, SalesOrderSalesLines by `No|Line_No`. Enforces etags. */
+function fakeBc() {
+  let etagN = 1
+  let orderN = 1001
+  const headers = new Map<string, BcRecord>()
+  const lines = new Map<string, BcRecord>()
+  const nextLineNo = new Map<string, number>()
+  /** Called before every transport call; throw from it to make that call fail. */
+  const hooks: { before?: (method: string, source: ReferenceSource, arg: unknown) => void } = {}
+  const etag = () => `W/"e${etagN++}"`
+  const isLine = (s: ReferenceSource) => s.kind === 'odata' && s.service === 'SalesOrderSalesLines'
+  const keyOf = (s: ReferenceSource, k: BcKey) => {
+    if (!('values' in k)) throw new Error('expected values key')
+    expect(k.values.Document_Type).toBe('Order')
+    if (isLine(s)) {
+      expect(typeof k.values.Line_No).toBe('string')
+      return `${k.values.Document_No}|${k.values.Line_No}`
+    }
+    return k.values.No
+  }
+  const store = (s: ReferenceSource) => (isLine(s) ? lines : headers)
+  const totals = (docNo: string) => {
+    const ls = [...lines.values()].filter((l) => l.fields.Document_No === docNo)
+    const excl = ls.reduce((a, l) => a + Number(l.fields.Quantity) * Number(l.fields.Unit_Price), 0)
+    return { Total_Amount_Excl_VAT: excl, Total_VAT_Amount: excl * 0.1, Total_Amount_Incl_VAT: excl * 1.1 }
+  }
+  const withTotals = (r: BcRecord): BcRecord =>
+    ({ ...r, fields: { ...r.fields, ...totals(String(r.fields.Document_No)) } })
+
+  const t = {
+    list: vi.fn(async (s: ReferenceSource, opts: { filter?: string } = {}) => {
+      hooks.before?.('list', s, opts)
+      const f = opts.filter ?? ''
+      if (isLine(s)) {
+        const m = /Document_No eq '([^']+)'/.exec(f)
+        return [...lines.values()].filter((l) => !m || l.fields.Document_No === m[1]).map(withTotals)
+      }
+      const m = /External_Document_No eq '([^']+)'/.exec(f)
+      return [...headers.values()].filter((h) => !m || h.fields.External_Document_No === m[1])
+    }),
+    get: vi.fn(async (s: ReferenceSource, key: BcKey) => {
+      hooks.before?.('get', s, key)
+      const r = store(s).get(keyOf(s, key))
+      if (!r) throw new BcReferenceError(404, 'not found')
+      return r
+    }),
+    create: vi.fn(async (s: ReferenceSource, fields: Record<string, unknown>) => {
+      hooks.before?.('create', s, fields)
+      if (isLine(s)) {
+        const docNo = String(fields.Document_No)
+        if (!headers.has(docNo)) throw new BcReferenceError(400, 'no header')
+        const n = (nextLineNo.get(docNo) ?? 0) + 10000
+        nextLineNo.set(docNo, n)
+        const rec: BcRecord = {
+          key: { values: { Document_Type: 'Order', Document_No: docNo, Line_No: String(n) } },
+          etag: etag(),
+          fields: { Unit_Price: 9.99, ...fields, Line_No: n, Amount_Including_VAT: 1 },
+        }
+        lines.set(`${docNo}|${n}`, rec)
+        return rec
+      }
+      const no = `SO${orderN++}`
+      const rec: BcRecord = { key: { values: { Document_Type: 'Order', No: no } }, etag: etag(), fields: { ...fields, No: no, Due_Date: '2026-12-01' } }
+      headers.set(no, rec)
+      return rec
+    }),
+    patch: vi.fn(async (s: ReferenceSource, key: BcKey, e: string, fields: Record<string, unknown>) => {
+      hooks.before?.('patch', s, fields)
+      const k = keyOf(s, key)
+      const r = store(s).get(k)
+      if (!r) throw new BcReferenceError(404, 'not found')
+      if (r.etag !== e) throw new BcConflictError()
+      const next = { ...r, etag: etag(), fields: { ...r.fields, ...fields } }
+      store(s).set(k, next)
+      return next
+    }),
+    remove: vi.fn(async (s: ReferenceSource, key: BcKey, e: string) => {
+      hooks.before?.('remove', s, key)
+      const k = keyOf(s, key)
+      const r = store(s).get(k)
+      if (!r) throw new BcReferenceError(404, 'not found')
+      if (r.etag !== e) throw new BcConflictError()
+      store(s).delete(k)
+    }),
+  }
+  return { t, headers, lines, hooks, etag }
+}
+
+const ORDER_ID = 'abcdef12-3456-7890-abcd-ef1234567890'
+
+function order(over: Partial<SalesOrderRow> = {}): SalesOrderRow {
+  return {
+    id: ORDER_ID,
+    organization_id: 'org', bc_connection_id: 'conn', status: 'final',
+    customer_id: 'cu', customer_number: 'C100',
+    order_date: '2026-11-01', requested_delivery_date: null,
+    invoice_number: null, customer_po: 'PO-SECRET', notes: 'NOTE-SECRET',
+    bill_name: 'Bill', bill_address: 'a1', bill_address_2: '', bill_city: 'bc',
+    bill_state: 'bs', bill_post_code: 'bp', bill_country: 'US', bill_contact_no: '',
+    bill_phone: '', bill_mobile: '', bill_email: '', bill_email_cc: '',
+    ship_to_code: 'WH1', ship_to_name: 'sn', ship_to_address: 'sa', ship_to_address_2: '',
+    ship_to_city: 'sc', ship_to_state: 'ss', ship_to_post_code: 'sp', ship_to_country: 'US',
+    ship_to_contact: '', ship_to_phone: '',
+    payment_terms_code: 'NET30', tax_area_code: 'TX', gen_bus_posting_group: 'DOM',
+    customer_posting_group: 'CP', shipment_method_code: 'UPS', location_code: 'MAIN',
+    tax_liable: true, bc_order_number: null, bc_etag: null, bc_create_marker: null,
+    bc_due_date: null, bc_document_date: null, bc_posting_date: null,
+    total_excl_tax: null, total_tax: null, total_incl_tax: null,
+    sync_state: 'pending', sync_error: null, sync_attempts: 0, claimed_until: null,
+    last_synced_at: null, local_version: 3, synced_version: 0, created_by: null,
+    created_at: '', updated_at: '',
+    ...over,
+  }
+}
+
+function line(over: Partial<SalesOrderLineRow> = {}): SalesOrderLineRow {
+  return {
+    id: 'l1', organization_id: 'org', bc_connection_id: 'conn', sales_order_id: ORDER_ID, position: 1,
+    item_number: 'ITEM1', description: 'd', unit_of_measure_code: 'PCS', quantity: 2,
+    unit_price: 5, discount_percent: 0, removed: false, bc_line_no: null, bc_etag: null,
+    bc_unit_price: null, amount_incl_tax: null, created_at: '', updated_at: '',
+    ...over,
+  }
+}
+
+let tables: Record<string, Row[]>
+let bc: ReturnType<typeof fakeBc>
+let deps: OrderSyncDeps
+
+const orderRow = () => tables.sales_orders.find((r) => r.id === ORDER_ID)!
+const lineRow = (id: string) => tables.sales_order_lines.find((r) => r.id === id)
+const isLineSource = (s: ReferenceSource) => s.kind === 'odata' && s.service === 'SalesOrderSalesLines'
+const lineCreates = () => bc.t.create.mock.calls.filter(([s]) => isLineSource(s))
+const headerCreates = () => bc.t.create.mock.calls.filter(([s]) => !isLineSource(s))
+const headerPatches = () => bc.t.patch.mock.calls.filter(([s]) => !isLineSource(s))
+
+function setup(o: SalesOrderRow, ls: SalesOrderLineRow[]) {
+  tables = {
+    sales_orders: [
+      { ...o } as unknown as Row,
+      // same id in another org must never be touched
+      { ...o, organization_id: 'other', local_version: 99 } as unknown as Row,
+    ],
+    sales_order_lines: ls.map((l) => ({ ...l }) as unknown as Row),
+  }
+  deps = { supabase: fakeSupabase(tables), transport: bc.t, orgId: 'org', connectionId: 'conn', now: () => '2026-11-13T10:00:00Z' }
+}
+
+/** Puts an already-synced order (with lines) into the fake BC and returns its stored rows. */
+function seedSynced(lineSpecs: { id: string; no: number; item?: string }[]) {
+  const hEtag = bc.etag()
+  bc.headers.set('SO900', { key: { values: { Document_Type: 'Order', No: 'SO900' } }, etag: hEtag, fields: { No: 'SO900', External_Document_No: 'SO900' } })
+  const rows = lineSpecs.map((s) => {
+    const e = bc.etag()
+    bc.lines.set(`SO900|${s.no}`, {
+      key: { values: { Document_Type: 'Order', Document_No: 'SO900', Line_No: String(s.no) } },
+      etag: e,
+      fields: { Document_Type: 'Order', Document_No: 'SO900', Line_No: s.no, Type: 'Item', No: s.item ?? 'ITEM1', Quantity: 2, Unit_Price: 5, Line_Discount_Percent: 0, Unit_of_Measure_Code: 'PCS', Location_Code: 'MAIN' },
+    })
+    return line({ id: s.id, position: s.no / 10000, item_number: s.item ?? 'ITEM1', bc_line_no: s.no, bc_etag: e })
+  })
+  return { hEtag, rows }
+}
+
+beforeEach(() => {
+  bc = fakeBc()
+})
+
+describe('syncSalesOrder: first sync', () => {
+  it('creates the order, patches ship-to then header, creates each line, and ends synced with BC totals', async () => {
+    setup(order(), [line({ id: 'l1', position: 1 }), line({ id: 'l2', position: 2, item_number: 'ITEM2', unit_price: null })])
+
+    const state = await syncSalesOrder(deps, ORDER_ID)
+
+    expect(state).toBe('synced')
+    expect(headerCreates()).toHaveLength(1)
+    expect(headerCreates()[0][1]).toMatchObject({ Document_Type: 'Order', Sell_to_Customer_No: 'C100', External_Document_No: createMarker(ORDER_ID) })
+    const hp = headerPatches()
+    expect(hp).toHaveLength(2)
+    expect(hp[0][3]).toEqual({ Ship_to_Code: 'WH1' })
+    expect(hp[1][3].External_Document_No).toBe('SO1001')
+    // each patch uses the etag the previous call returned
+    expect(hp[1][2]).not.toBe(hp[0][2])
+    expect(lineCreates()).toHaveLength(2)
+    expect(lineCreates()[0][1]).toMatchObject({ Document_No: 'SO1001', No: 'ITEM1', Unit_Price: 5 })
+    expect(lineCreates()[1][1]).not.toHaveProperty('Unit_Price')
+
+    const o = orderRow()
+    expect(o).toMatchObject({
+      bc_order_number: 'SO1001', bc_create_marker: createMarker(ORDER_ID), sync_state: 'synced', sync_error: null,
+      sync_attempts: 0, synced_version: 3, last_synced_at: '2026-11-13T10:00:00Z', bc_due_date: '2026-12-01',
+    })
+    // ITEM1 2 x 5 + ITEM2 2 x 9.99 (BC price)
+    expect(o.total_excl_tax).toBeCloseTo(29.98)
+    expect(o.total_incl_tax).toBeCloseTo(32.978)
+    expect(o.bc_etag).toBe(bc.headers.get('SO1001')!.etag)
+    expect(lineRow('l1')).toMatchObject({ bc_line_no: 10000, bc_etag: bc.lines.get('SO1001|10000')!.etag, bc_unit_price: 5 })
+    expect(lineRow('l2')).toMatchObject({ bc_line_no: 20000, bc_unit_price: 9.99 })
+    // the other org's row is untouched
+    expect(tables.sales_orders.find((r) => r.organization_id === 'other')).toMatchObject({ bc_order_number: null, sync_state: 'pending' })
+  })
+
+  it('uses invoice_number as External_Document_No when set', async () => {
+    setup(order({ invoice_number: 'INV-7' }), [line()])
+    await syncSalesOrder(deps, ORDER_ID)
+    expect(headerPatches()[1][3].External_Document_No).toBe('INV-7')
+  })
+
+  it('never sends Customer PO or notes to BC', async () => {
+    setup(order(), [line()])
+    await syncSalesOrder(deps, ORDER_ID)
+    const all = [...bc.t.create.mock.calls.map((c) => c[1]), ...bc.t.patch.mock.calls.map((c) => c[3])]
+    expect(all.length).toBeGreaterThan(0)
+    for (const body of all) {
+      const text = JSON.stringify(body)
+      expect(text).not.toContain('PO-SECRET')
+      expect(text).not.toContain('NOTE-SECRET')
+    }
+  })
+})
+
+describe('syncSalesOrder: duplicate-safe create', () => {
+  it('adopts an order an earlier lost-response create already made, without creating again', async () => {
+    const marker = createMarker(ORDER_ID)
+    bc.headers.set('SO555', { key: { values: { Document_Type: 'Order', No: 'SO555' } }, etag: bc.etag(), fields: { No: 'SO555', External_Document_No: marker } })
+    setup(order({ bc_create_marker: marker }), [line()])
+
+    const state = await syncSalesOrder(deps, ORDER_ID)
+
+    expect(state).toBe('synced')
+    expect(bc.t.list.mock.calls[0][1]).toEqual({ filter: `Document_Type eq 'Order' and External_Document_No eq '${marker}'` })
+    expect(headerCreates()).toHaveLength(0)
+    expect(orderRow().bc_order_number).toBe('SO555')
+    expect(lineCreates()[0][1]).toMatchObject({ Document_No: 'SO555' })
+  })
+
+  it('saves the marker before creating, and keeps the number if a later step fails', async () => {
+    setup(order(), [line()])
+    bc.hooks.before = (method, s) => {
+      if (method === 'create') expect(orderRow().bc_create_marker).toBe(createMarker(ORDER_ID))
+      if (method === 'patch' && !isLineSource(s)) throw new BcReferenceError(500, 'BC is down')
+    }
+    const state = await syncSalesOrder(deps, ORDER_ID)
+    expect(state).toBe('failed')
+    expect(orderRow()).toMatchObject({ bc_order_number: 'SO1001', sync_error: 'BC is down', sync_attempts: 1 })
+
+    // retry continues on the same BC order
+    bc.hooks.before = undefined
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(headerCreates()).toHaveLength(1)
+  })
+})
+
+describe('syncSalesOrder: version race', () => {
+  it('ends pending with synced_version = the starting version when the order is edited mid-sync', async () => {
+    setup(order({ local_version: 3 }), [line()])
+    bc.hooks.before = (method, s) => {
+      if (method === 'create' && isLineSource(s)) orderRow().local_version = 4
+    }
+    const state = await syncSalesOrder(deps, ORDER_ID)
+    expect(state).toBe('pending')
+    expect(orderRow()).toMatchObject({ sync_state: 'pending', synced_version: 3, local_version: 4, sync_error: null })
+  })
+})
+
+describe('syncSalesOrder: partial failure', () => {
+  it('keeps the lines already created and a re-run creates only the rest', async () => {
+    setup(order({ sync_attempts: 2 }), [line({ id: 'l1', position: 1 }), line({ id: 'l2', position: 2, item_number: '10031' })])
+    bc.hooks.before = (method, s, arg) => {
+      if (method === 'create' && isLineSource(s) && (arg as Row).No === '10031') {
+        throw new BcReferenceError(400, 'Item 10031 is blocked')
+      }
+    }
+    const state = await syncSalesOrder(deps, ORDER_ID)
+    expect(state).toBe('failed')
+    expect(orderRow().sync_state).toBe('failed')
+    expect(orderRow().sync_error).toContain('Item 10031 is blocked')
+    expect(orderRow().sync_attempts).toBe(3)
+    expect(lineRow('l1')).toMatchObject({ bc_line_no: 10000 })
+    expect(lineRow('l2')).toMatchObject({ bc_line_no: null })
+
+    bc.hooks.before = undefined
+    bc.t.create.mockClear()
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(headerCreates()).toHaveLength(0)
+    expect(lineCreates()).toHaveLength(1)
+    expect(lineCreates()[0][1]).toMatchObject({ No: '10031' })
+    expect(lineRow('l2')).toMatchObject({ bc_line_no: 20000 })
+    expect(orderRow().sync_attempts).toBe(0)
+  })
+})
+
+describe('syncSalesOrder: existing order', () => {
+  it('marks conflict and sends no patch when BC changed the header', async () => {
+    const { rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: 'W/"stale"', bc_create_marker: createMarker(ORDER_ID) }), rows)
+
+    const state = await syncSalesOrder(deps, ORDER_ID)
+
+    expect(state).toBe('conflict')
+    expect(orderRow()).toMatchObject({ sync_state: 'conflict', sync_error: 'Changed in BC' })
+    expect(bc.t.patch).not.toHaveBeenCalled()
+    expect(bc.t.create).not.toHaveBeenCalled()
+    expect(bc.t.remove).not.toHaveBeenCalled()
+  })
+
+  it('overwrite patches with fresh etags and removes a BC-only line', async () => {
+    const { rows } = seedSynced([{ id: 'l1', no: 10000 }, { id: 'bc-only', no: 20000, item: 'EXTRA' }])
+    setup(
+      order({ bc_order_number: 'SO900', bc_etag: 'W/"stale"', sync_state: 'conflict', sync_error: 'Changed in BC' }),
+      [{ ...rows[0], quantity: 7 }],
+    )
+    const fresh = bc.headers.get('SO900')!.etag
+
+    const state = await syncSalesOrder(deps, ORDER_ID, { overwrite: true })
+
+    expect(state).toBe('synced')
+    expect(headerPatches()[0][2]).toBe(fresh)
+    expect(bc.lines.has('SO900|20000')).toBe(false)
+    expect(bc.t.remove).toHaveBeenCalledTimes(1)
+    // the known line differs (quantity) so it is patched with only the changed field
+    const lp = bc.t.patch.mock.calls.filter(([s]) => isLineSource(s))
+    expect(lp).toHaveLength(1)
+    expect(lp[0][3]).toEqual({ Quantity: 7 })
+    expect(orderRow()).toMatchObject({ sync_state: 'synced', sync_error: null })
+  })
+
+  it('does not patch an unchanged line', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), rows)
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(bc.t.patch.mock.calls.filter(([s]) => isLineSource(s))).toHaveLength(0)
+    expect(headerPatches()).toHaveLength(2)
+  })
+
+  it('removes a removed line in BC, then deletes the local row', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }, { id: 'l2', no: 20000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), [rows[0], { ...rows[1], removed: true }])
+    bc.hooks.before = (method, s, key) => {
+      if (method === 'remove' && isLineSource(s)) {
+        expect((key as { values: Row }).values.Line_No).toBe('20000')
+        expect(lineRow('l2')).toBeDefined()
+      }
+    }
+
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(bc.t.remove).toHaveBeenCalledTimes(1)
+    expect(bc.lines.has('SO900|20000')).toBe(false)
+    expect(lineRow('l2')).toBeUndefined()
+    expect(lineRow('l1')).toBeDefined()
+  })
+})
+
+describe('deleteSalesOrderInBc', () => {
+  it('removes the BC order with a fresh etag', async () => {
+    seedSynced([])
+    setup(order({ bc_order_number: 'SO900', bc_etag: 'W/"stale"' }), [])
+    await deleteSalesOrderInBc(deps, order({ bc_order_number: 'SO900' }))
+    expect(bc.headers.has('SO900')).toBe(false)
+  })
+
+  it('treats a 404 as already gone', async () => {
+    setup(order({ bc_order_number: 'SO404' }), [])
+    await expect(deleteSalesOrderInBc(deps, order({ bc_order_number: 'SO404' }))).resolves.toBeUndefined()
+  })
+
+  it('does nothing when the order was never sent', async () => {
+    setup(order(), [])
+    await deleteSalesOrderInBc(deps, order())
+    expect(bc.t.get).not.toHaveBeenCalled()
+    expect(bc.t.remove).not.toHaveBeenCalled()
+  })
+
+  it('refuses an order from another organization', async () => {
+    setup(order(), [])
+    await expect(deleteSalesOrderInBc(deps, order({ organization_id: 'other', bc_order_number: 'SO900' }))).rejects.toThrow()
+    expect(bc.t.remove).not.toHaveBeenCalled()
+  })
+})
