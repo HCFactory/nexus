@@ -165,4 +165,56 @@ describe('Bill.com client', () => {
       details: { code: 'BDC_1102' },
     });
   });
+
+  describe('transient gateway errors', () => {
+    const gateway = (status = 504) => new Response('', { status, statusText: 'Gateway Timeout' });
+    const fresh = () => memoryStore({ sessionId: 'session-1', lastUsedAt: new Date() });
+
+    it('retries a GET that 504s once, then returns the data', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(gateway())
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      const sleep = vi.fn(async () => {});
+      const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep });
+
+      expect(await client.request('/v3/customers')).toEqual({ ok: true });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      expect(sleep).toHaveBeenCalledWith(1000);
+    });
+
+    it('retries 502 and 503 on GET too', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(gateway(502))
+        .mockResolvedValueOnce(gateway(503))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      const sleep = vi.fn(async () => {});
+      const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep });
+
+      expect(await client.request('/v3/customers', { method: 'GET' })).toEqual({ ok: true });
+      expect(sleep.mock.calls).toEqual([[1000], [2000]]);
+    });
+
+    it('throws after a GET 504s three times', async () => {
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => gateway());
+      const sleep = vi.fn(async () => {});
+      const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep });
+
+      await expect(client.request('/v3/customers')).rejects.toMatchObject({ details: { status: 504 } });
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    });
+
+    it('never retries a POST (a create could duplicate)', async () => {
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => gateway());
+      const sleep = vi.fn(async () => {});
+      const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep });
+
+      await expect(client.request('/v3/customers', { method: 'POST', body: '{}' })).rejects.toMatchObject({
+        details: { status: 504 },
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(sleep).not.toHaveBeenCalled();
+    });
+  });
 });

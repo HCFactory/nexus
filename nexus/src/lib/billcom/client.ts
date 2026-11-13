@@ -11,6 +11,9 @@ import {
 /** Bill.com expires a session after 35 minutes idle; reuse inside 30 for margin. */
 export const SESSION_REUSE_WINDOW_MS = 30 * 60_000;
 const DEFAULT_TIMEOUT_MS = 30_000;
+/** Waits before each GET retry on a transient gateway error (502/503/504). */
+const GATEWAY_RETRY_DELAYS_MS = [1_000, 2_000];
+const GATEWAY_STATUSES = new Set([502, 503, 504]);
 
 export interface StoredSession {
   sessionId: string;
@@ -33,6 +36,8 @@ export interface BillcomClientConfig {
   sessionStore: SessionStore;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** Delay between retries; injectable for tests. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface BillcomClient {
@@ -69,6 +74,7 @@ function errorFor(details: BillcomErrorDetails): BillcomApiError {
 
 export function createBillcomClient(config: BillcomClientConfig): BillcomClient {
   const fetchImpl = config.fetchImpl ?? fetch;
+  const sleep = config.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const baseUrl = config.apiBaseUrl.replace(/\/+$/, '');
 
@@ -146,6 +152,16 @@ export function createBillcomClient(config: BillcomClientConfig): BillcomClient 
     if (response.status === 401) {
       await config.sessionStore.clear();
       sessionId = await login();
+      response = await send(path, init, sessionId);
+    }
+
+    // Retry a GET on a transient gateway error. Never other methods: a
+    // create that timed out at the gateway may still have gone through.
+    const isGet = (init.method ?? 'GET').toUpperCase() === 'GET';
+    for (const delay of GATEWAY_RETRY_DELAYS_MS) {
+      if (!isGet || !GATEWAY_STATUSES.has(response.status)) break;
+      await response.body?.cancel().catch(() => undefined);
+      await sleep(delay);
       response = await send(path, init, sessionId);
     }
 
