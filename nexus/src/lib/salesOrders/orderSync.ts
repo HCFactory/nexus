@@ -19,6 +19,7 @@ import {
   SALES_ORDER_SOURCE,
   bcChangedOutsideNexus,
   createMarker,
+  parseLineNo,
   readBack,
   toBcCreate,
   toBcHeaderPatch,
@@ -44,12 +45,6 @@ const orderKey = (no: string): BcKey => ({ values: { Document_Type: 'Order', No:
 const lineKey = (no: string, lineNo: number): BcKey => ({
   values: { Document_Type: 'Order', Document_No: no, Line_No: String(lineNo) },
 })
-
-function bcLineNo(r: BcRecord): number {
-  const n = r.fields.Line_No
-  if (typeof n !== 'number' || !Number.isFinite(n)) throw new Error('BC returned a sales line without Line_No')
-  return n
-}
 
 function check<T>(res: { data: T; error: { message: string } | null }, what: string): T {
   if (res.error) throw new Error(`${what}: ${res.error.message}`)
@@ -142,12 +137,13 @@ async function ensureBcOrder(deps: OrderSyncDeps, order: SalesOrderRow): Promise
   const found = await deps.transport.list(SALES_ORDER_SOURCE, {
     filter: `Document_Type eq 'Order' and External_Document_No eq ${quote(marker)}`,
   })
+  if (found.length > 1) throw new Error(`Found ${found.length} BC orders with marker ${marker}; resolve in BC`)
   let no: string
-  if (found.length > 0) {
+  if (found.length === 1) {
     no = String(found[0].fields.No ?? '')
   } else {
     if (order.bc_create_marker === null) await updateOrder(deps, order.id, { bc_create_marker: marker })
-    const created = await deps.transport.create(SALES_ORDER_SOURCE, toBcCreate(order))
+    const created = await deps.transport.create(SALES_ORDER_SOURCE, toBcCreate(order, marker))
     no = String(created.fields.No ?? '')
   }
   if (!no) throw new Error('BC did not return a sales order number')
@@ -177,12 +173,20 @@ export async function syncSalesOrder(
       no = order.bc_order_number
       const header = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
       bcLines = await listBcLines(deps, no)
-      // bc_etag stays null until Nexus's first header patch is stored, so there
-      // is nothing of Nexus's in BC to compare yet (create succeeded, patch did not).
-      const checkable = order.bc_etag !== null
-      if (!opts.overwrite && checkable && bcChangedOutsideNexus({ bc_etag: order.bc_etag, lines }, { header, lines: bcLines })) {
-        await updateOrder(deps, order.id, { sync_state: 'conflict', sync_error: CHANGED_IN_BC })
-        return 'conflict'
+      if (!opts.overwrite) {
+        const inBc = new Set(bcLines.map(parseLineNo))
+        // A removed row whose BC line is already gone is finished work, not a
+        // change in BC; removed rows still in BC keep their etag check.
+        const compared = lines.filter((l) => !l.removed || (l.bc_line_no !== null && inBc.has(l.bc_line_no)))
+        // bc_etag is null when the create succeeded but Nexus's first header
+        // patch was never stored: the header has nothing of Nexus's to protect
+        // yet, so only the lines are compared (any BC line unknown to Nexus is
+        // still a conflict).
+        const storedEtag = order.bc_etag ?? header.etag
+        if (bcChangedOutsideNexus({ bc_etag: storedEtag, lines: compared }, { header, lines: bcLines })) {
+          await updateOrder(deps, order.id, { sync_state: 'conflict', sync_error: CHANGED_IN_BC })
+          return 'conflict'
+        }
       }
       headerEtag = header.etag
     }
@@ -192,21 +196,33 @@ export async function syncSalesOrder(
     headerEtag = (await deps.transport.patch(SALES_ORDER_SOURCE, orderKey(no), headerEtag, toBcHeaderPatch(order, no))).etag
     await updateOrder(deps, order.id, { bc_etag: headerEtag })
 
+    // Inserting or deleting a line changes the header's etag in BC (a line
+    // patch does not). Store the new one right away so a failure later in the
+    // loop doesn't leave a stale bc_etag that the retry reads as a conflict.
+    const refreshHeaderEtag = async () => {
+      const h = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
+      await updateOrder(deps, order.id, { bc_etag: h.etag })
+    }
+
     // Step 5: lines.
-    const bcByNo = new Map(bcLines.map((l) => [bcLineNo(l), l]))
+    const bcByNo = new Map(bcLines.map((l) => [parseLineNo(l), l]))
     if (opts.overwrite) {
       const known = new Set(lines.map((l) => l.bc_line_no).filter((n): n is number => n !== null))
-      for (const [n, rec] of bcByNo) {
+      for (const [n, rec] of [...bcByNo]) {
         if (known.has(n)) continue
         await removeBcLine(deps, no, n, rec.etag)
         bcByNo.delete(n)
+        await refreshHeaderEtag()
       }
     }
     for (const line of lines) {
       if (line.removed) {
         if (line.bc_line_no !== null) {
           const rec = bcByNo.get(line.bc_line_no)
-          if (rec) await removeBcLine(deps, no, line.bc_line_no, rec.etag)
+          if (rec) {
+            await removeBcLine(deps, no, line.bc_line_no, rec.etag)
+            await refreshHeaderEtag()
+          }
         }
         check(
           await deps.supabase
@@ -221,16 +237,23 @@ export async function syncSalesOrder(
         continue
       }
       const wanted = toBcLine(no, line, order.location_code)
-      if (line.bc_line_no === null) {
+      let rec = line.bc_line_no === null ? undefined : bcByNo.get(line.bc_line_no)
+      if (line.bc_line_no !== null && !rec) {
+        // Without overwrite the conflict check already stopped on this.
+        if (!opts.overwrite) throw new Error(`Line ${line.position} (BC line ${line.bc_line_no}) is missing in BC`)
+        // Overwrite: Nexus's version wins, so the line is sent again as new.
+        await updateLine(deps, orderId, line.id, { bc_line_no: null, bc_etag: null })
+        rec = undefined
+      }
+      if (!rec) {
         const created = await deps.transport.create(SALES_LINE_SOURCE, wanted)
-        await updateLine(deps, orderId, line.id, { bc_line_no: bcLineNo(created), bc_etag: created.etag })
+        await updateLine(deps, orderId, line.id, { bc_line_no: parseLineNo(created), bc_etag: created.etag })
+        await refreshHeaderEtag()
         continue
       }
-      const rec = bcByNo.get(line.bc_line_no)
-      if (!rec) throw new Error(`Line ${line.position} (BC line ${line.bc_line_no}) is missing in BC`)
       const diff = changedLineFields(wanted, rec.fields)
       if (Object.keys(diff).length === 0) continue
-      const patched = await deps.transport.patch(SALES_LINE_SOURCE, lineKey(no, line.bc_line_no), rec.etag, diff)
+      const patched = await deps.transport.patch(SALES_LINE_SOURCE, lineKey(no, parseLineNo(rec)), rec.etag, diff)
       await updateLine(deps, orderId, line.id, { bc_etag: patched.etag })
     }
 
@@ -277,7 +300,8 @@ export async function syncSalesOrder(
     await updateOrder(deps, order.id, { ...done, sync_state: 'pending' })
     return 'pending'
   } catch (err) {
-    const message = err instanceof BcReferenceError ? err.bcMessage : err instanceof Error ? err.message : String(err)
+    const raw = err instanceof BcReferenceError ? err.bcMessage || err.message : err instanceof Error ? err.message : String(err)
+    const message = raw || 'BC error'
     await updateOrder(deps, order.id, {
       sync_state: 'failed',
       sync_error: message,
@@ -287,11 +311,14 @@ export async function syncSalesOrder(
   }
 }
 
+/** A 404 counts as already removed only when a re-list confirms the line is gone. */
 async function removeBcLine(deps: OrderSyncDeps, no: string, lineNo: number, etag: string): Promise<void> {
   try {
     await deps.transport.remove(SALES_LINE_SOURCE, lineKey(no, lineNo), etag)
   } catch (err) {
     if (!is404(err)) throw err
+    const still = (await listBcLines(deps, no)).some((l) => parseLineNo(l) === lineNo)
+    if (still) throw err
   }
 }
 

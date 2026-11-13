@@ -15,17 +15,19 @@ export const SALES_LINE_SOURCE: ReferenceSource = {
   service: 'SalesOrderSalesLines',
   pageNumber: 46,
   keyFields: ['Document_Type', 'Document_No', 'Line_No'],
+  integerKeyFields: ['Line_No'],
 }
 
 export function createMarker(orderId: string): string {
   return 'NX-' + orderId.replace(/-/g, '').slice(0, 12).toUpperCase()
 }
 
-export function toBcCreate(order: SalesOrderRow): Record<string, unknown> {
+/** `marker` is the same value the duplicate check searches for (see createMarker). */
+export function toBcCreate(order: SalesOrderRow, marker: string): Record<string, unknown> {
   return {
     Document_Type: 'Order',
     Sell_to_Customer_No: order.customer_number,
-    External_Document_No: createMarker(order.id),
+    External_Document_No: marker,
   }
 }
 
@@ -100,7 +102,8 @@ function numOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
-function lineNo(r: BcRecord): number {
+/** BC's Line_No for a SalesOrderSalesLines record; throws when missing. */
+export function parseLineNo(r: BcRecord): number {
   const n = r.fields.Line_No
   if (typeof n !== 'number' || !Number.isFinite(n)) {
     throw new Error('BC returned a sales line without Line_No')
@@ -132,7 +135,7 @@ export function readBack(header: BcRecord, lines: BcRecord[]): BcReadBack {
     total_tax: numOrNull(first?.Total_VAT_Amount) ?? 0,
     total_incl_tax: numOrNull(first?.Total_Amount_Incl_VAT) ?? 0,
     lines: lines.map((l) => ({
-      bc_line_no: lineNo(l),
+      bc_line_no: parseLineNo(l),
       bc_etag: l.etag,
       bc_unit_price: numOrNull(l.fields.Unit_Price),
       amount_incl_tax: numOrNull(l.fields.Amount_Including_VAT),
@@ -146,7 +149,7 @@ export function bcChangedOutsideNexus(
   current: { header: BcRecord; lines: BcRecord[] },
 ): boolean {
   if (stored.bc_etag !== current.header.etag) return true
-  const bcByNo = new Map(current.lines.map((l) => [lineNo(l), l.etag]))
+  const bcByNo = new Map(current.lines.map((l) => [parseLineNo(l), l.etag]))
   const known = new Set<number>()
   for (const s of stored.lines) {
     if (s.bc_line_no === null) continue

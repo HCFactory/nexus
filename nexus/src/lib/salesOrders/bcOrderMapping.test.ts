@@ -11,6 +11,7 @@ import {
   toBcLine,
   readBack,
   bcChangedOutsideNexus,
+  parseLineNo,
 } from './bcOrderMapping'
 
 function order(over: Partial<SalesOrderRow> = {}): SalesOrderRow {
@@ -53,7 +54,7 @@ const rec = (fields: Record<string, unknown>, etag = 'e'): BcRecord => ({ key: {
 describe('sources and marker', () => {
   it('declares the OData sources', () => {
     expect(SALES_ORDER_SOURCE).toEqual({ kind: 'odata', service: 'SalesOrder', pageNumber: 42, keyFields: ['Document_Type', 'No'] })
-    expect(SALES_LINE_SOURCE).toEqual({ kind: 'odata', service: 'SalesOrderSalesLines', pageNumber: 46, keyFields: ['Document_Type', 'Document_No', 'Line_No'] })
+    expect(SALES_LINE_SOURCE).toEqual({ kind: 'odata', service: 'SalesOrderSalesLines', pageNumber: 46, keyFields: ['Document_Type', 'Document_No', 'Line_No'], integerKeyFields: ['Line_No'] })
   })
   it('builds the marker', () => {
     expect(createMarker('abcdef12-3456-7890-abcd-ef1234567890')).toBe('NX-ABCDEF123456')
@@ -62,7 +63,8 @@ describe('sources and marker', () => {
 
 describe('toBcCreate / toBcShipToPatch', () => {
   it('creates with marker', () => {
-    expect(toBcCreate(order())).toEqual({ Document_Type: 'Order', Sell_to_Customer_No: 'C100', External_Document_No: 'NX-ABCDEF123456' })
+    expect(toBcCreate(order(), 'NX-ABCDEF123456')).toEqual({ Document_Type: 'Order', Sell_to_Customer_No: 'C100', External_Document_No: 'NX-ABCDEF123456' })
+    expect(toBcCreate(order(), 'NX-OTHER').External_Document_No).toBe('NX-OTHER')
   })
   it('ship-to patch', () => {
     expect(toBcShipToPatch(order())).toEqual({ Ship_to_Code: 'WH1' })
@@ -93,7 +95,7 @@ describe('toBcHeaderPatch', () => {
     expect(p).not.toHaveProperty('Location_Code')
   })
   it('never sends customer PO or notes', () => {
-    const outs = [toBcCreate(order()), toBcShipToPatch(order()), toBcHeaderPatch(order(), 'SO-1'), toBcLine('SO-1', line(), 'MAIN')]
+    const outs = [toBcCreate(order(), 'NX-1'), toBcShipToPatch(order()), toBcHeaderPatch(order(), 'SO-1'), toBcLine('SO-1', line(), 'MAIN')]
     for (const o of outs) {
       const json = JSON.stringify(o)
       for (const k of ['Customer_PO', 'notes', 'customer_po', 'PO-SECRET', 'NOTE-SECRET']) expect(json).not.toContain(k)
@@ -156,6 +158,10 @@ describe('bcChangedOutsideNexus', () => {
     expect(bcChangedOutsideNexus(withUnsent, cur('H', [[1, 'a'], [2, 'z']]))).toBe(true))
   it('unsent line present, BC has unknown line', () =>
     expect(bcChangedOutsideNexus(withUnsent, cur('H', [[1, 'a'], [2, 'b'], [3, 'c']]))).toBe(true))
+  it('parseLineNo reads Line_No', () => {
+    expect(parseLineNo(rec({ Line_No: 30000 }))).toBe(30000)
+    expect(() => parseLineNo(rec({ Line_No: '30000' }))).toThrow('without Line_No')
+  })
   it('throws when BC line lacks Line_No', () => {
     expect(() => bcChangedOutsideNexus(stored, { header: rec({}, 'H'), lines: [rec({}, 'a')] })).toThrow('without Line_No')
     expect(() => readBack(rec({ No: 'SO-1' }), [rec({})])).toThrow('without Line_No')

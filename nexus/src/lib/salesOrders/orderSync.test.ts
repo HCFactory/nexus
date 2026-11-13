@@ -62,11 +62,20 @@ function fakeBc() {
     expect(k.values.Document_Type).toBe('Order')
     if (isLine(s)) {
       expect(typeof k.values.Line_No).toBe('string')
+      // Real BC (TEST, measured): a quoted Line_No='10000' answers 404 "key not valid".
+      if (!(s.kind === 'odata' && s.integerKeyFields?.includes('Line_No'))) {
+        throw new BcReferenceError(404, 'The key in the request URI is not valid')
+      }
       return `${k.values.Document_No}|${k.values.Line_No}`
     }
     return k.values.No
   }
   const store = (s: ReferenceSource) => (isLine(s) ? lines : headers)
+  /** Real BC (TEST, measured): a line insert (and delete) changes the header etag; a line patch doesn't. */
+  const touchHeader = (docNo: string) => {
+    const h = headers.get(docNo)
+    if (h) headers.set(docNo, { ...h, etag: etag() })
+  }
   const totals = (docNo: string) => {
     const ls = [...lines.values()].filter((l) => l.fields.Document_No === docNo)
     const excl = ls.reduce((a, l) => a + Number(l.fields.Quantity) * Number(l.fields.Unit_Price), 0)
@@ -105,6 +114,7 @@ function fakeBc() {
           fields: { Unit_Price: 9.99, ...fields, Line_No: n, Amount_Including_VAT: 1 },
         }
         lines.set(`${docNo}|${n}`, rec)
+        touchHeader(docNo)
         return rec
       }
       const no = `SO${orderN++}`
@@ -129,6 +139,7 @@ function fakeBc() {
       if (!r) throw new BcReferenceError(404, 'not found')
       if (r.etag !== e) throw new BcConflictError()
       store(s).delete(k)
+      if (isLine(s)) touchHeader(String(r.fields.Document_No))
     }),
   }
   return { t, headers, lines, hooks, etag }
@@ -396,6 +407,103 @@ describe('syncSalesOrder: existing order', () => {
     expect(bc.lines.has('SO900|20000')).toBe(false)
     expect(lineRow('l2')).toBeUndefined()
     expect(lineRow('l1')).toBeDefined()
+  })
+})
+
+describe('syncSalesOrder: review fixes', () => {
+  it('sends line keys through a source that marks Line_No as an integer key', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), [{ ...rows[0], quantity: 9 }])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    const lp = bc.t.patch.mock.calls.filter(([s]) => isLineSource(s))
+    expect(lp).toHaveLength(1)
+    expect(lp[0][0]).toMatchObject({ integerKeyFields: ['Line_No'] })
+  })
+
+  it('stores the header etag after each line insert, so a retry after a failure is not a conflict', async () => {
+    setup(order(), [line({ id: 'l1', position: 1 }), line({ id: 'l2', position: 2, item_number: 'BAD' })])
+    bc.hooks.before = (method, s, arg) => {
+      if (method === 'create' && isLineSource(s) && (arg as Row).No === 'BAD') throw new BcReferenceError(400, 'blocked')
+    }
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(orderRow().bc_etag).toBe(bc.headers.get('SO1001')!.etag)
+  })
+
+  it('a removed row whose BC line is already gone is deleted locally, not a conflict', async () => {
+    const { rows } = seedSynced([{ id: 'l1', no: 10000 }, { id: 'l2', no: 20000 }])
+    bc.lines.delete('SO900|20000')
+    setup(order({ bc_order_number: 'SO900', bc_etag: bc.headers.get('SO900')!.etag }), [rows[0], { ...rows[1], removed: true }])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(bc.t.remove).not.toHaveBeenCalled()
+    expect(lineRow('l2')).toBeUndefined()
+  })
+
+  it('a remove that 404s while the line is still in BC fails the sync and keeps the row', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }, { id: 'l2', no: 20000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), [rows[0], { ...rows[1], removed: true }])
+    bc.hooks.before = (method, s) => {
+      if (method === 'remove' && isLineSource(s)) throw new BcReferenceError(404, 'odd 404')
+    }
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(orderRow().sync_error).toBe('odd 404')
+    expect(lineRow('l2')).toBeDefined()
+  })
+
+  it('a remove that 404s and the re-list confirms the line is gone counts as removed', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }, { id: 'l2', no: 20000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), [rows[0], { ...rows[1], removed: true }])
+    bc.hooks.before = (method, s) => {
+      if (method === 'remove' && isLineSource(s)) {
+        bc.lines.delete('SO900|20000')
+        throw new BcReferenceError(404, 'gone')
+      }
+    }
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(lineRow('l2')).toBeUndefined()
+  })
+
+  it('overwrite recreates a local line whose BC line is missing', async () => {
+    const { rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    bc.lines.delete('SO900|10000')
+    setup(order({ bc_order_number: 'SO900', bc_etag: 'W/"stale"', sync_state: 'conflict' }), rows)
+    expect(await syncSalesOrder(deps, ORDER_ID, { overwrite: true })).toBe('synced')
+    expect(lineCreates()).toHaveLength(1)
+    expect(lineRow('l1')!.bc_line_no).toBe(10000)
+    expect(bc.lines.has('SO900|10000')).toBe(true)
+  })
+
+  it('with a null bc_etag, a BC line unknown to Nexus is still a conflict', async () => {
+    seedSynced([{ id: 'x', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: null }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('conflict')
+    expect(bc.t.patch).not.toHaveBeenCalled()
+  })
+
+  it('with a null bc_etag and no BC lines, the sync continues', async () => {
+    seedSynced([])
+    setup(order({ bc_order_number: 'SO900', bc_etag: null }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+  })
+
+  it('refuses to adopt when several BC orders carry the marker', async () => {
+    const marker = createMarker(ORDER_ID)
+    for (const no of ['SO1', 'SO2']) {
+      bc.headers.set(no, { key: { values: { Document_Type: 'Order', No: no } }, etag: bc.etag(), fields: { No: no, External_Document_No: marker } })
+    }
+    setup(order({ bc_create_marker: marker }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(orderRow().sync_error).toBe(`Found 2 BC orders with marker ${marker}; resolve in BC`)
+    expect(orderRow().bc_order_number).toBeNull()
+    expect(bc.t.create).not.toHaveBeenCalled()
+  })
+
+  it('falls back to "BC error" when BC sends no message', async () => {
+    setup(order(), [line()])
+    bc.hooks.before = (method) => {
+      if (method === 'create') throw new BcReferenceError(500, '')
+    }
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(orderRow().sync_error).toBe('BC error')
   })
 })
 

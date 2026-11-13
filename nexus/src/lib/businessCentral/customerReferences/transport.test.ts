@@ -79,6 +79,19 @@ describe('reference transport', () => {
     expect(calls[0].url).toContain("ODataV4/Company('My%20Co')/");
   });
 
+  it('odata integer key fields are written unquoted; other numeric-looking keys stay quoted', async () => {
+    const source = { kind: 'odata' as const, service: 'SalesOrderSalesLines', pageNumber: 46, keyFields: ['Document_Type', 'Document_No', 'Line_No'], integerKeyFields: ['Line_No'] };
+    const { transport, calls } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await transport.get(source, { values: { Document_Type: 'Order', Document_No: '10000', Line_No: '10000' } });
+    expect(calls[0].url).toContain("SalesOrderSalesLines(Document_Type='Order',Document_No='10000',Line_No=10000)");
+  });
+
+  it('odata integer key rejects a non-integer value', async () => {
+    const source = { kind: 'odata' as const, service: 'SalesOrderSalesLines', pageNumber: 46, keyFields: ['Line_No'], integerKeyFields: ['Line_No'] };
+    const { transport } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await expect(transport.get(source, { values: { Line_No: "1) or (1" } })).rejects.toThrow('Integer key value expected');
+  });
+
   it('odata composite key with date', async () => {
     const source = { kind: 'odata' as const, service: 'TaxDetails', pageNumber: 468, keyFields: ['Tax_Jurisdiction_Code', 'Tax_Group_Code', 'Tax_Type', 'Effective_Date'] };
     const { transport, calls } = setup([json({ '@odata.etag': 'W/"1"' })]);

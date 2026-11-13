@@ -4,7 +4,14 @@ import { BcConflictError, BcReferenceError, ReferencePageUnavailableError } from
 
 export type ReferenceSource =
   | { kind: 'api'; resource: string }
-  | { kind: 'odata'; service: string; pageNumber: number; keyFields: string[] };
+  | {
+      kind: 'odata';
+      service: string;
+      pageNumber: number;
+      keyFields: string[];
+      /** Key fields that are Integer in BC; written unquoted in key predicates (e.g. Line_No=10000). */
+      integerKeyFields?: string[];
+    };
 
 export type BcKey = { bcId: string } | { values: Record<string, string> };
 
@@ -30,7 +37,13 @@ function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function quoteKeyValue(value: string): string {
+const INTEGER_RE = /^-?\d+$/;
+
+function quoteKeyValue(value: string, integer = false): string {
+  if (integer) {
+    if (!INTEGER_RE.test(value)) throw new Error(`Integer key value expected, got "${value}"`);
+    return value;
+  }
   // Date-typed key fields are written unquoted in OData v4 key predicates.
   if (DATE_RE.test(value)) return value;
   return `'${encodeURIComponent(value.replace(/'/g, "''"))}'`;
@@ -75,8 +88,10 @@ export function createReferenceTransport(
       if (v === undefined) throw new Error(`Missing key field ${name} for ${source.service}`);
       return v;
     };
-    if (names.length === 1) return `${root}(${quoteKeyValue(value(names[0]))})`;
-    return `${root}(${names.map((n) => `${n}=${quoteKeyValue(value(n))}`).join(',')})`;
+    const ints = new Set(source.integerKeyFields ?? []);
+    const q = (n: string) => quoteKeyValue(value(n), ints.has(n));
+    if (names.length === 1) return `${root}(${q(names[0])})`;
+    return `${root}(${names.map((n) => `${n}=${q(n)}`).join(',')})`;
   }
 
   async function send(
