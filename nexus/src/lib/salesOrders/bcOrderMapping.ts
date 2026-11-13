@@ -101,7 +101,11 @@ function numOrNull(v: unknown): number | null {
 }
 
 function lineNo(r: BcRecord): number {
-  return Number(r.fields.Line_No)
+  const n = r.fields.Line_No
+  if (typeof n !== 'number' || !Number.isFinite(n)) {
+    throw new Error('BC returned a sales line without Line_No')
+  }
+  return n
 }
 
 export interface BcReadBack {
@@ -136,6 +140,7 @@ export function readBack(header: BcRecord, lines: BcRecord[]): BcReadBack {
   }
 }
 
+/** Stored lines without a bc_line_no were never sent to BC, so they are ignored. */
 export function bcChangedOutsideNexus(
   stored: { bc_etag: string | null; lines: { bc_line_no: number | null; bc_etag: string | null }[] },
   current: { header: BcRecord; lines: BcRecord[] },
@@ -144,7 +149,7 @@ export function bcChangedOutsideNexus(
   const bcByNo = new Map(current.lines.map((l) => [lineNo(l), l.etag]))
   const known = new Set<number>()
   for (const s of stored.lines) {
-    if (s.bc_line_no === null) return true
+    if (s.bc_line_no === null) continue
     known.add(s.bc_line_no)
     if (bcByNo.get(s.bc_line_no) !== s.bc_etag) return true
   }

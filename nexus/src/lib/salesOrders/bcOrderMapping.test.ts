@@ -150,4 +150,14 @@ describe('bcChangedOutsideNexus', () => {
   it('true on line etag change', () => expect(bcChangedOutsideNexus(stored, cur('H', [[1, 'a'], [2, 'z']]))).toBe(true))
   it('true when stored line missing in BC', () => expect(bcChangedOutsideNexus(stored, cur('H', [[1, 'a']]))).toBe(true))
   it('true when BC has an extra line', () => expect(bcChangedOutsideNexus(stored, cur('H', [[1, 'a'], [2, 'b'], [3, 'c']]))).toBe(true))
+  const withUnsent = { bc_etag: 'H', lines: [...stored.lines, { bc_line_no: null, bc_etag: null }] }
+  it('ignores unsent stored lines', () => expect(bcChangedOutsideNexus(withUnsent, cur())).toBe(false))
+  it('unsent line present, other etag differs', () =>
+    expect(bcChangedOutsideNexus(withUnsent, cur('H', [[1, 'a'], [2, 'z']]))).toBe(true))
+  it('unsent line present, BC has unknown line', () =>
+    expect(bcChangedOutsideNexus(withUnsent, cur('H', [[1, 'a'], [2, 'b'], [3, 'c']]))).toBe(true))
+  it('throws when BC line lacks Line_No', () => {
+    expect(() => bcChangedOutsideNexus(stored, { header: rec({}, 'H'), lines: [rec({}, 'a')] })).toThrow('without Line_No')
+    expect(() => readBack(rec({ No: 'SO-1' }), [rec({})])).toThrow('without Line_No')
+  })
 })
