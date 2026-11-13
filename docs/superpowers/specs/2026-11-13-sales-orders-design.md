@@ -58,7 +58,11 @@ A Nexus sales order must **match a BC sales order**: same fields, same meaning. 
 
 ## Constraints
 
-- BC API v2.0 standard endpoints: `salesOrders` and `salesOrderLines`. The default BC environment is TEST for now. Clients are built from the database with `createBcClientForOrg`.
+- **Writes go through BC's published Sales Order page, not API v2.0.** API v2.0 `salesOrders` lacks most of the required header fields: document date, due date, tax area, both posting groups, tax liable, contact no., mobile and Email CC. TEST BC already publishes Page 42 as the OData service **`SalesOrder`**, with lines as **`SalesOrderSalesLines`**.
+  - Verified 2026-11-13: these carry every field this doc needs, including the Email CC extension field `EMailCCHCABG`.
+  - This is the same pattern Nexus uses for customers with `Customer_Card_Excel`.
+  - **Production BC must publish the same two services** before go-live. Add this to the backlog #1 go-live list.
+  - The default BC environment is TEST for now. Clients are built from the database with `createBcClientForOrg`.
 - Nexus has **no scheduled background jobs** (no cron). The Bill.com customer push runs only while its page is open, driven by the browser.
 - Existing synced data the order screen picks from:
   - `business_central_customers`: address, `payment_terms_id`, `shipment_method_id`
@@ -83,6 +87,35 @@ The user picked **B**.
 
 ## Design
 
+### Header fields (decided)
+
+BC field names are from the `SalesOrder` page.
+
+| Field | Rule |
+|---|---|
+| Order date (`Order_Date`) | Defaults to the day the order is created. |
+| Document date, Posting date (`Document_Date`, `Posting_Date`) | Set to **today when Create invoice is clicked** (project 2). Until then, Nexus leaves them at BC's default. |
+| Due date (`Due_Date`) | **Read-only, calculated by BC** from document date + payment terms. Nexus shows BC's value after each sync, so it updates when project 2 sets the invoice dates. |
+| Requested delivery date | Blank by default; the rep can enter one. |
+| Payment terms, Tax area code, Gen. bus. posting group, Customer posting group, Shipment method | **Dropdowns** of BC values synced into Nexus. Filled in from the customer profile when the customer is picked; the rep can change them for a one-off order. |
+| Tax liable | **Switch.** Filled in from the customer profile, and can be changed for a one-off order. |
+| Customer info: Address, Address 2, City, State, ZIP code, Country/Region, Contact no., Phone no., Mobile phone no., Email, Email CC | Filled in from the customer profile (BC's `Sell_to_*` fields and `EMailCCHCABG`). Each can be changed for a one-off order. Shown on the order, and carried onto the invoice. |
+| Status | See "Status" below. |
+
+**Dropdown lists:**
+- Already synced from BC into Nexus (migration 053): payment terms, tax areas, customer posting groups, gen. business posting groups.
+- Shipment methods: a new reference sync is needed, following migration 053's pattern.
+- Customer fields (`tax_area_code`, `gen_bus_posting_group`, `customer_posting_group`, `payment_terms_code`, `email_cc`, `tax_liable`, phone, email) already exist on `business_central_customers`.
+- Contact no. and mobile phone may need adding to the customer card fill. The builder checks.
+
+### Status (decided)
+
+A dropdown with colours: **Draft** (gray), **Final** (yellow), **Pulled** (orange), **Shipped** (blue), **Invoiced** (green).
+
+- **Status is Nexus-only.** It never changes the BC order, which stays Open. Every status, including Draft, is synced to BC as a normal open order.
+- Reps pick **Draft, Final and Pulled** by hand.
+- **Shipped and Invoiced are set automatically** when project 2's Ship and Create invoice actions succeed in BC, and can't be picked by hand. In project 1 they show in the dropdown but are disabled.
+
 ### Order numbers, Customer PO and notes (decided)
 
 - **External Document No. is the invoice number.** BC's `externalDocumentNumber` holds the number used as the invoice number in Nexus and in Bill.com (project 2 sends it as Bill.com's `invoiceNumber`).
@@ -106,7 +139,7 @@ Each order carries a **sync state**, separate from where it is in the order-to-c
 | `failed` | BC rejected the change or didn't answer; it will be retried | The error, plus "Try again" |
 | `conflict` | The BC order changed outside Nexus since the last sync | "Changed in BC. Nexus stopped to avoid overwriting." No automatic retry. An **"Overwrite BC with Nexus's version"** button, shown after the rep confirms (decided), re-reads the BC order's current etag and sends Nexus's header and lines. That includes deleting BC lines Nexus doesn't have. Then the order returns to `synced`. Nexus never pulls BC's version back. |
 
-The business status in project 1 is just `open`. Project 2 adds statuses like shipped and invoiced.
+The order's business status is the Draft → Invoiced dropdown above, and it is independent of sync state.
 
 ### What triggers a sync (no cron)
 
@@ -119,15 +152,20 @@ Each sync claims the order with a lease, using the same pattern as `billcom_cust
 
 ### How a sync talks to BC
 
-- **First sync (create):** one `POST salesOrders` with the lines included, then store the BC order id, number, etag and the BC id of every line.
-  - **No duplicates:** before creating, check whether a BC order already exists for this Nexus order and link it instead of making a second one. That covers the case where a create succeeded in BC but the response never reached Nexus.
-  - **How to match:** the BC API v2.0 sales order has no free field for a Nexus id, so matching needs a marker. The builder picks the marker. One candidate is a fixed note on the order, if one is reachable; otherwise customer + PO number + order date + a recent creation time. The builder verifies against TEST and records the choice.
-- **Later syncs (update):** compare the stored BC etag with the current one first. If they differ, mark `conflict` and stop. Otherwise:
+All calls go to the published `SalesOrder` and `SalesOrderSalesLines` OData pages. Orders are keyed by `Document_Type='Order'` + `No`; lines by `Document_Type` + `Document_No` + `Line_No`.
+
+- **First sync (create):**
+  - `POST SalesOrder` with the customer number and the header fields. BC assigns `No` and fills in the customer defaults.
+  - Then `PATCH` the header with Nexus's values, so one-off overrides and External Document No. (the order number if the rep left it blank) win over BC's defaults.
+  - Then `POST` each line.
+  - Store the BC order number, the header etag and each line's `Line_No` and etag.
+  - **No duplicates:** before creating, check whether a BC order already exists for this Nexus order and link it instead of making a second one. That covers the case where a create succeeded in BC but the response never reached Nexus. The builder picks the marker to match on, verified against TEST. One candidate is a page field Nexus can write and nobody else uses, such as `Posting_Description` if it isn't printed. Otherwise customer + order date + a recent creation time.
+- **Later syncs (update):** compare the stored header etag with BC's current one first. If they differ, mark `conflict` and stop. Otherwise:
   - `PATCH` the header
-  - add, change or delete individual lines by their stored BC line id
-  - refresh the etag and BC's computed values
-  - A sync interrupted halfway must be safe to re-run: lines with a stored BC id are updated, lines without one are created.
-- **After every successful sync,** read the order back and store what BC decided: number, unit prices, line amounts, tax, totals and status.
+  - add, change or delete individual lines by their stored `Line_No`
+  - refresh the etags and BC's computed values
+  - A sync interrupted halfway must be safe to re-run: lines with a stored `Line_No` are updated, lines without one are created.
+- **After every successful sync,** read the order back and store what BC decided: number, due date, unit prices, line amounts, tax and totals.
 - **Delete:** deleting a Nexus order deletes the BC order, if it exists and is still open, then removes the Nexus row. If the BC delete fails, the Nexus order stays and is marked `failed`.
 
 ### Prices
@@ -137,13 +175,23 @@ My call: if the rep leaves a line's price blank, BC fills it in (customer price 
 ### The order page
 
 ```
-Sales Orders › SO-10234                                         ● In BC
-────────────────────────────────────────────────────────────────────────
-Customer       [ C00125 – Acme Foods        ▾]   Order date   [2026-11-13]
-Invoice # (Ext. Doc No.) [ SO-10234 ]            Requested    [2026-11-20]
-Customer PO    [ PO-88812     ]  (Nexus + Bill.com only, not BC)
-Ship to        Acme Foods, 12 Main St, Toronto ON   (edit)
-Payment terms  [ Net 30 ▾]   Shipment method [ Ground ▾]   Dimension 2 [ ▾]
+Sales Orders › SO-10234                         [ Final ▾ ] (yellow)   ● In BC
+──────────────────────────────────────────────────────────────────────────────
+Customer      [ C00125 – Acme Foods      ▾]   Invoice # (Ext. Doc No.) [ SO-10234 ]
+Customer PO   [ PO-88812 ]  (Nexus + Bill.com only, not BC)
+
+Customer info                                  Dates
+  Address    [165 Kaiholu St      ]              Order date      [2026-11-13]
+  Address 2  [                    ]              Requested deliv.[          ]
+  City [Kailua] State [HI] ZIP [96734] [US ▾]    Document date   set at invoice
+  Contact no.[CT101830] Phone [(808) 375-2976]   Posting date    set at invoice
+  Mobile     [        ]                          Due date        2026-12-13 (BC)
+  Email      [angela…@k12.hi.us]
+  Email CC   [angela…@k12.hi.us]
+
+Terms & posting
+  Payment terms [Net 30 ▾]  Shipment method [Ground ▾]  Tax liable [on]
+  Tax area [HI ▾]  Gen. bus. posting group [DOMESTIC ▾]  Customer posting group [DOMESTIC ▾]
 
   Item                          Qty    Unit price   Disc %   Amount incl. tax
   10023 – Tomato Sauce           48    24.50          5        1,250.77
@@ -153,13 +201,13 @@ Payment terms  [ Net 30 ▾]   Shipment method [ Ground ▾]   Dimension 2 [ ▾
                                               Tax (from BC)          201.24
                                               Total                1,749.24
 Notes
-[ Customer called, wants delivery before 10am.                         ]
-                                                    [Delete]  [Save]
+[ Customer called, wants delivery before 10am.                              ]
+                                                         [Delete]  [Save]
 ```
 
-- **Customer:** pick from synced BC customers, with blocked customers excluded. Picking one fills in ship-to address, payment terms and shipment method from the customer. All three can be changed.
-- **Ship-to:** the customer's own address, which the rep can type over for a one-off. My call, from the data: 75 of 76 TEST orders ship to the customer's own address. Picking from BC's saved ship-to addresses ("Ship-to Codes") is out of scope. It would need a BC-published page, since the standard API doesn't expose them.
-- **Shipment method and Dimension 2:** these dropdowns need two new synced reference lists, following migration 053's pattern. My call; Nexus doesn't sync either list yet.
+- **Customer:** pick from synced BC customers, with blocked customers excluded. Picking one fills in the customer info, terms and posting fields from the customer profile (see "Header fields"). Re-picking a different customer refills them.
+- **Ship-to (my call):** BC's ship-to fields are kept equal to the customer info. 75 of 76 TEST orders ship to the customer's own address, and the user's field list has no separate ship-to. A separate ship-to and BC's saved ship-to codes are out of scope.
+- **Dimension 2 is dropped (my call).** It isn't in the user's field list and was used on only 5 of 76 orders. BC fills in any customer default dimension on its own.
 - **Lines table (decided):** a table inside the order, built in the style of the purchase invoice items table (`InvoiceItemsTable` and `ItemPicker` in `src/components/invoices/InvoicesClient.tsx`).
   - **Columns:** Item, Qty, Unit price, Discount %, Amount incl. tax.
   - **Amount incl. tax is read-only.** It comes from BC's last sync and shows "—" until then.
@@ -169,7 +217,7 @@ Notes
 - **Hidden line defaults (my call):** these aren't shown as columns but are still set on every BC line.
   - Unit of measure: the item's base unit.
   - Location: the org's usual location; the builder picks most-used-from-data or a setting.
-- **Discount %** is sent to BC as the line's `discountPercent`. Bill.com invoice lines have no discount field, so project 2 sends Bill.com the price after discount.
+- **Discount %** is sent to BC as the line's `Line_Discount_Percent`. Bill.com invoice lines have no discount field, so project 2 sends Bill.com the price after discount.
 - **Totals and tax:** shown only from BC's last sync. While `pending`, they read "calculated when sent to BC".
 
 The **Sales Orders list** shows: BC order number (or "Not yet in BC"), invoice # (External Document No.), customer, customer PO, order date, total and sync state, with filters for "needs attention" (`failed` + `conflict`).
@@ -190,19 +238,14 @@ RLS lets users read their own org's orders. All writes go through server actions
 
 ## Notes for project 2 (not built here)
 
+- Create invoice sets `Document_Date` and `Posting_Date` to today before posting, and reads BC's recalculated `Due_Date` back. On success it sets status to **Invoiced**; Ship sets **Shipped**.
 - Shipping and invoicing together is the usual path, and the user also needs **ship only, then invoice later**.
-- BC API v2.0 offers `shipAndInvoice` on sales orders but **no ship-only action**. Ship-only will need a small BC extension or a published codeunit or page, a BC configuration task like publishing `CustomerTemplates` was. It must be sequenced before project 2 is built.
+- BC API v2.0 offers `shipAndInvoice` on sales orders but **no ship-only action**, and neither do the published OData pages. Ship-only will need a small BC extension or a published codeunit or page, a BC configuration task like publishing `CustomerTemplates` was. It must be sequenced before project 2 is built.
 
 ## Left to the builder
 
 - How to mark a BC order so the "no duplicates" check can find it (see "How a sync talks to BC"), verified against TEST.
-- Whether BC API v2.0 lets these be set on `salesOrders`, checked against TEST:
-  - `shortcutDimension2Code`
-  - `shipmentMethodId`
-  - ship-to address fields
-  - and `locationId` on `salesOrderLines`
-
-  Anything that can't be set goes back to the user before being dropped.
+- Confirm against TEST that the `SalesOrder` and `SalesOrderSalesLines` pages accept insert, modify and delete over OData with the app's credentials. Also confirm that every field in "Header fields" is editable there. Anything that can't be set goes back to the user before being dropped.
 - Batch size and lease length for the list-load sweep.
 - How the default location is chosen.
 - Table and column names.
