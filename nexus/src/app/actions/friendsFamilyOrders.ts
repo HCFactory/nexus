@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { getCurrentUserAccessContext, requireOrganizationContext } from '@/lib/auth/currentUserAccess';
+import { normalizeFriendsFamilyQuantityDeals } from '@/lib/friendsFamily/pricing';
 import { FRIENDS_FAMILY_PRODUCT_COLORS } from '@/lib/friendsFamily/productColors';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type {
@@ -12,6 +13,7 @@ import type {
   FriendsFamilyPaymentStatus,
   FriendsFamilyProduct,
   FriendsFamilyProductColor,
+  FriendsFamilyQuantityDeal,
   FriendsFamilyWorkspace,
 } from '@/types/database';
 
@@ -44,6 +46,29 @@ function requiredText(value: string, label: string) {
   const trimmed = value.trim();
   if (!trimmed) throw new Error(`${label} is required`);
   return trimmed;
+}
+
+function validateQuantityDeals(deals: FriendsFamilyQuantityDeal[]): FriendsFamilyQuantityDeal[] {
+  if (deals.length > 10) throw new Error('A product can have at most 10 deals');
+  const seen = new Set<number>();
+  const validated = deals.map((deal) => {
+    const minQuantity = Number(deal.min_quantity);
+    const unitPrice = Number(deal.unit_price);
+    if (!Number.isInteger(minQuantity) || minQuantity < 2) throw new Error('Deal quantity must be a whole number of 2 or more');
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Deal price must be zero or greater');
+    if (seen.has(minQuantity)) throw new Error(`Only one deal can start at ${minQuantity}`);
+    seen.add(minQuantity);
+    return { min_quantity: minQuantity, unit_price: Math.round(unitPrice * 100) / 100 };
+  });
+  return validated.sort((a, b) => a.min_quantity - b.min_quantity);
+}
+
+function toProduct(row: Record<string, unknown>): FriendsFamilyProduct {
+  return {
+    ...row,
+    unit_price: Number(row.unit_price),
+    quantity_deals: normalizeFriendsFamilyQuantityDeals(row.quantity_deals),
+  } as FriendsFamilyProduct;
 }
 
 function revalidateWorkspace() {
@@ -115,10 +140,7 @@ export async function getFriendsFamilyWorkspace(): Promise<FriendsFamilyWorkspac
   if (orderError) throw orderError;
 
   return {
-    products: (products ?? []).map((product) => ({
-      ...product,
-      unit_price: Number(product.unit_price),
-    })) as FriendsFamilyProduct[],
+    products: (products ?? []).map(toProduct),
     orders: (orders ?? []).map((order) => {
       const row = order as FriendsFamilyOrder & { order_items: FriendsFamilyOrderItem[] };
       return {
@@ -245,15 +267,15 @@ export async function createFriendsFamilyProduct(input: FriendsFamilyProductInpu
     .single();
   if (error || !data) throw error ?? new Error('Product could not be created');
   revalidateWorkspace();
-  return { ...data, unit_price: Number(data.unit_price) } as FriendsFamilyProduct;
+  return toProduct(data);
 }
 
 export async function updateFriendsFamilyProduct(
   productId: string,
-  patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'active'>>
+  patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'quantity_deals' | 'active'>>
 ): Promise<FriendsFamilyProduct> {
   const { orgId } = await requireFriendsFamilyAdmin();
-  const update: Record<string, string | number | boolean> = {};
+  const update: Record<string, string | number | boolean | FriendsFamilyQuantityDeal[]> = {};
   if (patch.name !== undefined) update.name = requiredText(patch.name, 'Product name');
   if (patch.category !== undefined) update.category = requiredText(patch.category, 'Category');
   if (patch.unit_price !== undefined) {
@@ -264,6 +286,7 @@ export async function updateFriendsFamilyProduct(
     if (!PRODUCT_COLORS.has(patch.color_key)) throw new Error('Invalid product color');
     update.color_key = patch.color_key;
   }
+  if (patch.quantity_deals !== undefined) update.quantity_deals = validateQuantityDeals(patch.quantity_deals);
   if (patch.active !== undefined) update.active = patch.active;
 
   const supabase = await createClient();
@@ -276,5 +299,5 @@ export async function updateFriendsFamilyProduct(
     .single();
   if (error || !data) throw error ?? new Error('Product could not be updated');
   revalidateWorkspace();
-  return { ...data, unit_price: Number(data.unit_price) } as FriendsFamilyProduct;
+  return toProduct(data);
 }

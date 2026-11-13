@@ -275,7 +275,7 @@ function ProductManager({
 
   const saveProduct = (
     productId: string,
-    patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'active'>>
+    patch: ProductPatch
   ) => {
     setError('');
     startTransition(async () => {
@@ -333,6 +333,17 @@ function ProductManager({
   );
 }
 
+type ProductPatch = Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'quantity_deals' | 'active'>>;
+type DraftDeal = { key: string; minQuantity: string; price: string };
+
+function toDraftDeals(product: FriendsFamilyProduct): DraftDeal[] {
+  return product.quantity_deals.map((deal) => ({
+    key: crypto.randomUUID(),
+    minQuantity: String(deal.min_quantity),
+    price: String(deal.unit_price),
+  }));
+}
+
 function ProductRow({
   product,
   pending,
@@ -340,51 +351,102 @@ function ProductRow({
 }: {
   product: FriendsFamilyProduct;
   pending: boolean;
-  onSave: (productId: string, patch: Partial<Pick<FriendsFamilyProduct, 'name' | 'category' | 'unit_price' | 'color_key' | 'active'>>) => void;
+  onSave: (productId: string, patch: ProductPatch) => void;
 }) {
   const [name, setName] = useState(product.name);
   const [category, setCategory] = useState(product.category);
   const [price, setPrice] = useState(String(product.unit_price));
   const [colorKey, setColorKey] = useState(product.color_key);
-  const changed = name.trim() !== product.name || category.trim() !== product.category || Number(price) !== product.unit_price || colorKey !== product.color_key;
+  const [deals, setDeals] = useState<DraftDeal[]>(() => toDraftDeals(product));
+  // Saved deals come back sorted by quantity, so compare in that order.
+  const sortedDeals = [...deals].sort((a, b) => Number(a.minQuantity) - Number(b.minQuantity));
+  const dealsChanged = deals.length !== product.quantity_deals.length || sortedDeals.some((deal, index) => (
+    Number(deal.minQuantity) !== product.quantity_deals[index]?.min_quantity
+    || Number(deal.price) !== product.quantity_deals[index]?.unit_price
+  ));
+  const changed = name.trim() !== product.name || category.trim() !== product.category || Number(price) !== product.unit_price || colorKey !== product.color_key || dealsChanged;
+  const dealsValid = deals.every((deal) => (
+    deal.minQuantity.trim() !== '' && Number.isInteger(Number(deal.minQuantity)) && Number(deal.minQuantity) >= 2
+    && deal.price.trim() !== '' && Number.isFinite(Number(deal.price)) && Number(deal.price) >= 0
+  )) && new Set(deals.map((deal) => Number(deal.minQuantity))).size === deals.length;
+  const updateDeal = (key: string, patch: Partial<DraftDeal>) => setDeals((current) => current.map((deal) => deal.key === key ? { ...deal, ...patch } : deal));
+  const inputClass = 'rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring';
 
   return (
-    <tr className={!product.active ? 'opacity-55' : undefined}>
-      <td className="p-2.5 lg:pl-5">
-        <input value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm font-medium text-foreground outline-none focus:ring-2 focus:ring-ring" />
-      </td>
-      <td className="p-2.5">
-        <input value={category} onChange={(event) => setCategory(event.target.value)} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring" />
-      </td>
-      <td className="p-2.5">
-        <input min="0" step="0.01" type="number" value={price} onChange={(event) => setPrice(event.target.value)} className="w-full rounded-lg border border-border bg-surface-raised px-3 py-2 text-right text-sm tabular-nums text-foreground outline-none focus:ring-2 focus:ring-ring" />
-      </td>
-      <td className="p-2.5">
-        <ProductColorSelect value={colorKey} onChange={setColorKey} label={`Color for ${product.name}`} />
-      </td>
-      <td className="px-4 py-2.5 text-right lg:pr-5">
-        <div className="flex justify-end gap-2">
-          {changed && (
+    <>
+      <tr className={!product.active ? 'opacity-55' : undefined}>
+        <td className="p-2.5 lg:pl-5">
+          <input value={name} onChange={(event) => setName(event.target.value)} className={`w-full font-medium ${inputClass}`} />
+        </td>
+        <td className="p-2.5">
+          <input value={category} onChange={(event) => setCategory(event.target.value)} className={`w-full ${inputClass}`} />
+        </td>
+        <td className="p-2.5">
+          <input min="0" step="0.01" type="number" value={price} onChange={(event) => setPrice(event.target.value)} className={`w-full text-right tabular-nums ${inputClass}`} />
+        </td>
+        <td className="p-2.5">
+          <ProductColorSelect value={colorKey} onChange={setColorKey} label={`Color for ${product.name}`} />
+        </td>
+        <td className="px-4 py-2.5 text-right lg:pr-5">
+          <div className="flex justify-end gap-2">
+            {changed && (
+              <button
+                type="button"
+                disabled={pending || !name.trim() || !category.trim() || !Number.isFinite(Number(price)) || Number(price) < 0 || !dealsValid}
+                onClick={() => onSave(product.id, {
+                  name,
+                  category,
+                  unit_price: Number(price),
+                  color_key: colorKey,
+                  quantity_deals: deals.map((deal) => ({ min_quantity: Number(deal.minQuantity), unit_price: Number(deal.price) })),
+                })}
+                className="rounded-lg border border-primary/30 bg-primary-subtle px-3 py-1.5 text-xs font-semibold text-primary disabled:opacity-40"
+              >
+                Save
+              </button>
+            )}
             <button
               type="button"
-              disabled={pending || !name.trim() || !category.trim() || !Number.isFinite(Number(price)) || Number(price) < 0}
-              onClick={() => onSave(product.id, { name, category, unit_price: Number(price), color_key: colorKey })}
-              className="rounded-lg border border-primary/30 bg-primary-subtle px-3 py-1.5 text-xs font-semibold text-primary disabled:opacity-40"
+              disabled={pending || deals.length >= 10}
+              onClick={() => setDeals((current) => [...current, { key: crypto.randomUUID(), minQuantity: '', price: '' }])}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-foreground hover:border-primary/40 hover:text-primary disabled:opacity-40"
             >
-              Save
+              <Plus className="size-3.5" /> Add deal
             </button>
-          )}
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() => onSave(product.id, { active: !product.active })}
-            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${product.active ? 'bg-success-subtle text-success' : 'bg-surface-raised text-foreground-subtle'}`}
-          >
-            {product.active ? 'Active' : 'Archived'}
-          </button>
-        </div>
-      </td>
-    </tr>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onSave(product.id, { active: !product.active })}
+              className={`rounded-full px-3 py-1.5 text-xs font-semibold ${product.active ? 'bg-success-subtle text-success' : 'bg-surface-raised text-foreground-subtle'}`}
+            >
+              {product.active ? 'Active' : 'Archived'}
+            </button>
+          </div>
+        </td>
+      </tr>
+      {deals.map((deal) => (
+        <tr key={deal.key} className={`border-t-0 bg-surface-raised/30 ${!product.active ? 'opacity-55' : ''}`}>
+          <td colSpan={5} className="px-2.5 py-2 lg:px-5">
+            <div className="flex flex-wrap items-center gap-2 pl-4 text-sm text-foreground-muted">
+              <span className="text-xs font-semibold uppercase tracking-wider text-primary">Deal</span>
+              <label className="flex items-center gap-2">
+                Buy
+                <input aria-label={`Deal minimum quantity for ${product.name}`} min="2" step="1" type="number" value={deal.minQuantity} onChange={(event) => updateDeal(deal.key, { minQuantity: event.target.value })} placeholder="5" className={`w-20 text-right tabular-nums ${inputClass}`} />
+                or more
+              </label>
+              <label className="flex items-center gap-2">
+                $
+                <input aria-label={`Deal price for ${product.name}`} min="0" step="0.01" type="number" value={deal.price} onChange={(event) => updateDeal(deal.key, { price: event.target.value })} placeholder="10.00" className={`w-24 text-right tabular-nums ${inputClass}`} />
+                each
+              </label>
+              <button type="button" disabled={pending} onClick={() => setDeals((current) => current.filter((candidate) => candidate.key !== deal.key))} className="rounded p-2 text-foreground-subtle hover:bg-destructive-subtle hover:text-destructive" aria-label={`Remove deal for ${product.name}`}>
+                <Trash2 className="size-4" />
+              </button>
+            </div>
+          </td>
+        </tr>
+      ))}
+    </>
   );
 }
 
