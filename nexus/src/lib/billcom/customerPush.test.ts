@@ -1,9 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('./connection', () => ({ createBillcomClientForConnection: vi.fn() }));
 
 import type { BillcomClient } from './client';
 import { payloadHash, shouldBeArchived, toBillcomCustomer } from './customerPayload';
 import { markPending, planInitialPush, pushCustomers, type PushDeps } from './customerPush';
+import { queueChangedCustomers } from './customerSyncHooks';
 import { BillcomApiError, BillcomRateLimitError } from './errors';
 import type { BillcomCustomerLink, BusinessCentralCustomer } from '@/types/database';
 
@@ -682,5 +685,94 @@ describe('live-test fixes: failed links and missing fields', () => {
       expect(linkRow(sb, no).status).toBe('needs_attention');
       expect(linkRow(sb, no).last_error).toBe('Add a name in Business Central, then retry.');
     }
+  });
+});
+
+describe('needs_attention links and the sync re-queue', () => {
+  const withConnection = (sb: ReturnType<typeof fakeSupabase>) => {
+    sb.tables.billcom_connections = [{ id: BILL, organization_id: ORG, is_enabled: true, is_default: true }];
+    return { supabase: sb.client, orgId: ORG, bcConnectionId: BC };
+  };
+  const hashOf = (r: BusinessCentralCustomer) => payloadHash(toBillcomCustomer(r), shouldBeArchived(r));
+
+  it('records the evaluated hash for no-email, blank-name and duplicate links', async () => {
+    const bill = fakeBillcom([
+      { id: '0cuA', archived: false, name: 'A', accountNumber: 'D1' },
+      { id: '0cuB', archived: false, name: 'B', accountNumber: 'D1' },
+    ]);
+    const rows = [bcRow('E1', { email: null }), bcRow('N1', { display_name: '' }), bcRow('D1')];
+    const { deps, sb } = setup(rows, [link('E1'), link('N1'), link('D1')], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.needsAttention).toBe(3);
+    for (const r of rows) {
+      const l = linkRow(sb, r.bc_customer_number!);
+      expect(l.status).toBe('needs_attention');
+      expect(l.last_pushed_hash).toBe(hashOf(r));
+      expect(l.billcom_customer_id).toBeNull();
+    }
+  });
+
+  it('an unchanged needs_attention link is not queued again by the sync', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1', { email: null })], [link('C1')], bill);
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(linkRow(sb, 'C1').status).toBe('needs_attention');
+
+    expect(await queueChangedCustomers(withConnection(sb))).toBe(0);
+    expect(linkRow(sb, 'C1').status).toBe('needs_attention');
+  });
+
+  it('a needs_attention link whose BC data changed is queued', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1', { email: null })], [link('C1')], bill);
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    sb.tables.business_central_customers[0].email = 'c1@x.com';
+
+    expect(await queueChangedCustomers(withConnection(sb))).toBe(1);
+    expect(linkRow(sb, 'C1').status).toBe('pending');
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.created).toBe(1);
+    expect(linkRow(sb, 'C1').status).toBe('synced');
+  });
+
+  it('a retried needs_attention link is processed, not treated as unchanged', async () => {
+    const bill = fakeBillcom();
+    const { deps, sb } = setup([bcRow('C1', { email: null })], [link('C1')], bill);
+    await pushCustomers(deps, { budgetMs: 10_000 });
+
+    await markPending(deps, ['C1']);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.unchanged).toBe(0);
+    expect(res.needsAttention).toBe(1);
+    expect(linkRow(sb, 'C1').last_error).toBe('Add an email in Business Central, then retry.');
+    // A list read happened again: the link was matched, not skipped.
+    expect(bill.calls.filter((c) => c.path.startsWith('/v3/customers?')).length).toBeGreaterThan(2);
+
+    const retried = await pushCustomers(deps, { numbers: ['C1'], budgetMs: 10_000 });
+    expect(retried.unchanged).toBe(0);
+    expect(retried.needsAttention).toBe(1);
+  });
+});
+
+describe('pushCustomers ordering', () => {
+  it('sends linked customers before any list read, so a list failure cannot block them', async () => {
+    const bill = fakeBillcom([{ id: '0cuL', archived: false, name: 'Old', accountNumber: 'B2' }], {
+      failOn: (path) =>
+        path.startsWith('/v3/customers?')
+          ? new BillcomApiError({ status: 504, statusText: 'Gateway Timeout', message: 'timeout', url: path })
+          : null,
+    });
+    // More unlinked links than workers sort first by id; the linked one must still go out.
+    const unlinked = ['A1', 'A2', 'A3', 'A4'];
+    const { deps, sb } = setup(
+      [...unlinked.map((n) => bcRow(n)), bcRow('B2')],
+      [...unlinked.map((n) => link(n)), link('B2', { billcom_customer_id: '0cuL' })],
+      bill,
+    );
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.updated).toBe(1);
+    expect(res.stoppedReason).toBe('list_failed');
+    expect(linkRow(sb, 'B2').status).toBe('synced');
+    for (const n of unlinked) expect(linkRow(sb, n).status).toBe('pending');
   });
 });

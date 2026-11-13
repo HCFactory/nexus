@@ -310,10 +310,12 @@ export async function pushCustomers(
 
   // Mark every given number pending up front so a stop leaves them queued.
   if (opts.numbers) await markPending(deps, opts.numbers);
-  const links = (await loadLinks(deps, opts.numbers)).filter(
+  const links = (await loadLinks(deps, opts.numbers))
     // Failed links wait for an explicit retry, a save or a detected change.
-    (l) => opts.numbers || l.status === 'pending',
-  );
+    .filter((l) => opts.numbers || l.status === 'pending')
+    // Linked customers first (stable sort): they need no list read, so a list
+    // failure cannot block them.
+    .sort((a, b) => Number(!a.billcom_customer_id) - Number(!b.billcom_customer_id));
 
   const rows = await loadBcCustomers(deps);
   const rowById = new Map(rows.map((r) => [r.id, r]));
@@ -415,9 +417,14 @@ export async function pushCustomers(
     const archived = shouldBeArchived(row);
     const hash = payloadHash(payload, archived);
 
+    // needs_attention links record the hash they were checked against, so the
+    // sync's change check does not re-queue them until the BC data changes.
+    // Safe: the 'unchanged' shortcut below also requires a Bill.com id, and the
+    // name check runs before it.
     if (!payload.name?.trim()) {
       await updateLink(deps, link.id, {
         status: 'needs_attention',
+        last_pushed_hash: hash,
         last_error: 'Add a name in Business Central, then retry.',
       });
       return 'needsAttention';
@@ -447,6 +454,7 @@ export async function pushCustomers(
       if (matches.length > 1) {
         await updateLink(deps, link.id, {
           status: 'needs_attention',
+          last_pushed_hash: hash,
           last_error: duplicateReason(link.bc_customer_number, matches),
         });
         return 'needsAttention';
@@ -467,6 +475,7 @@ export async function pushCustomers(
         if (!payload.email?.trim()) {
           await updateLink(deps, link.id, {
             status: 'needs_attention',
+            last_pushed_hash: hash,
             last_error: 'Add an email in Business Central, then retry.',
           });
           return 'needsAttention';
