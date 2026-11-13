@@ -238,6 +238,18 @@ describe('updateCustomer', () => {
     await expect(updateCustomer(deps, { id: 'c1', original, edited: { ...original, display_name: '' } })).rejects.toThrow('Name is required');
   });
 
+  it('stores every card column BC returns, so the sync etag skip never hides a BC-side change', async () => {
+    const original = seedCustomer();
+    // Changed in BC since our last sync: new credit limit and etag.
+    cards.set('W00001', { ...cards.get('W00001')!, etag: 'W/"newer"', fields: { ...cards.get('W00001')!.fields, Credit_Limit_LCY: 900 } });
+    await updateCustomer(deps, { id: 'c1', original, edited: { ...original, display_name: 'New' } });
+    expect(tables.business_central_customers[0]).toMatchObject({
+      display_name: 'New',
+      credit_limit: 900,
+      bc_card_etag: cards.get('W00001')!.etag,
+    });
+  });
+
   it('stale etag retries once', async () => {
     const original = seedCustomer();
     cards.set('W00001', { ...cards.get('W00001')!, etag: 'W/"newer"' });

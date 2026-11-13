@@ -269,9 +269,18 @@ describe('Bill.com client', () => {
       const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep });
 
       await expect(client.request('/v3/customers', { method: 'POST', body: '{}' })).rejects.toThrow(
-        /didn't answer within 30 seconds/,
+        /didn't answer within 30 seconds\. It may still have been saved/,
       );
       expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('a sign-in that times out says so, instead of a raw abort error', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockRejectedValue(new DOMException('This operation was aborted', 'AbortError'));
+      const client = createBillcomClient({ ...config, sessionStore: memoryStore(null), fetchImpl });
+
+      await expect(client.request('/v3/customers')).rejects.toThrow(/sign-in didn't answer within 30 seconds/);
     });
 
     it('stops retrying once the request has run 35 seconds, so one slow customer cannot outlast its lease', async () => {

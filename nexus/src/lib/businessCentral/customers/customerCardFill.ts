@@ -10,7 +10,11 @@ export const CUSTOMER_CARD_SOURCE: ReferenceSource = {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
-/** Columns filled from a Customer_Card_Excel record (never touches columns the API v2 sync owns). */
+/**
+ * Columns filled from a Customer_Card_Excel record (never touches columns the API v2 sync owns).
+ * Adding a column here? Clear `bc_card_etag` in the same migration — sync skips
+ * cards whose etag is unchanged, so existing rows would otherwise never get it.
+ */
 export function mapCardToCustomerColumns(card: Pick<BcRecord, 'etag' | 'fields'>): Record<string, unknown> {
   const x = card.fields;
   const limit = typeof x.Credit_Limit_LCY === 'number' && Number.isFinite(x.Credit_Limit_LCY) ? x.Credit_Limit_LCY : 0;

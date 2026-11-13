@@ -218,8 +218,11 @@ export async function updateCustomer(
   }
 
   // Store what BC saved, mapped the way sync maps it, not the raw form values.
+  // Every card column is written, not just the edited ones: we store BC's new
+  // etag, and sync skips cards whose etag matches, so a column left stale here
+  // (changed in BC since our last sync) would never be corrected.
   const cardColumns = mapCardToCustomerColumns(record);
-  const patch: DbRow = { bc_card_etag: cardColumns.bc_card_etag, updated_at: deps.now() };
+  const patch: DbRow = { ...cardColumns, updated_at: deps.now() };
   for (const name of changed) {
     const field = CUSTOMER_FIELDS.find((f) => f.name === name)!;
     if (name in cardColumns) patch[name] = cardColumns[name];

@@ -102,18 +102,31 @@ export function createBillcomClient(config: BillcomClientConfig): BillcomClient 
     }
   }
 
+  const seconds = () => Math.round(timeoutMs / 1000);
+
   async function login(): Promise<string> {
     const path = '/v3/login';
-    const response = await call(path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: config.username,
-        password: config.password,
-        organizationId: config.billcomOrganizationId,
-        devKey: config.devKey,
-      }),
-    });
+    let response: Response;
+    try {
+      response = await call(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: config.username,
+          password: config.password,
+          organizationId: config.billcomOrganizationId,
+          devKey: config.devKey,
+        }),
+      });
+    } catch (err) {
+      if (!isAbort(err)) throw err;
+      throw new BillcomApiError({
+        status: 0,
+        statusText: 'Timeout',
+        message: `Bill.com sign-in didn't answer within ${seconds()} seconds.`,
+        url: `${baseUrl}${path}`,
+      });
+    }
 
     if (!response.ok) {
       const details = await readErrorDetails(response, `${baseUrl}${path}`);
@@ -183,7 +196,11 @@ export function createBillcomClient(config: BillcomClientConfig): BillcomClient 
         throw new BillcomApiError({
           status: 0,
           statusText: 'Timeout',
-          message: `Bill.com didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`,
+          message: isGet
+            ? `Bill.com didn't answer within ${seconds()} seconds.`
+            : // A write that timed out may have gone through; the next push
+              // matches by account number, so it will not create a duplicate.
+              `Bill.com didn't answer within ${seconds()} seconds. It may still have been saved — the next push will check.`,
           url,
         });
       }
