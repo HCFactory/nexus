@@ -245,19 +245,32 @@ export function BillcomConnectionsCard() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingConnection, setEditingConnection] = useState<BillcomConnectionSummary | null>(null);
 
-  async function reload() {
-    try {
-      setConnections(await listBillcomConnections());
-    } catch (err) {
-      console.error('Failed to load Bill.com connections:', err);
-      setError('Failed to load connections');
-    } finally {
-      setLoading(false);
-    }
+  /** Load the list; state is only set once the request settles. */
+  function load(isCancelled: () => boolean = () => false): Promise<void> {
+    return listBillcomConnections()
+      .then(
+        (list) => {
+          if (!isCancelled()) setConnections(list);
+        },
+        (err: unknown) => {
+          console.error('Failed to load Bill.com connections:', err);
+          if (!isCancelled()) setError('Failed to load connections');
+        },
+      )
+      .finally(() => {
+        if (!isCancelled()) setLoading(false);
+      });
   }
 
+  const reload = () => load();
+
   useEffect(() => {
-    void reload();
+    let cancelled = false;
+    void load(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
+    // Load once on mount.
   }, []);
 
   function clearResult(connectionId: string) {

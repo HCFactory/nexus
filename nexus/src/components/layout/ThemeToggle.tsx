@@ -10,13 +10,17 @@ interface ThemeToggleProps {
   collapsed?: boolean;
 }
 
+const subscribeNothing = () => () => {};
+
 export function ThemeToggle({ collapsed = false }: ThemeToggleProps) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
+  // false while server-rendering and hydrating, true once running in the browser,
+  // so the first client render matches the server HTML (the theme is unknown there).
+  const mounted = React.useSyncExternalStore(
+    subscribeNothing,
+    () => true,
+    () => false,
+  );
 
   const isDark = mounted && resolvedTheme === 'dark';
 

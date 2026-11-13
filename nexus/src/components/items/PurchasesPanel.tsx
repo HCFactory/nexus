@@ -28,6 +28,7 @@ import {
   PurchaseVersionTarget,
 } from '@/types/database';
 import { PurchaseVersionBlock } from './PurchaseVersionBlock';
+import { usePropState } from '@/hooks/usePropState';
 
 interface PurchasesPanelProps {
   businessCentralItemRowId: string;
@@ -96,10 +97,10 @@ export function PurchasesPanel({
   productLines,
   access,
 }: PurchasesPanelProps) {
-  const [localItemNames, setLocalItemNames] = useState<ItemName[]>(itemNames);
-  const [localCategories, setLocalCategories] = useState<Category[]>(categories);
-  const [localCombos, setLocalCombos] = useState<PackagingItemCombo[]>(packagingItemCombos);
-  const [localProductLines, setLocalProductLines] = useState<ProductLine[]>(productLines);
+  const [localItemNames, setLocalItemNames] = usePropState<ItemName[]>(itemNames);
+  const [localCategories, setLocalCategories] = usePropState<Category[]>(categories);
+  const [localCombos, setLocalCombos] = usePropState<PackagingItemCombo[]>(packagingItemCombos);
+  const [localProductLines, setLocalProductLines] = usePropState<ProductLine[]>(productLines);
   const [linkedTargets, setLinkedTargets] = useState<LinkedPurchaseTargets | null>(null);
   const [draftItemNameId, setDraftItemNameId] = useState<string | null>(null);
   const [draftCategoryId, setDraftCategoryId] = useState<string | null>(null);
@@ -115,11 +116,6 @@ export function PurchasesPanel({
 
   const canManagePurchases = access.canManageCatalog;
 
-  useEffect(() => setLocalItemNames(itemNames), [itemNames]);
-  useEffect(() => setLocalCategories(categories), [categories]);
-  useEffect(() => setLocalCombos(packagingItemCombos), [packagingItemCombos]);
-  useEffect(() => setLocalProductLines(productLines), [productLines]);
-
   const applyTargets = useCallback((targets: LinkedPurchaseTargets) => {
     setLinkedTargets(targets);
     setDraftItemNameId(targets.itemNameId);
@@ -127,7 +123,7 @@ export function PurchasesPanel({
     if (targets.linkedCombo) {
       setLocalCombos((prev) => upsertCombo(prev, targets.linkedCombo!));
     }
-  }, []);
+  }, [setLocalCombos]);
 
   const refreshTargets = useCallback(async () => {
     setLoading(true);
@@ -147,11 +143,36 @@ export function PurchasesPanel({
     setLocalItemNames(refs.itemNames);
     setLocalCategories(refs.categories);
     setLocalCombos(refs.packagingItemCombos);
-  }, []);
+  }, [setLocalItemNames, setLocalCategories, setLocalCombos]);
 
+  // Switching to another item shows the loading state again while it loads.
+  const [loadedItemId, setLoadedItemId] = useState(businessCentralItemRowId);
+  if (loadedItemId !== businessCentralItemRowId) {
+    setLoadedItemId(businessCentralItemRowId);
+    setLoading(true);
+    setError('');
+  }
+
+  // Initial load. State is only set once the request settles, and a result for
+  // an item we've since left is ignored.
   useEffect(() => {
-    void refreshTargets();
-  }, [refreshTargets]);
+    let cancelled = false;
+    getLinkedPurchaseTargetsForBusinessCentralItem(businessCentralItemRowId)
+      .then(
+        (targets) => {
+          if (!cancelled) applyTargets(targets);
+        },
+        (err: unknown) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load purchase links');
+        },
+      )
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [applyTargets, businessCentralItemRowId]);
 
   const linkOrCreateCombo = async (itemNameId: string, categoryId: string) => {
     if (!canManagePurchases || pending) return null;

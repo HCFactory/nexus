@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 
 import { OrderBlock } from '@/components/orders';
@@ -18,6 +18,7 @@ import { createClient } from '@/lib/supabase/client';
 import { getCategories } from '@/app/actions/categories';
 import { getItemNames } from '@/app/actions/itemNames';
 import { createOrder, createOrderItem, getPackagingItemCombos } from '@/app/actions/orders';
+import { usePropState } from '@/hooks/usePropState';
 
 interface OrdersClientProps {
   initialUser: User | null;
@@ -37,10 +38,10 @@ export function OrdersClient({
   initialInvoiceOptions,
 }: OrdersClientProps) {
   const [user] = useState<User | null>(initialUser);
-  const [orders, setOrders] = useState<PurchaseOrderWithItems[]>(initialOrders);
-  const [itemNames, setItemNames] = useState<ItemName[]>(initialItemNames);
-  const [categories, setCategories] = useState<Category[]>(initialCategories);
-  const [packagingItemCombos, setPackagingItemCombos] = useState<PackagingItemCombo[]>(initialPackagingItemCombos);
+  const [orders, setOrders] = usePropState<PurchaseOrderWithItems[]>(initialOrders);
+  const [itemNames, setItemNames] = usePropState<ItemName[]>(initialItemNames);
+  const [categories, setCategories] = usePropState<Category[]>(initialCategories);
+  const [packagingItemCombos, setPackagingItemCombos] = usePropState<PackagingItemCombo[]>(initialPackagingItemCombos);
   const [invoiceOptions, setInvoiceOptions] = useState<InvoiceOption[]>(initialInvoiceOptions);
   const [artworkStatusMap, setArtworkStatusMap] = useState<Record<string, string>>({});
   const [itemStatusMap, setItemStatusMap] = useState<Record<string, string>>({});
@@ -54,8 +55,12 @@ export function OrdersClient({
   const userRef = useRef<User | null>(null);
   const isMountedRef = useRef(true);
   const artworkStatusRequestRef = useRef(0);
-  ordersRef.current = orders;
-  userRef.current = user;
+  // Keep the refs current after each commit. A layout effect runs before every
+  // passive effect (children's included), so effects below always see fresh values.
+  useLayoutEffect(() => {
+    ordersRef.current = orders;
+    userRef.current = user;
+  });
 
   useEffect(() => {
     return () => {
@@ -150,22 +155,6 @@ export function OrdersClient({
     const allOrderItems = ordersRef.current.flatMap((o) => o.order_items);
     void refreshArtworkStatus(allOrderItems, userRef.current?.organization_id ?? '');
   }, [refreshArtworkStatus]);
-
-  useEffect(() => {
-    setOrders(initialOrders);
-  }, [initialOrders]);
-
-  useEffect(() => {
-    setItemNames(initialItemNames);
-  }, [initialItemNames]);
-
-  useEffect(() => {
-    setCategories(initialCategories);
-  }, [initialCategories]);
-
-  useEffect(() => {
-    setPackagingItemCombos(initialPackagingItemCombos);
-  }, [initialPackagingItemCombos]);
 
   useEffect(() => {
     refreshCurrentArtworkStatus();

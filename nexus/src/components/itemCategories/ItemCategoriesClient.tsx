@@ -28,6 +28,7 @@ import type { BusinessCentralReferenceData } from '@/types/businessCentralItems'
 import { CategorySettingsBlock } from './CategorySettingsBlock';
 import { CategoryNumberingBlock } from './CategoryNumberingBlock';
 import { CategoryTemplateBlock } from './CategoryTemplateBlock';
+import { usePropState } from '@/hooks/usePropState';
 
 interface ItemCategoriesClientProps {
   rows: ItemCategoryRow[];
@@ -41,7 +42,7 @@ function numberingLabel(category: Category): string {
 
 export function ItemCategoriesClient({ rows: initialRows, canManage, references }: ItemCategoriesClientProps) {
   const searchParams = useSearchParams();
-  const [rows, setRows] = useState<ItemCategoryRow[]>(initialRows);
+  const [rows, setRows] = usePropState<ItemCategoryRow[]>(initialRows);
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     const fromUrl = searchParams.get('id');
@@ -51,10 +52,6 @@ export function ItemCategoriesClient({ rows: initialRows, canManage, references 
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setRows(initialRows);
-  }, [initialRows]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();

@@ -35,6 +35,7 @@ import { ItemOrderStatusDropdown } from './ItemOrderStatusDropdown';
 import { PackagingItemCombobox } from './PackagingItemCombobox';
 import { PriorityDropdown } from './PriorityDropdown';
 import { calculateOverrunPercent } from '@/lib/orderItemQuantityDefaults';
+import { usePropState } from '@/hooks/usePropState';
 
 interface VersionWithStatus {
   version: string;
@@ -141,14 +142,10 @@ function CompactQuantityInput({
   inputClassName?: string;
   onCommit: (value: number | null) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(formatQuantity(value));
+  const [draft, setDraft] = usePropState(value, formatQuantity);
   const [pending, setPending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const cursorRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    setDraft(formatQuantity(value));
-  }, [value]);
 
   useEffect(() => {
     if (cursorRef.current !== null && inputRef.current && document.activeElement === inputRef.current) {
@@ -311,7 +308,7 @@ function InvoiceAssignmentCell({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const invoiceId =
     party === 'supplier' ? orderItem.supplier_invoice_id : orderItem.manufacturer_invoice_id;
-  const [optimisticInvoiceId, setOptimisticInvoiceId] = useState<string | null>(invoiceId);
+  const [optimisticInvoiceId, setOptimisticInvoiceId] = usePropState<string | null>(invoiceId);
   const partyOptions = sortInvoiceOptionsNewestFirst(
     invoiceOptions.filter((option) => option.invoice_party === party)
   );
@@ -365,10 +362,6 @@ function InvoiceAssignmentCell({
       window.removeEventListener('resize', updatePosition);
     };
   }, [open, updatePosition]);
-
-  useEffect(() => {
-    setOptimisticInvoiceId(invoiceId);
-  }, [invoiceId]);
 
   if (!access.canViewInvoices) {
     return null;

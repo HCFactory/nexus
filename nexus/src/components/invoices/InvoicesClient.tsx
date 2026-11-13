@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition, type FormEvent, type ReactNode } from 'react';
+import { useMemo, useState, useTransition, type FormEvent, type ReactNode } from 'react';
 import {
   assignInvoiceToOrderItems,
   createInvoice,
@@ -21,6 +21,7 @@ import {
   InvoiceWorkspaceData,
   PurchaseInvoiceWithAssignedItems,
 } from '@/types/database';
+import { usePropState } from '@/hooks/usePropState';
 
 interface InvoicesClientProps {
   initialData: InvoiceWorkspaceData;
@@ -133,12 +134,8 @@ function QuantityInput({
   disabled: boolean;
   onCommit: (value: number | null) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(formatNumber(value));
+  const [draft, setDraft] = usePropState(value, formatNumber);
   const [pending, startTransition] = useTransition();
-
-  useEffect(() => {
-    setDraft(formatNumber(value));
-  }, [value]);
 
   return (
     <input
