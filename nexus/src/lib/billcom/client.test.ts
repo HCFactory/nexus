@@ -166,6 +166,21 @@ describe('Bill.com client', () => {
     });
   });
 
+  it('discards the first 401 body before logging in again', async () => {
+    const first = new Response('expired', { status: 401, statusText: 'Unauthorized' });
+    const cancel = vi.spyOn(first.body!, 'cancel');
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(jsonResponse({ sessionId: 'session-2' }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const store = memoryStore({ sessionId: 'session-1', lastUsedAt: new Date() });
+    const client = createBillcomClient({ ...config, sessionStore: store, fetchImpl });
+
+    await client.request('/v3/customers');
+    expect(cancel).toHaveBeenCalled();
+  });
+
   describe('transient gateway errors', () => {
     const gateway = (status = 504) => new Response('', { status, statusText: 'Gateway Timeout' });
     const fresh = () => memoryStore({ sessionId: 'session-1', lastUsedAt: new Date() });

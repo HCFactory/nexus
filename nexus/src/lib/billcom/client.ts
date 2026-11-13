@@ -150,6 +150,7 @@ export function createBillcomClient(config: BillcomClientConfig): BillcomClient 
     // A 401 mid-request means the session died early. Clear it, log in once,
     // and retry. A second 401 propagates rather than looping.
     if (response.status === 401) {
+      await response.body?.cancel().catch(() => undefined);
       await config.sessionStore.clear();
       sessionId = await login();
       response = await send(path, init, sessionId);

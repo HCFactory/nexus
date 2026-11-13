@@ -188,6 +188,8 @@ function indexByAccount(customers: BillcomCustomer[]) {
   return { byAccount, byId };
 }
 
+const NO_NAME = 'Add a name in Business Central, then retry.';
+
 const duplicateReason = (no: string, matches: BillcomCustomer[]) =>
   `Bill.com has ${matches.length} customers with account number ${no} (${matches
     .map((m) => m.id)
@@ -231,6 +233,10 @@ export async function planInitialPush(deps: PushDeps): Promise<PushPreview> {
     const existing = linkByNo.get(no);
     let current: BillcomCustomer | undefined;
 
+    if (!payload.name?.trim()) {
+      preview.needsAttention.push({ number: no, reason: NO_NAME });
+      continue;
+    }
     if (existing?.billcom_customer_id) {
       if (existing.last_pushed_hash === payloadHash(payload, archived)) continue;
       current = byId.get(existing.billcom_customer_id);
@@ -419,13 +425,15 @@ export async function pushCustomers(
 
     // needs_attention links record the hash they were checked against, so the
     // sync's change check does not re-queue them until the BC data changes.
-    // Safe: the 'unchanged' shortcut below also requires a Bill.com id, and the
-    // name check runs before it.
+    // Safe: the name check runs before the 'unchanged' shortcut; the other
+    // needs_attention paths have no Bill.com id, and every write that sets or
+    // clears the id also clears last_pushed_hash, so the shortcut only fires
+    // after a completed push wrote the real hash.
     if (!payload.name?.trim()) {
       await updateLink(deps, link.id, {
         status: 'needs_attention',
         last_pushed_hash: hash,
-        last_error: 'Add a name in Business Central, then retry.',
+        last_error: NO_NAME,
       });
       return 'needsAttention';
     }
@@ -444,7 +452,7 @@ export async function pushCustomers(
       current = (await getBillcomCustomer(deps, id)) ?? undefined;
       if (!current) {
         // Gone from Bill.com: forget the id and match again.
-        await writeLink(deps, link.id, { billcom_customer_id: null });
+        await writeLink(deps, link.id, { billcom_customer_id: null, last_pushed_hash: null });
         id = null;
       }
     }
@@ -463,7 +471,7 @@ export async function pushCustomers(
       if (current) {
         id = current.id;
         // Save the id first so a later failure never leads to a duplicate.
-        await writeLink(deps, link.id, { billcom_customer_id: id });
+        await writeLink(deps, link.id, { billcom_customer_id: id, last_pushed_hash: null });
         outcome = 'linked';
       } else {
         // Another run may have created it since we loaded the link.
@@ -488,7 +496,7 @@ export async function pushCustomers(
         });
         id = createdCustomer.id;
         current = createdCustomer;
-        await writeLink(deps, link.id, { billcom_customer_id: id });
+        await writeLink(deps, link.id, { billcom_customer_id: id, last_pushed_hash: null });
         outcome = 'created';
       }
     }

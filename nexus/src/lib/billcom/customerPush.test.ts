@@ -776,3 +776,92 @@ describe('pushCustomers ordering', () => {
     for (const n of unlinked) expect(linkRow(sb, n).status).toBe('pending');
   });
 });
+
+describe('needs_attention retries never end in a false unchanged', () => {
+  it('duplicates merged, then a rate limit on the PATCH: the next run still PATCHes', async () => {
+    let limitPatch = true;
+    const bill = fakeBillcom(
+      [
+        { id: '0cuA', archived: false, name: 'A', accountNumber: 'D1' },
+        { id: '0cuB', archived: false, name: 'B', accountNumber: 'D1' },
+      ],
+      {
+        failOn: (path, body) =>
+          limitPatch && path === '/v3/customers/0cuA' && body
+            ? new BillcomRateLimitError({ status: 429, statusText: 'x', code: 'BDC_1144', message: 'busy', url: path })
+            : null,
+      },
+    );
+    const { deps, sb } = setup([bcRow('D1')], [link('D1')], bill);
+    expect((await pushCustomers(deps, { budgetMs: 10_000 })).needsAttention).toBe(1);
+
+    // Merged in Bill.com; the user retries and the PATCH hits a rate limit.
+    bill.customers.splice(bill.customers.findIndex((c) => c.id === '0cuB'), 1);
+    await markPending(deps, ['D1']);
+    const stopped = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(stopped.stoppedReason).toBe('rate_limit');
+    expect(linkRow(sb, 'D1').billcom_customer_id).toBe('0cuA');
+    expect(linkRow(sb, 'D1').last_pushed_hash).toBeNull();
+
+    limitPatch = false;
+    const before = bill.calls.length;
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.unchanged).toBe(0);
+    expect(res.updated).toBe(1);
+    expect(bill.calls.slice(before).some((c) => c.method === 'PATCH' && c.path === '/v3/customers/0cuA')).toBe(true);
+    expect(linkRow(sb, 'D1').status).toBe('synced');
+  });
+
+  it('a linked customer that went blank-name is PATCHed once the name is restored', async () => {
+    const row = bcRow('C2');
+    const bill = fakeBillcom([{ id: '0cuX', archived: false, name: 'Customer C2', accountNumber: 'C2' }]);
+    const { deps, sb } = setup(
+      [row],
+      [link('C2', { billcom_customer_id: '0cuX', status: 'synced', last_pushed_hash: payloadHash(toBillcomCustomer(row), false) })],
+      bill,
+    );
+    sb.tables.business_central_customers[0].display_name = '';
+    await markPending(deps, ['C2']);
+    expect((await pushCustomers(deps, { budgetMs: 10_000 })).needsAttention).toBe(1);
+    expect(linkRow(sb, 'C2').status).toBe('needs_attention');
+
+    sb.tables.business_central_customers[0].display_name = 'Customer C2';
+    await markPending(deps, ['C2']);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.unchanged).toBe(0);
+    expect(res.updated).toBe(1);
+    expect(bill.calls.some((c) => c.method === 'PATCH' && c.path === '/v3/customers/0cuX')).toBe(true);
+  });
+
+  it('clears the stored hash when a vanished Bill.com record is forgotten', async () => {
+    const bill = fakeBillcom([], {
+      failOn: (path) =>
+        path.startsWith('/v3/customers?')
+          ? new BillcomApiError({ status: 504, statusText: 'x', message: 'timeout', url: path })
+          : null,
+    });
+    const { deps, sb } = setup([bcRow('C1')], [link('C1', { billcom_customer_id: '0cuGone', last_pushed_hash: 'old' })], bill);
+    const res = await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(res.stoppedReason).toBe('list_failed');
+    expect(linkRow(sb, 'C1').billcom_customer_id).toBeNull();
+    expect(linkRow(sb, 'C1').last_pushed_hash).toBeNull();
+  });
+});
+
+describe('planInitialPush blank names', () => {
+  it('lists a blank-name customer as needing attention, even when its hash matches', async () => {
+    const blank = bcRow('C1', { display_name: ' ' });
+    const bill = fakeBillcom([{ id: '0cuX', archived: false, name: 'Old', accountNumber: 'C1' }]);
+    const { deps } = setup(
+      [blank, bcRow('C2', { display_name: '' })],
+      [link('C1', { billcom_customer_id: '0cuX', last_pushed_hash: payloadHash(toBillcomCustomer(blank), false) })],
+      bill,
+    );
+    const p = await planInitialPush(deps);
+    expect(p.needsAttention).toEqual([
+      { number: 'C1', reason: 'Add a name in Business Central, then retry.' },
+      { number: 'C2', reason: 'Add a name in Business Central, then retry.' },
+    ]);
+    expect(p.create + p.update + p.link).toBe(0);
+  });
+});
