@@ -10,7 +10,16 @@
 -- Edit could never fix it. saveBillcomConnection cleared the other default
 -- before writing the row, so a failed write left the org with no default.
 --
--- Re-runnable: every statement is create-or-replace, and the grants are restated.
+-- Also closes a credential leak: 024 and 046 revoked the Vault secret
+-- functions only from PUBLIC and anon. Supabase grants EXECUTE on new public
+-- functions directly to `authenticated` too, and revoking from PUBLIC does not
+-- remove a direct grant — so any logged-in user could call
+-- get_billcom_password / get_billcom_dev_key / get_bc_client_secret through the
+-- API and read the plaintext credentials. The block at the end revokes
+-- `authenticated` from every secret function. The app only calls them with the
+-- service-role client, so nothing in Nexus loses access.
+--
+-- Re-runnable: create-or-replace, drop-if-exists, and revoke/grant are all idempotent.
 
 -- One transaction: drop the Vault secrets and the row together, or neither.
 -- Scoped to the org so a caller can only delete its own connection.
@@ -59,6 +68,13 @@ security definer
 set search_path = ''
 as $$
 begin
+  -- Lock every connection in the org first: two admins setting different
+  -- defaults at once then run one after the other instead of the second
+  -- failing on the unique index, and the target cannot be deleted mid-call.
+  perform 1 from public.billcom_connections
+  where organization_id = p_org_id
+  for update;
+
   if not exists (
     select 1 from public.billcom_connections
     where id = p_connection_id and organization_id = p_org_id
@@ -154,15 +170,42 @@ begin
 end;
 $$;
 
--- Lock down: service role only. `create or replace function` does not keep
--- earlier grants, and Postgres grants EXECUTE to PUBLIC on a new function, so
--- this block is required (see 046 for the full reasoning).
+-- Replaced by delete_billcom_connection above; nothing calls it any more.
+drop function if exists public.delete_billcom_secrets(uuid);
+
+-- Lock down: service role only, for every function that touches Vault secrets.
+--
+-- Replacing a function KEEPS its existing grants — including Supabase's
+-- default direct grant to `authenticated`. Revoking from PUBLIC does not remove
+-- that grant, so each role must be named. (046's comment had this backwards,
+-- which is how the gap went unnoticed.)
 revoke all on function public.delete_billcom_connection(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.set_default_billcom_connection(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.set_billcom_dev_key(uuid, text) from public, anon, authenticated;
 revoke all on function public.set_billcom_password(uuid, text) from public, anon, authenticated;
+revoke all on function public.get_billcom_dev_key(uuid) from public, anon, authenticated;
+revoke all on function public.get_billcom_password(uuid) from public, anon, authenticated;
+revoke all on function public.get_bc_client_secret(uuid) from public, anon, authenticated;
+revoke all on function public.set_bc_client_secret(uuid, text) from public, anon, authenticated;
 
 grant execute on function public.delete_billcom_connection(uuid, uuid) to service_role;
 grant execute on function public.set_default_billcom_connection(uuid, uuid) to service_role;
 grant execute on function public.set_billcom_dev_key(uuid, text) to service_role;
 grant execute on function public.set_billcom_password(uuid, text) to service_role;
+grant execute on function public.get_billcom_dev_key(uuid) to service_role;
+grant execute on function public.get_billcom_password(uuid) to service_role;
+grant execute on function public.get_bc_client_secret(uuid) to service_role;
+grant execute on function public.set_bc_client_secret(uuid, text) to service_role;
+
+-- Check afterwards (run separately). Expect NO rows: no secret function may be
+-- executable by anon or authenticated.
+--
+--   select grantee, routine_name
+--   from information_schema.routine_privileges
+--   where routine_schema = 'public'
+--     and grantee in ('anon', 'authenticated', 'PUBLIC')
+--     and routine_name in (
+--       'get_billcom_dev_key', 'get_billcom_password', 'set_billcom_dev_key',
+--       'set_billcom_password', 'delete_billcom_connection',
+--       'set_default_billcom_connection', 'get_bc_client_secret', 'set_bc_client_secret'
+--     );
