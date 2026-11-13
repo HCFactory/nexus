@@ -181,7 +181,9 @@ export function BillcomPushPanel({ pendingCount, ref }: Props) {
 
       {state.kind === "done" && (
         <p className="text-foreground">
-          All {n(state.total)} customer{state.total === 1 ? "" : "s"} sent to Bill.com.
+          {state.total === 0
+            ? "Nothing to send right now."
+            : `All ${n(state.total)} customer${state.total === 1 ? "" : "s"} sent to Bill.com.`}
           {state.failed > 0 && ` ${n(state.failed)} failed.`}
           {state.needsAttention > 0 && ` ${n(state.needsAttention)} need attention.`}
         </p>

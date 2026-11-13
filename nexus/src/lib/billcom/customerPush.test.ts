@@ -635,6 +635,34 @@ describe('final review fixes', () => {
     expect(bill.calls.filter((c) => c.method === 'POST' && c.path === '/v3/customers')).toHaveLength(0);
     expect(linkRow(sb, 'C1').claimed_until).toBe('2999-01-01T00:00:00.000Z');
   });
+
+  it('a lease lost during the linked read means no PATCH', async () => {
+    const bill = fakeBillcom([{ id: '0cuL', archived: false, name: 'Old', accountNumber: 'C1' }]);
+    const { deps, sb } = setup([bcRow('C1')], [link('C1', { billcom_customer_id: '0cuL', last_pushed_hash: 'stale' })], bill);
+    const orig = bill.client.request;
+    bill.client.request = async <T,>(p: string, i?: RequestInit): Promise<T> => {
+      const r = await orig<T>(p, i);
+      if (p === '/v3/customers/0cuL') linkRow(sb, 'C1').claimed_until = '2999-01-01T00:00:00.000Z';
+      return r;
+    };
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(writesToBillcom(bill)).toHaveLength(0);
+    expect(linkRow(sb, 'C1').claimed_until).toBe('2999-01-01T00:00:00.000Z');
+  });
+
+  it('a lease lost while reading a deleted customer means no archive', async () => {
+    const bill = fakeBillcom([{ id: '0cuD', archived: false, name: 'D', accountNumber: 'C9' }]);
+    const { deps, sb } = setup([], [link('C9', { business_central_customer_id: null, billcom_customer_id: '0cuD', last_pushed_hash: 'old' })], bill);
+    const orig = bill.client.request;
+    bill.client.request = async <T,>(p: string, i?: RequestInit): Promise<T> => {
+      const r = await orig<T>(p, i);
+      if (p === '/v3/customers/0cuD') linkRow(sb, 'C9').claimed_until = '2999-01-01T00:00:00.000Z';
+      return r;
+    };
+    await pushCustomers(deps, { budgetMs: 10_000 });
+    expect(writesToBillcom(bill)).toHaveLength(0);
+    expect(linkRow(sb, 'C9').claimed_until).toBe('2999-01-01T00:00:00.000Z');
+  });
 });
 
 describe('live-test fixes: failed links and missing fields', () => {

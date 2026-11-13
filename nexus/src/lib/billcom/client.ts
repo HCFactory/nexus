@@ -14,6 +14,11 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 /** Waits before each GET retry on a transient gateway error (502/503/504). */
 const GATEWAY_RETRY_DELAYS_MS = [1_000, 2_000];
 const GATEWAY_STATUSES = new Set([502, 503, 504]);
+/**
+ * No new GET retry starts once a request has run this long, so one slow
+ * customer stays well inside the push run's 2-minute link lease.
+ */
+const RETRY_WINDOW_MS = 35_000;
 
 export interface StoredSession {
   sessionId: string;
@@ -38,6 +43,8 @@ export interface BillcomClientConfig {
   fetchImpl?: typeof fetch;
   /** Delay between retries; injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
+  /** Clock for the retry window; injectable for tests. */
+  now?: () => number;
 }
 
 export interface BillcomClient {
@@ -72,9 +79,15 @@ function errorFor(details: BillcomErrorDetails): BillcomApiError {
   return new BillcomApiError(details);
 }
 
+function isAbort(err: unknown): boolean {
+  // DOMException is not an Error subclass in every runtime; check the name.
+  return typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError';
+}
+
 export function createBillcomClient(config: BillcomClientConfig): BillcomClient {
   const fetchImpl = config.fetchImpl ?? fetch;
   const sleep = config.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = config.now ?? Date.now;
   const timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const baseUrl = config.apiBaseUrl.replace(/\/+$/, '');
 
@@ -144,34 +157,61 @@ export function createBillcomClient(config: BillcomClientConfig): BillcomClient 
   }
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    let sessionId = await ensureSession();
-    let response = await send(path, init, sessionId);
-
-    // A 401 mid-request means the session died early. Clear it, log in once,
-    // and retry. A second 401 propagates rather than looping.
-    if (response.status === 401) {
-      await response.body?.cancel().catch(() => undefined);
-      await config.sessionStore.clear();
-      sessionId = await login();
-      response = await send(path, init, sessionId);
-    }
-
-    // Retry a GET on a transient gateway error. Never other methods: a
-    // create that timed out at the gateway may still have gone through.
+    const url = `${baseUrl}${path}`;
+    // Retry only GETs on a transient error (gateway 502/503/504 or our own
+    // timeout). Never other methods: a create that timed out may still have
+    // gone through.
     const isGet = (init.method ?? 'GET').toUpperCase() === 'GET';
-    for (const delay of GATEWAY_RETRY_DELAYS_MS) {
-      if (!isGet || !GATEWAY_STATUSES.has(response.status)) break;
-      await response.body?.cancel().catch(() => undefined);
-      await sleep(delay);
-      response = await send(path, init, sessionId);
-    }
+    const started = now();
+    let retries = 0;
+    let reloggedIn = false;
+    let sessionId = await ensureSession();
 
-    if (!response.ok) {
-      throw errorFor(await readErrorDetails(response, `${baseUrl}${path}`));
-    }
+    const canRetry = () =>
+      isGet && retries < GATEWAY_RETRY_DELAYS_MS.length && now() - started < RETRY_WINDOW_MS;
 
-    await config.sessionStore.touch();
-    return (await response.json()) as T;
+    for (;;) {
+      let response: Response;
+      try {
+        response = await send(path, init, sessionId);
+      } catch (err) {
+        if (!isAbort(err)) throw err;
+        if (canRetry()) {
+          await sleep(GATEWAY_RETRY_DELAYS_MS[retries++]);
+          continue;
+        }
+        throw new BillcomApiError({
+          status: 0,
+          statusText: 'Timeout',
+          message: `Bill.com didn't answer within ${Math.round(timeoutMs / 1000)} seconds.`,
+          url,
+        });
+      }
+
+      // A 401 means the session died early — at any point, including after
+      // a gateway retry. Clear it, log in once, and retry. A second 401
+      // propagates rather than looping.
+      if (response.status === 401 && !reloggedIn) {
+        await response.body?.cancel().catch(() => undefined);
+        await config.sessionStore.clear();
+        sessionId = await login();
+        reloggedIn = true;
+        continue;
+      }
+
+      if (GATEWAY_STATUSES.has(response.status) && canRetry()) {
+        await response.body?.cancel().catch(() => undefined);
+        await sleep(GATEWAY_RETRY_DELAYS_MS[retries++]);
+        continue;
+      }
+
+      if (!response.ok) {
+        throw errorFor(await readErrorDetails(response, url));
+      }
+
+      await config.sessionStore.touch();
+      return (await response.json()) as T;
+    }
   }
 
   return { login, request, getSession: () => config.sessionStore.get() };

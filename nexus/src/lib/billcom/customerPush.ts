@@ -407,6 +407,8 @@ export async function pushCustomers(
       if (link.billcom_customer_id && link.last_pushed_hash !== DELETED_HASH) {
         const current = await getBillcomCustomer(deps, link.billcom_customer_id);
         if (current && !current.archived) {
+          // The read can be slow; never write without still holding the lease.
+          if (!(await renewLease(link))) return 'skipped';
           await deps.billcom.request(`/v3/customers/${link.billcom_customer_id}/archive`, { method: 'POST' });
         }
       }
@@ -501,6 +503,9 @@ export async function pushCustomers(
       }
     }
 
+    // The reads above can be slow; never write without still holding the lease.
+    // (A create already renewed just before its POST.)
+    if (outcome !== 'created' && !(await renewLease(link))) return 'skipped';
     if (!archived && current?.archived) {
       await deps.billcom.request(`/v3/customers/${id}/restore`, { method: 'POST' });
     }

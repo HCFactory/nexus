@@ -80,6 +80,15 @@ describe('BillcomPushPanel', () => {
     expect(screen.getByText(/All 1,972 customers sent to Bill.com/)).toBeInTheDocument();
   });
 
+  it('says "Nothing to send" when the run had nothing queued', async () => {
+    actions.runPendingPush.mockResolvedValueOnce({ ok: true, result: result({ remaining: 0 }) });
+    render(<BillcomPushPanel pendingCount={3} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Send 3 waiting customers' }));
+    await flushAll();
+    expect(screen.getByText(/Nothing to send/)).toBeInTheDocument();
+    expect(screen.queryByText(/All 0 customers/)).not.toBeInTheDocument();
+  });
+
   it('waits 60 seconds after a rate limit, then continues', async () => {
     vi.useFakeTimers();
     actions.runPendingPush

@@ -231,5 +231,62 @@ describe('Bill.com client', () => {
       expect(fetchImpl).toHaveBeenCalledTimes(1);
       expect(sleep).not.toHaveBeenCalled();
     });
+
+    it('logs in again when a 401 arrives after a gateway retry', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(gateway())
+        .mockResolvedValueOnce(new Response('', { status: 401 }))
+        .mockResolvedValueOnce(jsonResponse({ sessionId: 'session-2' }))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      const sleep = vi.fn(async () => {});
+      const store = fresh();
+      const client = createBillcomClient({ ...config, sessionStore: store, fetchImpl, sleep });
+
+      expect(await client.request('/v3/customers')).toEqual({ ok: true });
+      expect(store.clear).toHaveBeenCalledTimes(1);
+      expect(String(fetchImpl.mock.calls[2][0])).toContain('/v3/login');
+      expect((fetchImpl.mock.calls[3][1]?.headers as Record<string, string>).sessionId).toBe('session-2');
+    });
+
+    it('retries a GET that times out, then returns the data', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockRejectedValueOnce(new DOMException('This operation was aborted', 'AbortError'))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      const sleep = vi.fn(async () => {});
+      const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep });
+
+      expect(await client.request('/v3/customers')).toEqual({ ok: true });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('never retries a POST that times out, and says Bill.com did not answer', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockRejectedValue(new DOMException('This operation was aborted', 'AbortError'));
+      const sleep = vi.fn(async () => {});
+      const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep });
+
+      await expect(client.request('/v3/customers', { method: 'POST', body: '{}' })).rejects.toThrow(
+        /didn't answer within 30 seconds/,
+      );
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops retrying once the request has run 35 seconds, so one slow customer cannot outlast its lease', async () => {
+      let clock = 0;
+      const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => {
+        clock += 30_000; // each attempt takes the full timeout
+        return gateway();
+      });
+      const sleep = vi.fn(async (ms: number) => {
+        clock += ms;
+      });
+      const client = createBillcomClient({ ...config, sessionStore: fresh(), fetchImpl, sleep, now: () => clock });
+
+      await expect(client.request('/v3/customers')).rejects.toMatchObject({ details: { status: 504 } });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
   });
 });
