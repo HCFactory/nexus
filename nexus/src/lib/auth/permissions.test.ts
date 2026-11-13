@@ -120,3 +120,35 @@ describe('canEditCustomers permission', () => {
     expect(access.canViewCustomers).toBe(false);
   });
 });
+
+describe('sales order permissions', () => {
+  it('is true for admins and false by default for others', () => {
+    const admin = resolveUserAccess({ role: 'admin', permissions: null });
+    const user = resolveUserAccess({ role: 'user', permissions: null });
+    expect(admin.canViewSalesOrders).toBe(true);
+    expect(admin.canEditSalesOrders).toBe(true);
+    expect(user.canViewSalesOrders).toBe(false);
+    expect(user.canEditSalesOrders).toBe(false);
+  });
+
+  it('turns both on with both overrides', () => {
+    const access = resolveUserAccess({
+      role: 'user',
+      permissions: {
+        functionalRoles: DEFAULT_FUNCTIONAL_ROLES,
+        overrides: { editSalesOrders: true, viewSalesOrders: true },
+      },
+    });
+    expect(access.canViewSalesOrders).toBe(true);
+    expect(access.canEditSalesOrders).toBe(true);
+  });
+
+  it('edit override alone does not grant view', () => {
+    const access = resolveUserAccess({
+      role: 'user',
+      permissions: { functionalRoles: DEFAULT_FUNCTIONAL_ROLES, overrides: { editSalesOrders: true } },
+    });
+    expect(access.canEditSalesOrders).toBe(true);
+    expect(access.canViewSalesOrders).toBe(false);
+  });
+});
