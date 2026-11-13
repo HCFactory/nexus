@@ -1,0 +1,78 @@
+import '@testing-library/jest-dom/vitest';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SalesOrderItemOption } from '@/app/actions/salesOrders';
+import type { LineDraft } from '@/types/salesOrders';
+import { SalesOrderLinesTable } from './SalesOrderLinesTable';
+
+vi.mock('@/app/actions/salesOrders', () => ({}));
+vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+
+const items: SalesOrderItemOption[] = [
+  { bc_item_number: 'P100', display_name: 'Pesto sauce', unit_price: 12.5, base_unit_of_measure_code: 'CASE' },
+  { bc_item_number: 'M200', display_name: 'Marinara', unit_price: 8, base_unit_of_measure_code: 'EA' },
+];
+const line = (over: Partial<LineDraft> = {}): LineDraft => ({
+  key: 'k1', id: 'l1', item_number: 'P100', description: 'Pesto sauce', quantity: 2, unit_price: null,
+  discount_percent: 0, unit_of_measure_code: 'CASE', amount_incl_tax: null, estimate_price: 12.5, ...over,
+});
+afterEach(cleanup);
+
+const setup = (lines: LineDraft[], locked = false) => {
+  const onChange = vi.fn();
+  render(<SalesOrderLinesTable lines={lines} items={items} locked={locked} onChange={onChange} />);
+  return onChange;
+};
+
+describe('SalesOrderLinesTable', () => {
+  it('shows the exact headers', () => {
+    setup([]);
+    for (const h of ['Item', 'Qty', 'Unit price', 'Disc %', 'Amount incl. tax']) {
+      expect(screen.getByText(h)).toBeInTheDocument();
+    }
+  });
+
+  it('always ends with one blank row; picking an item adds a line', () => {
+    const onChange = setup([line()]);
+    expect(screen.getAllByPlaceholderText('Add item…')).toHaveLength(1);
+    fireEvent.click(screen.getByPlaceholderText('Add item…'));
+    expect(screen.getByText('P100 – Pesto sauce')).toBeInTheDocument();
+    expect(screen.getByText('M200 – Marinara')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Add item…'), { target: { value: 'pesto' } });
+    expect(screen.queryByText('M200 – Marinara')).toBeNull();
+    fireEvent.click(screen.getByText('P100 – Pesto sauce'));
+    const next = onChange.mock.calls[0][0] as LineDraft[];
+    expect(next).toHaveLength(2);
+    expect(next[1]).toMatchObject({
+      item_number: 'P100', quantity: 1, unit_of_measure_code: 'CASE', estimate_price: 12.5, unit_price: null,
+    });
+    expect(next[1].key).toBeTruthy();
+    expect(next[1].id).toBeUndefined();
+  });
+
+  it('shows the estimate with (est.) when price is blank, and typing sets the price', () => {
+    const onChange = setup([line()]);
+    expect(screen.getByText('12.50 (est.)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Unit price'), { target: { value: '9.75' } });
+    expect((onChange.mock.calls[0][0] as LineDraft[])[0].unit_price).toBe(9.75);
+  });
+
+  it('amount incl. tax is read-only and shows a dash when null', () => {
+    setup([line()]);
+    expect(screen.getByText('—')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Amount incl. tax')).toBeNull();
+  });
+
+  it('delete removes the line', () => {
+    const onChange = setup([line(), line({ key: 'k2', id: 'l2', item_number: 'M200' })]);
+    fireEvent.click(within(screen.getAllByRole('row')[1]).getByLabelText('Remove line'));
+    expect((onChange.mock.calls[0][0] as LineDraft[]).map((l) => l.key)).toEqual(['k2']);
+  });
+
+  it('locked disables inputs and hides the blank row', () => {
+    setup([line()], true);
+    expect(screen.queryByPlaceholderText('Add item…')).toBeNull();
+    for (const el of screen.getAllByRole('spinbutton')) expect(el).toBeDisabled();
+    expect(screen.getByLabelText('Remove line')).toBeDisabled();
+  });
+});
