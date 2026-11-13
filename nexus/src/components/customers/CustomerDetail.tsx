@@ -17,6 +17,9 @@ import {
 } from "@/types/database";
 import { CustomerForm, customerFormValues } from "./CustomerForm";
 import { DELETE_CONFIRM } from "./CustomersClient";
+import { ShipToSection } from "./ShipToSection";
+import type { ShipToOptions } from "./ShipToDialog";
+import type { ShipToRow } from "@/types/salesOrders";
 import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
 
 interface CustomerDetailProps {
@@ -26,7 +29,12 @@ interface CustomerDetailProps {
   edit?: CustomerEditContext;
   /** Bill.com link status for this customer; omitted or off = hidden. */
   billcom?: BillcomCustomerView;
+  /** Saved ship-to addresses (empty/omitted hides nothing; the section still shows). */
+  shipTos?: ShipToRow[];
+  shipToOptions?: ShipToOptions;
 }
+
+const NO_SHIP_TO_OPTIONS: ShipToOptions = { taxAreas: [], locations: [], shipmentMethods: [] };
 
 function ReadonlyField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -56,7 +64,7 @@ function FieldCard({
   );
 }
 
-export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom }: CustomerDetailProps) {
+export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom, shipTos = [], shipToOptions = NO_SHIP_TO_OPTIONS }: CustomerDetailProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -168,10 +176,23 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billco
             <ReadonlyField label="Email" value={customer.email ?? "—"} />
             <ReadonlyField label="Phone" value={customer.phone_number ?? "—"} />
             <ReadonlyField label="Website" value={customer.website ?? "—"} />
+          </FieldCard>
+
+          <FieldCard title="Billing address">
             <ReadonlyField label="Address" value={address || "—"} />
             <ReadonlyField label="City / State / Postal" value={cityLine || "—"} />
             <ReadonlyField label="Country" value={customer.country ?? "—"} />
           </FieldCard>
+
+          {number && (
+            <ShipToSection
+              customerNumber={number}
+              defaultCode={(customer as { ship_to_code?: string | null }).ship_to_code ?? ""}
+              rows={shipTos}
+              canEdit={canEdit}
+              options={shipToOptions}
+            />
+          )}
 
           {billcom?.on && (
             <div className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">

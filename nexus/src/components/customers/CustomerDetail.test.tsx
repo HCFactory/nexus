@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BusinessCentralCustomer } from '@/types/database';
 import { CustomerDetail } from './CustomerDetail';
@@ -9,6 +9,7 @@ const bc = vi.hoisted(() => ({ retryCustomerPush: vi.fn() }));
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/app/actions/customerEditing', () => actions);
 vi.mock('@/app/actions/billcomCustomers', () => bc);
+vi.mock('@/app/actions/shipToAddresses', () => ({ saveShipToAction: vi.fn(), deleteShipToAction: vi.fn(), setDefaultShipToAction: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => nav }));
 
 const customer = { id: 'c1', display_name: 'Acme', bc_customer_number: 'C1', balance: 0 } as unknown as BusinessCentralCustomer;
@@ -52,5 +53,13 @@ describe('CustomerDetail Bill.com', () => {
   it('shows nothing about Bill.com when it is off', () => {
     renderDetail(billcom({ on: false }));
     expect(screen.queryByText(/Bill.com/)).toBeNull();
+  });
+});
+
+describe('CustomerDetail billing address', () => {
+  it('shows the address fields under a Billing address heading', () => {
+    renderDetail(billcom());
+    const card = screen.getByText('Billing address').closest('div')!;
+    for (const l of ['Address', 'City / State / Postal', 'Country']) expect(within(card.parentElement!).getByText(l)).toBeInTheDocument();
   });
 });

@@ -33,6 +33,8 @@ const CREATE_FIELD_NAMES = [
 ];
 const CREATE_FIELDS: FieldSpec[] = CUSTOMER_FIELDS.filter((f) => CREATE_FIELD_NAMES.includes(f.name));
 
+const ADDRESS_FIELD_NAMES = ['address_line_1', 'address_line_2', 'city', 'state', 'postal_code', 'country'];
+
 const SELECT_CLASS =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50';
 
@@ -121,19 +123,29 @@ export function CustomerForm({ customer, templates, selectOptions, onDone, onCan
           <p className="text-xs text-foreground-muted">The template fills in posting groups, tax and other settings.</p>
         </div>
       )}
-      <div className="grid gap-3 sm:grid-cols-2">
-        {fields.map((f) => (
-          <FieldInput
-            key={f.name}
-            idPrefix="customer"
-            field={f}
-            value={raw[f.name]}
-            options={optionsFor(f, selectOptions)}
-            disabled={pending}
-            onChange={(v) => setRaw((cur) => ({ ...cur, [f.name]: v }))}
-          />
-        ))}
-      </div>
+      {[
+        { title: null, list: fields.filter((f) => !ADDRESS_FIELD_NAMES.includes(f.name)) },
+        { title: 'Billing address', list: fields.filter((f) => ADDRESS_FIELD_NAMES.includes(f.name)) },
+      ].map(({ title, list }) =>
+        list.length === 0 ? null : (
+          <div key={title ?? 'main'} className="space-y-2">
+            {title && <h4 className="text-sm font-semibold text-foreground">{title}</h4>}
+            <div className="grid gap-3 sm:grid-cols-2">
+              {list.map((f) => (
+                <FieldInput
+                  key={f.name}
+                  idPrefix="customer"
+                  field={f}
+                  value={raw[f.name]}
+                  options={optionsFor(f, selectOptions)}
+                  disabled={pending}
+                  onChange={(v) => setRaw((cur) => ({ ...cur, [f.name]: v }))}
+                />
+              ))}
+            </div>
+          </div>
+        ),
+      )}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
           {pending ? 'Saving…' : customer ? 'Save changes' : 'Create customer'}

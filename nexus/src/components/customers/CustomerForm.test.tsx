@@ -108,3 +108,13 @@ describe('edit mode', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('BC said no');
   });
 });
+
+describe('billing address', () => {
+  it('groups the address fields under a Billing address heading', () => {
+    render(<CustomerForm customer={{ id: 'c1', values: {} }} templates={templates} selectOptions={selectOptions} onDone={vi.fn()} onCancel={vi.fn()} />);
+    const group = screen.getByRole('heading', { name: 'Billing address' }).parentElement!;
+    for (const id of ['customer-address_line_1', 'customer-address_line_2', 'customer-city', 'customer-state', 'customer-postal_code', 'customer-country']) {
+      expect(group.querySelector(`#${id}`)).not.toBeNull();
+    }
+  });
+});
