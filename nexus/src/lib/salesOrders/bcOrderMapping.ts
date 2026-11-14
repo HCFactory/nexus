@@ -18,6 +18,22 @@ export const SALES_LINE_SOURCE: ReferenceSource = {
   integerKeyFields: ['Line_No'],
 }
 
+/**
+ * The Sales Header through the published table-based `salesDocuments` OData
+ * service (key `id` = SystemId, camelCase fields). Page 42 keeps Ship_to_*
+ * read-only unless its ShippingOptions page variable is set, which OData
+ * can't do (measured on TEST), so the ship-to is written here instead.
+ * Same record as SalesOrder: a patch here changes the SalesOrder etag.
+ * pageNumber 0: a table-based service has no page.
+ */
+export const SALES_DOCUMENT_SOURCE: ReferenceSource = {
+  kind: 'odata',
+  service: 'salesDocuments',
+  pageNumber: 0,
+  keyFields: ['id'],
+  guidKeyFields: ['id'],
+}
+
 export function createMarker(orderId: string): string {
   return 'NX-' + orderId.replace(/-/g, '').slice(0, 12).toUpperCase()
 }
@@ -31,9 +47,19 @@ export function toBcCreate(order: SalesOrderRow, marker: string): Record<string,
   }
 }
 
-/** Sent first: validating Ship_to_Code refills address, tax area and location in BC. */
-export function toBcShipToPatch(order: SalesOrderRow): Record<string, unknown> {
-  return { Ship_to_Code: order.ship_to_code ? order.ship_to_code : '' }
+/** The ship-to address (one-off or billing copy) in salesDocuments field names. */
+export function toSalesDocShipToAddress(order: SalesOrderRow): Record<string, unknown> {
+  return {
+    shipToName: order.ship_to_name,
+    shipToAddress: order.ship_to_address,
+    shipToAddress2: order.ship_to_address_2,
+    shipToCity: order.ship_to_city,
+    shipToCounty: order.ship_to_state,
+    shipToPostCode: order.ship_to_post_code,
+    shipToCountryRegionCode: order.ship_to_country,
+    shipToContact: order.ship_to_contact,
+    shipToPhoneNo: order.ship_to_phone,
+  }
 }
 
 export function toBcHeaderPatch(order: SalesOrderRow, bcNumber: string): Record<string, unknown> {
@@ -51,15 +77,9 @@ export function toBcHeaderPatch(order: SalesOrderRow, bcNumber: string): Record<
     SellToMobilePhoneNo: order.bill_mobile,
     Sell_to_E_Mail: order.bill_email,
     EMailCCHCABG: order.bill_email_cc,
-    Ship_to_Name: order.ship_to_name,
-    Ship_to_Address: order.ship_to_address,
-    Ship_to_Address_2: order.ship_to_address_2,
-    Ship_to_City: order.ship_to_city,
-    Ship_to_County: order.ship_to_state,
-    Ship_to_Post_Code: order.ship_to_post_code,
-    Ship_to_Country_Region_Code: order.ship_to_country,
-    Ship_to_Contact: order.ship_to_contact,
-    Ship_to_Phone_No: order.ship_to_phone,
+    // No Ship_to_* here: read-only on page 42, written through salesDocuments
+    // first. Tax area, location and shipment method stay here, after the
+    // ship-to step, so Nexus's values win over what the ship-to refilled.
     Payment_Terms_Code: order.payment_terms_code,
     Tax_Area_Code: order.tax_area_code,
     Tax_Liable: order.tax_liable,

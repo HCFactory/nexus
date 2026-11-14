@@ -92,6 +92,25 @@ describe('reference transport', () => {
     await expect(transport.get(source, { values: { Line_No: "1) or (1" } })).rejects.toThrow('Integer key value expected');
   });
 
+  it('odata guid key fields are written unquoted', async () => {
+    const source = { kind: 'odata' as const, service: 'salesDocuments', pageNumber: 0, keyFields: ['id'], guidKeyFields: ['id'] };
+    const { transport, calls } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await transport.patch(source, { values: { id: '1603575e-1c2b-4d3e-8f90-0123456789ab' } }, 'W/"1"', { shipToCode: 'WH1' });
+    expect(calls[0].url).toMatch(/\/salesDocuments\(1603575e-1c2b-4d3e-8f90-0123456789ab\)$/);
+  });
+
+  it('odata guid key rejects a non-guid value', async () => {
+    const source = { kind: 'odata' as const, service: 'salesDocuments', pageNumber: 0, keyFields: ['id'], guidKeyFields: ['id'] };
+    const { transport } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await expect(transport.get(source, { values: { id: "x') or ('1" } })).rejects.toThrow('GUID key value expected');
+  });
+
+  it('a guid-looking value in a non-guid key field stays quoted', async () => {
+    const { transport, calls } = setup([json({ Code: 'x', '@odata.etag': 'W/"1"' })]);
+    await transport.get(odataSource, { values: { Code: '1603575e-1c2b-4d3e-8f90-0123456789ab' } });
+    expect(calls[0].url).toContain("CustomerPriceGroups('1603575e-1c2b-4d3e-8f90-0123456789ab')");
+  });
+
   it('odata composite key with date', async () => {
     const source = { kind: 'odata' as const, service: 'TaxDetails', pageNumber: 468, keyFields: ['Tax_Jurisdiction_Code', 'Tax_Group_Code', 'Tax_Type', 'Effective_Date'] };
     const { transport, calls } = setup([json({ '@odata.etag': 'W/"1"' })]);

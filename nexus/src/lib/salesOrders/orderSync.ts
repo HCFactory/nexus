@@ -15,6 +15,7 @@ import { BcReferenceError } from '@/lib/businessCentral/customerReferences/error
 import type { BcKey, BcRecord, ReferenceTransport } from '@/lib/businessCentral/customerReferences/transport'
 import type { SalesOrderLineRow, SalesOrderRow, SyncState } from '@/types/salesOrders'
 import {
+  SALES_DOCUMENT_SOURCE,
   SALES_LINE_SOURCE,
   SALES_ORDER_SOURCE,
   bcChangedOutsideNexus,
@@ -24,7 +25,7 @@ import {
   toBcCreate,
   toBcHeaderPatch,
   toBcLine,
-  toBcShipToPatch,
+  toSalesDocShipToAddress,
 } from './bcOrderMapping'
 import { isUnfinishedSave } from './saveMarker'
 
@@ -238,15 +239,17 @@ export async function syncSalesOrder(
     }
 
     // Step 4: customer first (BC refills its defaults; measured: works on an
-    // order with lines and keeps them), then ship-to (BC refills
-    // address/tax/location from it), then the header, whose Nexus values
-    // overwrite whatever BC refilled.
+    // order with lines and keeps them), then the ship-to through
+    // salesDocuments (page 42 keeps Ship_to_* read-only), then the header,
+    // whose Nexus values (tax area, location, shipment method...) overwrite
+    // whatever BC refilled.
     if (String(bcHeader.fields.Sell_to_Customer_No ?? '') !== order.customer_number) {
       await patchHeader({ Sell_to_Customer_No: order.customer_number })
     }
-    const shipToCode = await shipToCodeToSend(deps, order)
-    if (shipToCode !== String(bcHeader.fields.Ship_to_Code ?? '')) {
-      await patchHeader(toBcShipToPatch({ ...order, ship_to_code: shipToCode }))
+    if (await syncShipTo(deps, order, no)) {
+      // Same record: the salesDocuments write changed the SalesOrder etag.
+      bcHeader = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
+      await updateOrder(deps, order.id, { bc_etag: bcHeader.etag })
     }
     await patchHeader(toBcHeaderPatch(order, no))
 
@@ -385,6 +388,38 @@ export async function syncSalesOrder(
     })
     return 'failed'
   }
+}
+
+/**
+ * Writes the order's ship-to through the salesDocuments service (read once
+ * per sync, after any customer switch). A saved code that still exists is
+ * sent alone (BC fills the address from it); otherwise the code is made ''
+ * and the one-off / billing-copy address fields that differ are sent.
+ * Returns true when anything was written.
+ */
+async function syncShipTo(deps: OrderSyncDeps, order: SalesOrderRow, no: string): Promise<boolean> {
+  const found = await deps.transport.list(SALES_DOCUMENT_SOURCE, {
+    filter: `documentType eq 'Order' and number eq ${quote(no)}`,
+  })
+  let doc = found[0]
+  if (!doc) throw new Error(`BC salesDocuments has no row for order ${no}`)
+  const docKey: BcKey = { values: { id: String(doc.fields.id ?? '') } }
+  let wrote = false
+  const patchDoc = async (fields: Record<string, unknown>) => {
+    doc = await deps.transport.patch(SALES_DOCUMENT_SOURCE, docKey, doc.etag, fields)
+    wrote = true
+  }
+
+  const code = await shipToCodeToSend(deps, order)
+  const current = String(doc.fields.shipToCode ?? '')
+  if (code !== '') {
+    if (code !== current) await patchDoc({ shipToCode: code })
+    return wrote
+  }
+  if (current !== '') await patchDoc({ shipToCode: '' })
+  const diff = changedLineFields(toSalesDocShipToAddress(order), doc.fields)
+  if (Object.keys(diff).length > 0) await patchDoc(diff)
+  return wrote
 }
 
 /** A 404 counts as already removed only when a re-list confirms the line is gone. */

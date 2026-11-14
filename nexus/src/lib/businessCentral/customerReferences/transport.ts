@@ -11,6 +11,8 @@ export type ReferenceSource =
       keyFields: string[];
       /** Key fields that are Integer in BC; written unquoted in key predicates (e.g. Line_No=10000). */
       integerKeyFields?: string[];
+      /** Key fields that are GUIDs (e.g. a SystemId `id`); written unquoted, e.g. salesDocuments(1603575e-...). */
+      guidKeyFields?: string[];
     };
 
 export type BcKey = { bcId: string } | { values: Record<string, string> };
@@ -38,8 +40,13 @@ function trimTrailingSlash(value: string): string {
 }
 
 const INTEGER_RE = /^-?\d+$/;
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function quoteKeyValue(value: string, integer = false): string {
+function quoteKeyValue(value: string, integer = false, guid = false): string {
+  if (guid) {
+    if (!GUID_RE.test(value)) throw new Error(`GUID key value expected, got "${value}"`);
+    return value;
+  }
   if (integer) {
     if (!INTEGER_RE.test(value)) throw new Error(`Integer key value expected, got "${value}"`);
     return value;
@@ -89,7 +96,8 @@ export function createReferenceTransport(
       return v;
     };
     const ints = new Set(source.integerKeyFields ?? []);
-    const q = (n: string) => quoteKeyValue(value(n), ints.has(n));
+    const guids = new Set(source.guidKeyFields ?? []);
+    const q = (n: string) => quoteKeyValue(value(n), ints.has(n), guids.has(n));
     if (names.length === 1) return `${root}(${q(names[0])})`;
     return `${root}(${names.map((n) => `${n}=${q(n)}`).join(',')})`;
   }

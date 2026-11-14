@@ -4,9 +4,10 @@ import type { SalesOrderRow, SalesOrderLineRow } from '@/types/salesOrders'
 import {
   SALES_ORDER_SOURCE,
   SALES_LINE_SOURCE,
+  SALES_DOCUMENT_SOURCE,
   createMarker,
   toBcCreate,
-  toBcShipToPatch,
+  toSalesDocShipToAddress,
   toBcHeaderPatch,
   toBcLine,
   readBack,
@@ -56,19 +57,24 @@ describe('sources and marker', () => {
     expect(SALES_ORDER_SOURCE).toEqual({ kind: 'odata', service: 'SalesOrder', pageNumber: 42, keyFields: ['Document_Type', 'No'] })
     expect(SALES_LINE_SOURCE).toEqual({ kind: 'odata', service: 'SalesOrderSalesLines', pageNumber: 46, keyFields: ['Document_Type', 'Document_No', 'Line_No'], integerKeyFields: ['Line_No'] })
   })
+  it('declares the salesDocuments source with a GUID id key', () => {
+    expect(SALES_DOCUMENT_SOURCE).toMatchObject({ kind: 'odata', service: 'salesDocuments', keyFields: ['id'], guidKeyFields: ['id'] })
+  })
   it('builds the marker', () => {
     expect(createMarker('abcdef12-3456-7890-abcd-ef1234567890')).toBe('NX-ABCDEF123456')
   })
 })
 
-describe('toBcCreate / toBcShipToPatch', () => {
+describe('toBcCreate / toSalesDocShipToAddress', () => {
   it('creates with marker', () => {
     expect(toBcCreate(order(), 'NX-ABCDEF123456')).toEqual({ Document_Type: 'Order', Sell_to_Customer_No: 'C100', External_Document_No: 'NX-ABCDEF123456' })
     expect(toBcCreate(order(), 'NX-OTHER').External_Document_No).toBe('NX-OTHER')
   })
-  it('ship-to patch', () => {
-    expect(toBcShipToPatch(order())).toEqual({ Ship_to_Code: 'WH1' })
-    expect(toBcShipToPatch(order({ ship_to_code: '' }))).toEqual({ Ship_to_Code: '' })
+  it('ship-to address in salesDocuments (camelCase) field names', () => {
+    expect(toSalesDocShipToAddress(order())).toEqual({
+      shipToName: 'sn', shipToAddress: 'sa', shipToAddress2: 'sa2', shipToCity: 'sc', shipToCounty: 'ss',
+      shipToPostCode: 'sp', shipToCountryRegionCode: 'CA', shipToContact: 'sct', shipToPhoneNo: 'sph',
+    })
   })
 })
 
@@ -79,12 +85,12 @@ describe('toBcHeaderPatch', () => {
       Sell_to_Address: 'a1', Sell_to_Address_2: 'a2', Sell_to_City: 'bc', Sell_to_County: 'bs',
       Sell_to_Post_Code: 'bp', Sell_to_Country_Region_Code: 'US', Sell_to_Contact_No: 'CT1',
       Sell_to_Phone_No: 'ph', SellToMobilePhoneNo: 'mo', Sell_to_E_Mail: 'e@x.com', EMailCCHCABG: 'cc@x.com',
-      Ship_to_Name: 'sn', Ship_to_Address: 'sa', Ship_to_Address_2: 'sa2', Ship_to_City: 'sc',
-      Ship_to_County: 'ss', Ship_to_Post_Code: 'sp', Ship_to_Country_Region_Code: 'CA',
-      Ship_to_Contact: 'sct', Ship_to_Phone_No: 'sph',
       Payment_Terms_Code: 'NET30', Tax_Area_Code: 'TX', Tax_Liable: true, Gen_Bus_Posting_Group: 'DOM',
       Customer_Posting_Group: 'CP', Shipment_Method_Code: 'UPS', Location_Code: 'MAIN',
     })
+  })
+  it('sends no Ship_to_* field (read-only on page 42; they go through salesDocuments)', () => {
+    expect(Object.keys(toBcHeaderPatch(order(), 'SO-1')).filter((k) => k.startsWith('Ship_to_'))).toEqual([])
   })
   it('uses invoice number when present', () => {
     expect(toBcHeaderPatch(order({ invoice_number: 'INV-9' }), 'SO-1001').External_Document_No).toBe('INV-9')
@@ -95,7 +101,7 @@ describe('toBcHeaderPatch', () => {
     expect(p).toHaveProperty('Location_Code', '')
   })
   it('never sends customer PO or notes', () => {
-    const outs = [toBcCreate(order(), 'NX-1'), toBcShipToPatch(order()), toBcHeaderPatch(order(), 'SO-1'), toBcLine('SO-1', line(), 'MAIN')]
+    const outs = [toBcCreate(order(), 'NX-1'), toSalesDocShipToAddress(order()), toBcHeaderPatch(order(), 'SO-1'), toBcLine('SO-1', line(), 'MAIN')]
     for (const o of outs) {
       const json = JSON.stringify(o)
       for (const k of ['Customer_PO', 'notes', 'customer_po', 'PO-SECRET', 'NOTE-SECRET']) expect(json).not.toContain(k)

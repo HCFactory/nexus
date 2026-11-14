@@ -55,12 +55,38 @@ function fakeBc() {
   const nextLineNo = new Map<string, number>()
   /** Ship-to addresses that exist in BC, as `Customer_No|Code`. */
   const shipTos = new Set<string>(['C100|WH1', 'C200|WH1'])
+  /** salesDocuments ids (the Sales Header SystemId), by order No; assigned on first use. */
+  const ids = new Map<string, string>()
+  const idFor = (no: string) => {
+    if (!ids.has(no)) ids.set(no, `00000000-0000-4000-8000-${String(ids.size + 1).padStart(12, '0')}`)
+    return ids.get(no)!
+  }
+  const isDoc = (s: ReferenceSource) => s.kind === 'odata' && s.service === 'salesDocuments'
+  /** salesDocuments camelCase field -> SalesOrder page field (same Sales Header record). */
+  const DOC_FIELDS: Record<string, string> = {
+    shipToCode: 'Ship_to_Code', shipToName: 'Ship_to_Name', shipToAddress: 'Ship_to_Address',
+    shipToAddress2: 'Ship_to_Address_2', shipToCity: 'Ship_to_City', shipToCounty: 'Ship_to_County',
+    shipToPostCode: 'Ship_to_Post_Code', shipToCountryRegionCode: 'Ship_to_Country_Region_Code',
+    shipToContact: 'Ship_to_Contact', shipToPhoneNo: 'Ship_to_Phone_No',
+  }
+  /** The salesDocuments view of a header. Its etag moves with the header's (same record). */
+  const docView = (no: string): BcRecord => {
+    const h = headers.get(no)!
+    const fields: Record<string, unknown> = { id: idFor(no), documentType: 'Order', number: no }
+    for (const [camel, pascal] of Object.entries(DOC_FIELDS)) fields[camel] = h.fields[pascal] ?? ''
+    return { key: { values: { id: idFor(no) } }, etag: `D-${h.etag}`, fields }
+  }
+  const noForId = (id: string) => [...ids].find(([, v]) => v === id)?.[0]
   /** Called before every transport call; throw from it to make that call fail. */
   const hooks: { before?: (method: string, source: ReferenceSource, arg: unknown) => void } = {}
   const etag = () => `W/"e${etagN++}"`
   const isLine = (s: ReferenceSource) => s.kind === 'odata' && s.service === 'SalesOrderSalesLines'
   const keyOf = (s: ReferenceSource, k: BcKey) => {
     if (!('values' in k)) throw new Error('expected values key')
+    if (isDoc(s)) {
+      expect(s.kind === 'odata' && s.guidKeyFields).toEqual(['id'])
+      return k.values.id
+    }
     expect(k.values.Document_Type).toBe('Order')
     if (isLine(s)) {
       expect(typeof k.values.Line_No).toBe('string')
@@ -90,6 +116,11 @@ function fakeBc() {
     list: vi.fn(async (s: ReferenceSource, opts: { filter?: string } = {}) => {
       hooks.before?.('list', s, opts)
       const f = opts.filter ?? ''
+      if (isDoc(s)) {
+        expect(f).toContain("documentType eq 'Order'")
+        const m = /number eq '([^']+)'/.exec(f)
+        return m && headers.has(m[1]) ? [docView(m[1])] : []
+      }
       if (isLine(s)) {
         const m = /Document_No eq '([^']+)'/.exec(f)
         return [...lines.values()].filter((l) => !m || l.fields.Document_No === m[1]).map(withTotals)
@@ -99,6 +130,11 @@ function fakeBc() {
     }),
     get: vi.fn(async (s: ReferenceSource, key: BcKey) => {
       hooks.before?.('get', s, key)
+      if (isDoc(s)) {
+        const no = noForId(keyOf(s, key))
+        if (!no || !headers.has(no)) throw new BcReferenceError(404, 'not found')
+        return docView(no)
+      }
       const r = store(s).get(keyOf(s, key))
       if (!r) throw new BcReferenceError(404, 'not found')
       return r
@@ -126,6 +162,31 @@ function fakeBc() {
     }),
     patch: vi.fn(async (s: ReferenceSource, key: BcKey, e: string, fields: Record<string, unknown>) => {
       hooks.before?.('patch', s, fields)
+      if (isDoc(s)) {
+        // Real BC (TEST, measured): salesDocuments accepts shipToCode (BC fills
+        // the address from the ship-to; '' fills it from the customer) and the
+        // ship-to address fields. Same record as SalesOrder: its etag changes.
+        const no = noForId(keyOf(s, key))
+        const h = no ? headers.get(no) : undefined
+        if (!no || !h) throw new BcReferenceError(404, 'not found')
+        if (`D-${h.etag}` !== e) throw new BcConflictError()
+        let next = { ...h.fields }
+        if ('shipToCode' in fields) {
+          const code = String(fields.shipToCode)
+          if (code !== '' && !shipTos.has(`${h.fields.Sell_to_Customer_No}|${code}`)) {
+            throw new BcReferenceError(400, 'The Ship-to Address does not exist.')
+          }
+          next = code === ''
+            ? { ...next, Ship_to_Name: 'CUST NAME', Ship_to_Address: 'cust st', Ship_to_City: 'cust city' }
+            : { ...next, Ship_to_Name: `${code} name`, Ship_to_Address: `${code} st`, Ship_to_City: `${code} city` }
+        }
+        for (const [camel, v] of Object.entries(fields)) {
+          if (!(camel in DOC_FIELDS)) throw new BcReferenceError(400, `unexpected salesDocuments field ${camel}`)
+          next[DOC_FIELDS[camel]] = v
+        }
+        headers.set(no, { ...h, etag: etag(), fields: next })
+        return docView(no)
+      }
       const k = keyOf(s, key)
       const r = store(s).get(k)
       if (!r) throw new BcReferenceError(404, 'not found')
@@ -137,10 +198,10 @@ function fakeBc() {
         if ('Sell_to_Customer_No' in fields && fields.Sell_to_Customer_No !== r.fields.Sell_to_Customer_No) {
           base = { ...base, Ship_to_Code: '', Payment_Terms_Code: 'BC-DEFAULT', Location_Code: 'BC-LOC', Tax_Area_Code: 'BC-TAX' }
         }
-        if ('Ship_to_Code' in fields && fields.Ship_to_Code !== '') {
-          const cust = String(fields.Sell_to_Customer_No ?? base.Sell_to_Customer_No)
-          if (!shipTos.has(`${cust}|${fields.Ship_to_Code}`)) throw new BcReferenceError(400, 'The Ship-to Address does not exist.')
-        }
+        // Real BC (TEST, measured): on page 42 every Ship_to_* field is read-only
+        // (ShippingOptions can't be set through OData).
+        const ro = Object.keys(fields).find((f) => f.startsWith('Ship_to_'))
+        if (ro) throw new BcReferenceError(400, `Control '${ro}' is read-only`)
       }
       const next = { ...r, etag: etag(), fields: { ...base, ...fields } }
       store(s).set(k, next)
@@ -209,7 +270,9 @@ const lineRow = (id: string) => tables.sales_order_lines.find((r) => r.id === id
 const isLineSource = (s: ReferenceSource) => s.kind === 'odata' && s.service === 'SalesOrderSalesLines'
 const lineCreates = () => bc.t.create.mock.calls.filter(([s]) => isLineSource(s))
 const headerCreates = () => bc.t.create.mock.calls.filter(([s]) => !isLineSource(s))
-const headerPatches = () => bc.t.patch.mock.calls.filter(([s]) => !isLineSource(s))
+const isDocSource = (s: ReferenceSource) => s.kind === 'odata' && s.service === 'salesDocuments'
+const headerPatches = () => bc.t.patch.mock.calls.filter(([s]) => !isLineSource(s) && !isDocSource(s))
+const docPatches = () => bc.t.patch.mock.calls.filter(([s]) => isDocSource(s))
 
 function setup(o: SalesOrderRow, ls: SalesOrderLineRow[]) {
   tables = {
@@ -250,7 +313,7 @@ beforeEach(() => {
 })
 
 describe('syncSalesOrder: first sync', () => {
-  it('creates the order, patches ship-to then header, creates each line, and ends synced with BC totals', async () => {
+  it('creates the order, sets the ship-to through salesDocuments, patches the header, creates each line, and ends synced with BC totals', async () => {
     setup(order(), [line({ id: 'l1', position: 1 }), line({ id: 'l2', position: 2, item_number: 'ITEM2', unit_price: null })])
 
     const state = await syncSalesOrder(deps, ORDER_ID)
@@ -258,12 +321,11 @@ describe('syncSalesOrder: first sync', () => {
     expect(state).toBe('synced')
     expect(headerCreates()).toHaveLength(1)
     expect(headerCreates()[0][1]).toMatchObject({ Document_Type: 'Order', Sell_to_Customer_No: 'C100', External_Document_No: createMarker(ORDER_ID) })
+    expect(docPatches().map((c) => c[3])).toEqual([{ shipToCode: 'WH1' }])
     const hp = headerPatches()
-    expect(hp).toHaveLength(2)
-    expect(hp[0][3]).toEqual({ Ship_to_Code: 'WH1' })
-    expect(hp[1][3].External_Document_No).toBe('SO1001')
-    // each patch uses the etag the previous call returned
-    expect(hp[1][2]).not.toBe(hp[0][2])
+    expect(hp).toHaveLength(1)
+    expect(hp[0][3].External_Document_No).toBe('SO1001')
+    expect(bc.headers.get('SO1001')!.fields).toMatchObject({ Ship_to_Code: 'WH1', Ship_to_Name: 'WH1 name' })
     expect(lineCreates()).toHaveLength(2)
     expect(lineCreates()[0][1]).toMatchObject({ Document_No: 'SO1001', No: 'ITEM1', Unit_Price: 5 })
     expect(lineCreates()[1][1]).not.toHaveProperty('Unit_Price')
@@ -286,7 +348,7 @@ describe('syncSalesOrder: first sync', () => {
   it('uses invoice_number as External_Document_No when set', async () => {
     setup(order({ invoice_number: 'INV-7' }), [line()])
     await syncSalesOrder(deps, ORDER_ID)
-    expect(headerPatches()[1][3].External_Document_No).toBe('INV-7')
+    expect(headerPatches()[0][3].External_Document_No).toBe('INV-7')
   })
 
   it('never sends Customer PO or notes to BC', async () => {
@@ -543,8 +605,10 @@ describe('syncSalesOrder: final review fixes', () => {
     const hp = headerPatches()
     expect(hp[0][3]).toEqual({ Sell_to_Customer_No: 'C200' })
     expect(hp[0][2]).toBe(hEtag)
-    // BC cleared Ship_to_Code on the switch, so it is sent again
-    expect(hp[1][3]).toEqual({ Ship_to_Code: 'WH1' })
+    // BC cleared Ship_to_Code on the switch, so it is sent again (through salesDocuments)
+    expect(docPatches().map((c) => c[3])).toEqual([{ shipToCode: 'WH1' }])
+    // the header patch uses the etag read back after the salesDocuments patch
+    expect(bc.t.patch.mock.calls.map(([src]) => (isDocSource(src) ? 'doc' : isLineSource(src) ? 'line' : 'header')).slice(0, 3)).toEqual(['header', 'doc', 'header'])
     const h = bc.headers.get('SO900')!.fields
     expect(h).toMatchObject({ Sell_to_Customer_No: 'C200', Ship_to_Code: 'WH1', Payment_Terms_Code: 'NET30', Location_Code: 'MAIN', Tax_Area_Code: 'TX' })
     // lines kept
@@ -571,8 +635,8 @@ describe('syncSalesOrder: final review fixes', () => {
   it('a failure right after our customer switch is not read as a BC change on retry', async () => {
     const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
     setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, customer_number: 'C200' }), rows)
-    bc.hooks.before = (method, s, arg) => {
-      if (method === 'patch' && !isLineSource(s) && 'Ship_to_Code' in (arg as Row)) throw new BcReferenceError(500, 'BC is down')
+    bc.hooks.before = (method, s) => {
+      if (method === 'patch' && isDocSource(s)) throw new BcReferenceError(500, 'BC is down')
     }
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
     bc.hooks.before = undefined
@@ -585,7 +649,7 @@ describe('syncSalesOrder: final review fixes', () => {
     const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
     setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), rows)
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
-    expect(headerPatches().some(([, , , f]) => 'Ship_to_Code' in f)).toBe(false)
+    expect(docPatches()).toHaveLength(0)
   })
 
   it('a ship-to deleted since the order was saved is sent as blank, keeping the copied address', async () => {
@@ -594,8 +658,9 @@ describe('syncSalesOrder: final review fixes', () => {
     const hEtag = bc.headers.get('SO900')!.etag
     setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ship_to_code: 'GONE', ship_to_address: 'copied st' }), rows)
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
-    const shipPatches = headerPatches().filter(([, , , f]) => 'Ship_to_Code' in f)
-    expect(shipPatches.map(([, , , f]) => f)).toEqual([{ Ship_to_Code: '' }])
+    const dp = docPatches().map(([, , , f]) => f)
+    expect(dp[0]).toEqual({ shipToCode: '' })
+    expect(dp[1]).toMatchObject({ shipToAddress: 'copied st' })
     expect(bc.headers.get('SO900')!.fields).toMatchObject({ Ship_to_Code: '', Ship_to_Address: 'copied st' })
   })
 
@@ -604,7 +669,7 @@ describe('syncSalesOrder: final review fixes', () => {
     bc.headers.set('SO900', { ...bc.headers.get('SO900')!, fields: { ...bc.headers.get('SO900')!.fields, Ship_to_Code: '' } })
     setup(order({ bc_order_number: 'SO900', bc_etag: bc.headers.get('SO900')!.etag, ship_to_code: 'GONE' }), rows)
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
-    expect(headerPatches().some(([, , , f]) => 'Ship_to_Code' in f)).toBe(false)
+    expect(docPatches().some(([, , , f]) => 'shipToCode' in f)).toBe(false)
   })
 
   // I2
@@ -689,6 +754,98 @@ describe('syncSalesOrder: unfinished save marker (R13)', () => {
   it('a failed order with another error still syncs', async () => {
     setup(order({ sync_state: 'failed', sync_error: 'BC is down' }), [line()])
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+  })
+})
+
+describe('syncSalesOrder: ship-to through salesDocuments (R14)', () => {
+  const docLookups = () => bc.t.list.mock.calls.filter(([src]) => isDocSource(src)).map(([, o]) => o)
+  const oneOff = { ship_to_code: '', ship_to_name: 'Pop-up', ship_to_address: '9 Beach Rd', ship_to_address_2: 'Unit 2', ship_to_city: 'Hilo', ship_to_state: 'HI', ship_to_post_code: '96720', ship_to_country: 'US', ship_to_contact: 'Kai', ship_to_phone: '555' }
+
+  it('never writes a Ship_to_* field through the SalesOrder page', async () => {
+    setup(order(), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    for (const [, , , f] of headerPatches()) expect(Object.keys(f).filter((k) => k.startsWith('Ship_to_'))).toEqual([])
+  })
+
+  it('saved code: looks up the salesDocuments row by order number and patches only shipToCode; BC fills the address', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    bc.shipTos.add('C100|DOCK')
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ship_to_code: 'DOCK' }), rows)
+    tables.customer_ship_to_addresses.push({ organization_id: 'org', bc_connection_id: 'conn', customer_number: 'C100', code: 'DOCK' })
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(docLookups()).toEqual([{ filter: "documentType eq 'Order' and number eq 'SO900'" }])
+    expect(docPatches().map((c) => c[3])).toEqual([{ shipToCode: 'DOCK' }])
+    expect(bc.headers.get('SO900')!.fields).toMatchObject({ Ship_to_Code: 'DOCK', Ship_to_Address: 'DOCK st' })
+  })
+
+  it('one-off: clears the code, then patches only the address fields that differ', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ...oneOff, ship_to_city: 'cust city' }), rows)
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    const dp = docPatches().map((c) => c[3])
+    expect(dp[0]).toEqual({ shipToCode: '' })
+    // BC filled the customer's address on the clear; city already matches, so it is not sent
+    expect(dp[1]).toEqual({
+      shipToName: 'Pop-up', shipToAddress: '9 Beach Rd', shipToAddress2: 'Unit 2', shipToCounty: 'HI',
+      shipToPostCode: '96720', shipToCountryRegionCode: 'US', shipToContact: 'Kai', shipToPhoneNo: '555',
+    })
+    expect(dp).toHaveLength(2)
+    expect(bc.headers.get('SO900')!.fields).toMatchObject({ Ship_to_Code: '', Ship_to_Name: 'Pop-up', Ship_to_Address: '9 Beach Rd', Ship_to_City: 'cust city' })
+  })
+
+  it('billing copy (no code, address = billing) goes the same way and lands in BC', async () => {
+    setup(order({ ship_to_code: '', ship_to_name: 'Bill', ship_to_address: 'a1', ship_to_city: 'bc', ship_to_state: 'bs', ship_to_post_code: 'bp' }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    // a new order already has a blank code, so only the address is patched
+    const dp = docPatches().map((c) => c[3])
+    expect(dp).toHaveLength(1)
+    expect(dp[0]).not.toHaveProperty('shipToCode')
+    expect(bc.headers.get('SO1001')!.fields).toMatchObject({ Ship_to_Code: '', Ship_to_Name: 'Bill', Ship_to_Address: 'a1', Ship_to_City: 'bc', Ship_to_County: 'bs' })
+  })
+
+  it('no salesDocuments patch when the code is blank and BC already has the same address', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    const h = bc.headers.get('SO900')!
+    bc.headers.set('SO900', { ...h, fields: { ...h.fields, Ship_to_Code: '', Ship_to_Name: 'sn', Ship_to_Address: 'sa', Ship_to_Address_2: '', Ship_to_City: 'sc', Ship_to_County: 'ss', Ship_to_Post_Code: 'sp', Ship_to_Country_Region_Code: 'US', Ship_to_Contact: '', Ship_to_Phone_No: '' } })
+    void hEtag
+    setup(order({ bc_order_number: 'SO900', bc_etag: h.etag, ship_to_code: '' }), rows)
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(docPatches()).toHaveLength(0)
+  })
+
+  it('stores the SalesOrder etag read after the salesDocuments patch before the header patch', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ...oneOff }), rows)
+    bc.hooks.before = (method, src) => {
+      if (method === 'patch' && !isDocSource(src) && !isLineSource(src)) {
+        expect(orderRow().bc_etag).toBe(bc.headers.get('SO900')!.etag)
+        throw new BcReferenceError(500, 'header down')
+      }
+    }
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    bc.hooks.before = undefined
+    // retry is not a conflict: the etag after our salesDocuments write was stored
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+  })
+
+  it('customer switch: Sell_to_Customer_No on SalesOrder, then the code on salesDocuments, then the header', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, customer_number: 'C200', ...oneOff }), rows)
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    const order3 = bc.t.patch.mock.calls.map(([src, , , f]) => (isDocSource(src) ? 'doc' : isLineSource(src) ? 'line' : 'header:' + Object.keys(f)[0]))
+    expect(order3.slice(0, 3)).toEqual(['header:Sell_to_Customer_No', 'doc', 'header:Order_Date'])
+    expect(bc.headers.get('SO900')!.fields).toMatchObject({ Sell_to_Customer_No: 'C200', Ship_to_Name: 'Pop-up', Tax_Area_Code: 'TX', Location_Code: 'MAIN' })
+  })
+
+  it('fails clearly when BC has no salesDocuments row for the order', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ship_to_code: '' }), rows)
+    bc.t.list.mockImplementation(async (src: ReferenceSource) => {
+      if (isDocSource(src)) return []
+      return [...bc.lines.values()].filter((l) => l.fields.Document_No === 'SO900')
+    })
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(orderRow().sync_error).toBe('BC salesDocuments has no row for order SO900')
   })
 })
 
