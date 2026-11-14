@@ -127,13 +127,14 @@ describe('toBcLine', () => {
 })
 
 describe('readBack', () => {
-  it('reads header, totals and lines', () => {
+  it('reads header and lines, with totals from salesDocuments (line Total_* fields are 0 over OData)', () => {
     const r = readBack(
       rec({ No: 'SO-1', Due_Date: '2026-12-01', Document_Date: '0001-01-01', Posting_Date: '2026-11-01' }, 'H'),
       [
-        rec({ Line_No: 10000, Unit_Price: 2.5, Amount_Including_VAT: 8, Total_Amount_Excl_VAT: 7, Total_VAT_Amount: 1, Total_Amount_Incl_VAT: 8 }, 'L1'),
+        rec({ Line_No: 10000, Unit_Price: 2.5, Amount_Including_VAT: 8, Total_Amount_Excl_VAT: 0, Total_VAT_Amount: 0, Total_Amount_Incl_VAT: 0 }, 'L1'),
         rec({ Line_No: 20000 }, 'L2'),
       ],
+      rec({ amount: 7, amountIncludingVAT: 8 }),
     )
     expect(r).toEqual({
       bc_order_number: 'SO-1', bc_etag: 'H', bc_due_date: '2026-12-01', bc_document_date: null, bc_posting_date: '2026-11-01',
@@ -144,8 +145,12 @@ describe('readBack', () => {
       ],
     })
   })
+  it('tax is incl - excl rounded to cents (W-100528: 24.5 / 24.62)', () => {
+    const r = readBack(rec({ No: 'W-100528' }), [], rec({ amount: 24.5, amountIncludingVAT: 24.62 }))
+    expect([r.total_excl_tax, r.total_tax, r.total_incl_tax]).toEqual([24.5, 0.12, 24.62])
+  })
   it('zero totals with no lines', () => {
-    const r = readBack(rec({ No: 'SO-1' }), [])
+    const r = readBack(rec({ No: 'SO-1' }), [], rec({ amount: 0, amountIncludingVAT: 0 }))
     expect([r.total_excl_tax, r.total_tax, r.total_incl_tax]).toEqual([0, 0, 0])
     expect(r.bc_due_date).toBeNull()
   })
@@ -173,6 +178,6 @@ describe('bcChangedOutsideNexus', () => {
   })
   it('throws when BC line lacks Line_No', () => {
     expect(() => bcChangedOutsideNexus(stored, { header: rec({}, 'H'), lines: [rec({}, 'a')] })).toThrow('without Line_No')
-    expect(() => readBack(rec({ No: 'SO-1' }), [rec({})])).toThrow('without Line_No')
+    expect(() => readBack(rec({ No: 'SO-1' }), [rec({})], rec({ amount: 0, amountIncludingVAT: 0 }))).toThrow('without Line_No')
   })
 })

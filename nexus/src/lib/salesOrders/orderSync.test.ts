@@ -74,6 +74,10 @@ function fakeBc() {
     const h = headers.get(no)!
     const fields: Record<string, unknown> = { id: idFor(no), documentType: 'Order', number: no }
     for (const [camel, pascal] of Object.entries(DOC_FIELDS)) fields[camel] = h.fields[pascal] ?? ''
+    // Real BC (TEST, measured): the header totals live here (amount, amountIncludingVAT).
+    const tot = totals(no)
+    fields.amount = tot.excl
+    fields.amountIncludingVAT = tot.incl
     return { key: { values: { id: idFor(no) } }, etag: `D-${h.etag}`, fields }
   }
   const noForId = (id: string) => [...ids].find(([, v]) => v === id)?.[0]
@@ -107,10 +111,11 @@ function fakeBc() {
   const totals = (docNo: string) => {
     const ls = [...lines.values()].filter((l) => l.fields.Document_No === docNo)
     const excl = ls.reduce((a, l) => a + Number(l.fields.Quantity) * Number(l.fields.Unit_Price), 0)
-    return { Total_Amount_Excl_VAT: excl, Total_VAT_Amount: excl * 0.1, Total_Amount_Incl_VAT: excl * 1.1 }
+    return { excl, incl: Math.round(excl * 1.1 * 100) / 100 }
   }
+  /** Real BC (TEST, measured W-100528): the line Total_* fields are page-computed and come back 0 over OData. */
   const withTotals = (r: BcRecord): BcRecord =>
-    ({ ...r, fields: { ...r.fields, ...totals(String(r.fields.Document_No)) } })
+    ({ ...r, fields: { ...r.fields, Total_Amount_Excl_VAT: 0, Total_VAT_Amount: 0, Total_Amount_Incl_VAT: 0 } })
 
   const t = {
     list: vi.fn(async (s: ReferenceSource, opts: { filter?: string } = {}) => {
@@ -336,8 +341,10 @@ describe('syncSalesOrder: first sync', () => {
       sync_attempts: 0, synced_version: 3, last_synced_at: '2026-11-13T10:00:00Z', bc_due_date: '2026-12-01',
     })
     // ITEM1 2 x 5 + ITEM2 2 x 9.99 (BC price)
+    // totals come from salesDocuments (the fake's line Total_* fields are 0, as on TEST)
     expect(o.total_excl_tax).toBeCloseTo(29.98)
-    expect(o.total_incl_tax).toBeCloseTo(32.978)
+    expect(o.total_incl_tax).toBe(32.98)
+    expect(o.total_tax).toBe(3)
     expect(o.bc_etag).toBe(bc.headers.get('SO1001')!.etag)
     expect(lineRow('l1')).toMatchObject({ bc_line_no: 10000, bc_etag: bc.lines.get('SO1001|10000')!.etag, bc_unit_price: 5 })
     expect(lineRow('l2')).toMatchObject({ bc_line_no: 20000, bc_unit_price: 9.99 })
@@ -835,6 +842,19 @@ describe('syncSalesOrder: ship-to through salesDocuments (R14)', () => {
     const order3 = bc.t.patch.mock.calls.map(([src, , , f]) => (isDocSource(src) ? 'doc' : isLineSource(src) ? 'line' : 'header:' + Object.keys(f)[0]))
     expect(order3.slice(0, 3)).toEqual(['header:Sell_to_Customer_No', 'doc', 'header:Order_Date'])
     expect(bc.headers.get('SO900')!.fields).toMatchObject({ Sell_to_Customer_No: 'C200', Ship_to_Name: 'Pop-up', Tax_Area_Code: 'TX', Location_Code: 'MAIN' })
+  })
+
+  it('R16: totals are read from salesDocuments re-read after all writes, not a pre-write copy', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    // the line quantity changes in this sync, so a pre-write copy would carry the old totals
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ship_to_code: '' }), [{ ...rows[0], quantity: 4 }])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(orderRow()).toMatchObject({ total_excl_tax: 20, total_incl_tax: 22, total_tax: 2 })
+    const docGets = bc.t.get.mock.calls.filter(([src]) => isDocSource(src))
+    expect(docGets).toHaveLength(1)
+    // the GET came after the last line write
+    const lastLineWrite = Math.max(...bc.t.patch.mock.invocationCallOrder.filter((_, i) => isLineSource(bc.t.patch.mock.calls[i][0])))
+    expect(bc.t.get.mock.invocationCallOrder[bc.t.get.mock.calls.findIndex(([src]) => isDocSource(src))]).toBeGreaterThan(lastLineWrite)
   })
 
   it('fails clearly when BC has no salesDocuments row for the order', async () => {

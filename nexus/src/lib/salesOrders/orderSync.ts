@@ -246,7 +246,8 @@ export async function syncSalesOrder(
     if (String(bcHeader.fields.Sell_to_Customer_No ?? '') !== order.customer_number) {
       await patchHeader({ Sell_to_Customer_No: order.customer_number })
     }
-    if (await syncShipTo(deps, order, no)) {
+    const shipTo = await syncShipTo(deps, order, no)
+    if (shipTo.wrote) {
       // Same record: the salesDocuments write changed the SalesOrder etag.
       bcHeader = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
       await updateOrder(deps, order.id, { bc_etag: bcHeader.etag })
@@ -336,7 +337,10 @@ export async function syncSalesOrder(
 
     // Step 6: read back BC's values.
     const header = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
-    const rb = readBack(header, await listBcLines(deps, no))
+    const finalLines = await listBcLines(deps, no)
+    // Totals: the salesDocuments row read again now, after every write.
+    const salesDocument = await deps.transport.get(SALES_DOCUMENT_SOURCE, { values: { id: shipTo.docId } })
+    const rb = readBack(header, finalLines, salesDocument)
     const stored = await loadLines(deps, orderId)
     for (const l of rb.lines) {
       const row = stored.find((s) => s.bc_line_no === l.bc_line_no)
@@ -395,15 +399,20 @@ export async function syncSalesOrder(
  * per sync, after any customer switch). A saved code that still exists is
  * sent alone (BC fills the address from it); otherwise the code is made ''
  * and the one-off / billing-copy address fields that differ are sent.
- * Returns true when anything was written.
+ * Returns whether anything was written and the row's id (for the read-back).
  */
-async function syncShipTo(deps: OrderSyncDeps, order: SalesOrderRow, no: string): Promise<boolean> {
+async function syncShipTo(
+  deps: OrderSyncDeps,
+  order: SalesOrderRow,
+  no: string,
+): Promise<{ wrote: boolean; docId: string }> {
   const found = await deps.transport.list(SALES_DOCUMENT_SOURCE, {
     filter: `documentType eq 'Order' and number eq ${quote(no)}`,
   })
   let doc = found[0]
   if (!doc) throw new Error(`BC salesDocuments has no row for order ${no}`)
-  const docKey: BcKey = { values: { id: String(doc.fields.id ?? '') } }
+  const docId = String(doc.fields.id ?? '')
+  const docKey: BcKey = { values: { id: docId } }
   let wrote = false
   const patchDoc = async (fields: Record<string, unknown>) => {
     doc = await deps.transport.patch(SALES_DOCUMENT_SOURCE, docKey, doc.etag, fields)
@@ -414,12 +423,12 @@ async function syncShipTo(deps: OrderSyncDeps, order: SalesOrderRow, no: string)
   const current = String(doc.fields.shipToCode ?? '')
   if (code !== '') {
     if (code !== current) await patchDoc({ shipToCode: code })
-    return wrote
+    return { wrote, docId }
   }
   if (current !== '') await patchDoc({ shipToCode: '' })
   const diff = changedLineFields(toSalesDocShipToAddress(order), doc.fields)
   if (Object.keys(diff).length > 0) await patchDoc(diff)
-  return wrote
+  return { wrote, docId }
 }
 
 /** A 404 counts as already removed only when a re-list confirms the line is gone. */

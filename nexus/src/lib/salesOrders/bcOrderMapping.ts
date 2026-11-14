@@ -146,17 +146,25 @@ export interface BcReadBack {
   lines: { bc_line_no: number; bc_etag: string; bc_unit_price: number | null; amount_incl_tax: number | null }[]
 }
 
-export function readBack(header: BcRecord, lines: BcRecord[]): BcReadBack {
-  const first = lines[0]?.fields
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+/**
+ * BC's values after a sync. Totals come from the salesDocuments row
+ * (amount, amountIncludingVAT): the SalesOrderSalesLines Total_* fields are
+ * page-computed subform totals and read back as 0 over OData (measured on TEST).
+ */
+export function readBack(header: BcRecord, lines: BcRecord[], salesDocument: BcRecord): BcReadBack {
+  const excl = numOrNull(salesDocument.fields.amount) ?? 0
+  const incl = numOrNull(salesDocument.fields.amountIncludingVAT) ?? 0
   return {
     bc_order_number: String(header.fields.No ?? ''),
     bc_etag: header.etag,
     bc_due_date: dateOrNull(header.fields.Due_Date),
     bc_document_date: dateOrNull(header.fields.Document_Date),
     bc_posting_date: dateOrNull(header.fields.Posting_Date),
-    total_excl_tax: numOrNull(first?.Total_Amount_Excl_VAT) ?? 0,
-    total_tax: numOrNull(first?.Total_VAT_Amount) ?? 0,
-    total_incl_tax: numOrNull(first?.Total_Amount_Incl_VAT) ?? 0,
+    total_excl_tax: excl,
+    total_tax: round2(incl - excl),
+    total_incl_tax: incl,
     lines: lines.map((l) => ({
       bc_line_no: parseLineNo(l),
       bc_etag: l.etag,
