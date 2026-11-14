@@ -363,6 +363,34 @@ describe('final review fixes: saveSalesOrder', () => {
   });
 });
 
+describe('final review rulings R11/R12', () => {
+  const NOT_SAVED = 'This order was not saved completely. Save it again before sending to BC.';
+
+  it('R11: Try again refuses an order whose save did not finish, without syncing', async () => {
+    setup({ sales_orders: [orderRow('o1', { sync_state: 'failed', sync_error: 'Save did not finish: disk full' })] });
+    expect(await retrySalesOrderSync('o1')).toEqual({ ok: false, error: NOT_SAVED });
+    expect(mocks.syncSalesOrder).not.toHaveBeenCalled();
+  });
+
+  it('R11: a successful re-save clears the marker (pending, sync_error null) and Try again works again', async () => {
+    setup({
+      sales_orders: [orderRow('o1', { sync_state: 'failed', sync_error: 'Save did not finish: disk full' })],
+      sales_order_lines: [lineRow('l1')],
+    });
+    expect(await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1' })] }), id: 'o1' })).toEqual({ ok: true, id: 'o1' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ sync_state: 'pending', sync_error: null });
+    expect(await retrySalesOrderSync('o1')).toEqual({ ok: true, state: 'synced' });
+  });
+
+  it('R12: a line that no longer exists is refused before the version bump, so the order is not marked failed', async () => {
+    setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
+    const res = await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'ghost' })] }), id: 'o1' });
+    expect(res).toEqual({ ok: false, error: 'A line on this order no longer exists. Reload and try again.' });
+    expect(db.writes).toEqual([]);
+    expect(db.tables.sales_orders[0]).toMatchObject({ sync_state: 'synced', sync_error: null, local_version: 3 });
+  });
+});
+
 describe('final review fixes: background sync retries (I1)', () => {
   const T0 = new Date('2026-11-13T10:00:00.000Z');
   beforeEach(() => {

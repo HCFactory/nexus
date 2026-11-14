@@ -9,6 +9,13 @@ import { syncSalesOrder, type OrderSyncDeps } from './orderSync';
 export const LEASE_MS = 120_000;
 export const SWEEP_BATCH = 5;
 
+/**
+ * sync_error prefix of a save that stopped part-way. Such an order has
+ * half-written lines, so neither the sweep nor Try again sends it until a
+ * successful re-save (which sets pending and clears sync_error).
+ */
+export const SAVE_UNFINISHED = 'Save did not finish';
+
 const ORDERS = 'sales_orders';
 
 export interface OrderScope {
@@ -89,7 +96,7 @@ export async function syncWithClaim(
 
 /**
  * Pick up pending/failed orders (fewest attempts, then oldest) whose lease is free and sync each
- * one. Conflicts are never retried automatically. Returns how many orders
+ * one. Conflicts, and failed saves that did not finish, are never retried automatically. Returns how many orders
  * were synced (whatever state they ended in).
  */
 export async function sweepPendingOrders(deps: OrderSyncDeps, limit = SWEEP_BATCH): Promise<number> {
@@ -101,6 +108,7 @@ export async function sweepPendingOrders(deps: OrderSyncDeps, limit = SWEEP_BATC
     .eq('bc_connection_id', deps.connectionId)
     .in('sync_state', ['pending', 'failed'])
     .or(`claimed_until.is.null,claimed_until.lt.${nowIso}`)
+    .or(`sync_state.eq.pending,sync_error.is.null,sync_error.not.like.${SAVE_UNFINISHED}*`)
     // Fewest failed attempts first, so orders that keep failing don't starve
     // newer pending ones; then oldest first (sync writes updated_at each run).
     .order('sync_attempts', { ascending: true })

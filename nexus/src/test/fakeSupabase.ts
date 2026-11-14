@@ -1,6 +1,6 @@
 // In-memory Supabase query builder for tests. Supports the subset the sales
 // order code uses: select/insert/update/delete, eq/in/or (is.null + lt),
-// order, limit, range, maybeSingle/single and awaiting the builder.
+// (is.null, lt, eq, not.like) order, limit, range, maybeSingle/single and awaiting the builder.
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type Row = Record<string, unknown>;
@@ -24,6 +24,13 @@ function orMatches(row: Row, expr: string): boolean {
     if (op === 'is' && value === 'null') return cur === null || cur === undefined;
     if (op === 'lt') return cur !== null && cur !== undefined && String(cur) < value;
     if (op === 'eq') return String(cur) === value;
+    if (op === 'not' && rest[0] === 'like') {
+      // SQL semantics: NULL NOT LIKE x is not true. `*` is PostgREST's wildcard.
+      const pattern = rest.slice(1).join('.');
+      if (cur === null || cur === undefined) return false;
+      const re = new RegExp('^' + pattern.split('*').map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+      return !re.test(String(cur));
+    }
     throw new Error(`fakeSupabase: unsupported or() part ${part}`);
   });
 }

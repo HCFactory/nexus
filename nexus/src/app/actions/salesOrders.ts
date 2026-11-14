@@ -5,7 +5,14 @@ import { after } from 'next/server';
 import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
-import { claimOrder, leaseUntil, releaseOrder, sweepPendingOrders, syncWithClaim } from '@/lib/salesOrders/orderClaim';
+import {
+  SAVE_UNFINISHED,
+  claimOrder,
+  leaseUntil,
+  releaseOrder,
+  sweepPendingOrders,
+  syncWithClaim,
+} from '@/lib/salesOrders/orderClaim';
 import { canChangeStatus, canDelete, editableFields, todayIn } from '@/lib/salesOrders/orderRules';
 import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
 import { fetchAll } from '@/lib/supabase/fetchAll';
@@ -53,6 +60,7 @@ const DELETE_RULE = 'Only Draft or Final orders can be deleted.';
 const CHANGED_ELSEWHERE = 'This order was changed by someone else. Reload and try again.';
 const LINE_GONE = 'A line on this order no longer exists. Reload and try again.';
 const CUSTOMER_BAD = 'Customer not found or blocked.';
+const NOT_SAVED = 'This order was not saved completely. Save it again before sending to BC.';
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
   draft: 'Draft',
@@ -402,12 +410,18 @@ function check<T>(res: { data: T; error: { message: string } | null }, what: str
   return res.data;
 }
 
+/** True when the input refers to a line id that is no longer on the order. */
+function refersToGoneLine(existing: SalesOrderLineRow[], input: SalesOrderInput): boolean {
+  const ids = new Set(existing.filter((l) => !l.removed).map((l) => l.id));
+  return realLines(input.lines).some((l) => l.id && !ids.has(l.id));
+}
+
 /** Bring the stored lines in line with the input (blank row ignored, positions from input order). */
 async function writeLines(scope: Scope, orderId: string, existing: SalesOrderLineRow[], input: SalesOrderInput) {
   const supabase = createServiceClient();
   const byId = new Map(existing.filter((l) => !l.removed).map((l) => [l.id, l]));
   const lines = realLines(input.lines);
-  if (lines.some((l) => l.id && !byId.has(l.id))) throw new Error(LINE_GONE);
+  if (refersToGoneLine(existing, input)) throw new Error(LINE_GONE);
   const kept = new Set(lines.flatMap((l) => (l.id ? [l.id] : [])));
 
   for (const row of byId.values()) {
@@ -562,6 +576,8 @@ export async function saveSalesOrder(
     if (locked && lockedChange(existing, existingLines, edited)) {
       return { ok: false, error: lockedMessage(existing.status) };
     }
+    // Pure input checks go before step 1, so a refused save never marks the order failed.
+    if (!locked && refersToGoneLine(existingLines, edited)) return { ok: false, error: LINE_GONE };
 
     // 1. Take the save: bump the version only if nobody saved since we read
     //    it. A sync already running now ends 'pending', not 'synced'.
@@ -608,7 +624,7 @@ export async function saveSalesOrder(
         check(
           await scoped(scope, createServiceClient().from(ORDERS).update({
             sync_state: 'failed',
-            sync_error: `Save did not finish: ${message}`,
+            sync_error: `${SAVE_UNFINISHED}: ${message}`,
             updated_at: nowIso(),
           }).eq('id', existing.id)),
           'Could not save the sales order',
@@ -726,7 +742,11 @@ async function syncNow(id: string, overwrite: boolean): Promise<{ ok: true; stat
   try {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
-    if (!(await loadOrder(scope, id))) return { ok: false, error: NOT_FOUND };
+    const order = await loadOrder(scope, id);
+    if (!order) return { ok: false, error: NOT_FOUND };
+    if (!overwrite && order.sync_state === 'failed' && (order.sync_error ?? '').startsWith(`${SAVE_UNFINISHED}:`)) {
+      return { ok: false, error: NOT_SAVED };
+    }
     const state = await syncWithClaim(await buildDeps(scope), id, overwrite ? { overwrite: true } : {});
     if (state === null) return { ok: false, error: BUSY };
     revalidateSalesOrders();

@@ -115,6 +115,17 @@ describe('sweepPendingOrders', () => {
     expect(mocks.syncSalesOrder.mock.calls.map((c) => c[1])).toEqual(['new-early', 'new-late', 'once', 'stuck0']);
   });
 
+  it('skips failed orders whose save did not finish (they need a re-save), but not other failures', async () => {
+    const d = deps([
+      order('half', { sync_state: 'failed', sync_error: 'Save did not finish: disk full', updated_at: '2026-01-01' }),
+      order('bc-down', { sync_state: 'failed', sync_error: 'BC is down', updated_at: '2026-01-02' }),
+      order('pending', { sync_error: null, updated_at: '2026-01-03' }),
+    ]);
+    mocks.syncSalesOrder.mockResolvedValue('synced');
+    await sweepPendingOrders(d.deps);
+    expect(mocks.syncSalesOrder.mock.calls.map((c) => c[1])).toEqual(['bc-down', 'pending']);
+  });
+
   it('keeps going when one order throws', async () => {
     const d = deps([order('a', { updated_at: '2026-01-01' }), order('b', { updated_at: '2026-01-02' })]);
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
