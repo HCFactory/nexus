@@ -857,6 +857,32 @@ describe('syncSalesOrder: ship-to through salesDocuments (R14)', () => {
     expect(bc.t.get.mock.invocationCallOrder[bc.t.get.mock.calls.findIndex(([src]) => isDocSource(src))]).toBeGreaterThan(lastLineWrite)
   })
 
+  it('R17: each salesDocuments write stores the new SalesOrder etag, so a failed later ship-to write is not a conflict on retry', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ship_to_code: '', ship_to_name: 'Pop-up', ship_to_address: '9 Beach Rd' }), rows)
+    bc.hooks.before = (method, src, arg) => {
+      if (method === 'patch' && isDocSource(src) && !('shipToCode' in (arg as Row))) throw new BcReferenceError(500, 'address down')
+    }
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(docPatches()[0][3]).toEqual({ shipToCode: '' })
+    expect(orderRow().bc_etag).toBe(bc.headers.get('SO900')!.etag)
+    bc.hooks.before = undefined
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(bc.headers.get('SO900')!.fields).toMatchObject({ Ship_to_Code: '', Ship_to_Name: 'Pop-up', Ship_to_Address: '9 Beach Rd' })
+  })
+
+  it('R17: a salesDocuments row without an id fails clearly at lookup', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), rows)
+    bc.t.list.mockImplementation(async (src: ReferenceSource) => {
+      if (isDocSource(src)) return [{ key: { values: {} }, etag: 'D', fields: { number: 'SO900', shipToCode: 'WH1' } }]
+      return [...bc.lines.values()].filter((l) => l.fields.Document_No === 'SO900')
+    })
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(orderRow().sync_error).toBe('BC sales document for order SO900 not found')
+    expect(docPatches()).toHaveLength(0)
+  })
+
   it('fails clearly when BC has no salesDocuments row for the order', async () => {
     const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
     setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, ship_to_code: '' }), rows)
@@ -865,7 +891,7 @@ describe('syncSalesOrder: ship-to through salesDocuments (R14)', () => {
       return [...bc.lines.values()].filter((l) => l.fields.Document_No === 'SO900')
     })
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
-    expect(orderRow().sync_error).toBe('BC salesDocuments has no row for order SO900')
+    expect(orderRow().sync_error).toBe('BC sales document for order SO900 not found')
   })
 })
 

@@ -70,6 +70,11 @@ describe('toBcCreate / toSalesDocShipToAddress', () => {
     expect(toBcCreate(order(), 'NX-ABCDEF123456')).toEqual({ Document_Type: 'Order', Sell_to_Customer_No: 'C100', External_Document_No: 'NX-ABCDEF123456' })
     expect(toBcCreate(order(), 'NX-OTHER').External_Document_No).toBe('NX-OTHER')
   })
+  it('ship-to address maps null values to empty strings', () => {
+    const out = toSalesDocShipToAddress(order({ ship_to_address_2: null, ship_to_contact: null } as unknown as Partial<SalesOrderRow>))
+    expect(out.shipToAddress2).toBe('')
+    expect(out.shipToContact).toBe('')
+  })
   it('ship-to address in salesDocuments (camelCase) field names', () => {
     expect(toSalesDocShipToAddress(order())).toEqual({
       shipToName: 'sn', shipToAddress: 'sa', shipToAddress2: 'sa2', shipToCity: 'sc', shipToCounty: 'ss',

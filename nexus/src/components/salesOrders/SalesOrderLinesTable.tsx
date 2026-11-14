@@ -91,7 +91,7 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
         type="text"
         role="combobox"
         aria-expanded={open}
-        aria-controls={listId}
+        aria-controls={open ? listId : undefined}
         aria-autocomplete="list"
         aria-activedescendant={open && matches.length > 0 ? optionId(activeIndex) : undefined}
         value={query}

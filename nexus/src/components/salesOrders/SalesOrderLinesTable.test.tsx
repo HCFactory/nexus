@@ -119,6 +119,16 @@ describe('SalesOrderLinesTable', () => {
     expect(list.style.position === 'fixed' || list.className.includes('fixed')).toBe(true);
   });
 
+  it('aria-controls is set only while the list is open (the list is not in the DOM when closed)', () => {
+    setup([]);
+    const box = screen.getByRole('combobox');
+    expect(box).not.toHaveAttribute('aria-controls');
+    fireEvent.focus(box);
+    expect(box).toHaveAttribute('aria-controls', screen.getByRole('listbox').id);
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(box).not.toHaveAttribute('aria-controls');
+  });
+
   it('keyboard: typing filters, Escape closes', () => {
     setup([]);
     const box = screen.getByRole('combobox');

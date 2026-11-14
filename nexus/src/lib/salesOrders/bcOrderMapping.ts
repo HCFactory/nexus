@@ -47,18 +47,18 @@ export function toBcCreate(order: SalesOrderRow, marker: string): Record<string,
   }
 }
 
-/** The ship-to address (one-off or billing copy) in salesDocuments field names. */
+/** The ship-to address (one-off or billing copy) in salesDocuments field names; null becomes ''. */
 export function toSalesDocShipToAddress(order: SalesOrderRow): Record<string, unknown> {
   return {
-    shipToName: order.ship_to_name,
-    shipToAddress: order.ship_to_address,
-    shipToAddress2: order.ship_to_address_2,
-    shipToCity: order.ship_to_city,
-    shipToCounty: order.ship_to_state,
-    shipToPostCode: order.ship_to_post_code,
-    shipToCountryRegionCode: order.ship_to_country,
-    shipToContact: order.ship_to_contact,
-    shipToPhoneNo: order.ship_to_phone,
+    shipToName: order.ship_to_name ?? '',
+    shipToAddress: order.ship_to_address ?? '',
+    shipToAddress2: order.ship_to_address_2 ?? '',
+    shipToCity: order.ship_to_city ?? '',
+    shipToCounty: order.ship_to_state ?? '',
+    shipToPostCode: order.ship_to_post_code ?? '',
+    shipToCountryRegionCode: order.ship_to_country ?? '',
+    shipToContact: order.ship_to_contact ?? '',
+    shipToPhoneNo: order.ship_to_phone ?? '',
   }
 }
 

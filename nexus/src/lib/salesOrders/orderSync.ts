@@ -246,12 +246,13 @@ export async function syncSalesOrder(
     if (String(bcHeader.fields.Sell_to_Customer_No ?? '') !== order.customer_number) {
       await patchHeader({ Sell_to_Customer_No: order.customer_number })
     }
-    const shipTo = await syncShipTo(deps, order, no)
-    if (shipTo.wrote) {
-      // Same record: the salesDocuments write changed the SalesOrder etag.
+    // Same record: each salesDocuments write changes the SalesOrder etag, so
+    // it is read and stored after every one (a later failure can't leave a
+    // pre-write etag that the retry reads as a change in BC).
+    const shipTo = await syncShipTo(deps, order, no, async () => {
       bcHeader = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
       await updateOrder(deps, order.id, { bc_etag: bcHeader.etag })
-    }
+    })
     await patchHeader(toBcHeaderPatch(order, no))
 
     // A header patch can change the lines' etags (measured: Tax_Area_Code is
@@ -399,36 +400,36 @@ export async function syncSalesOrder(
  * per sync, after any customer switch). A saved code that still exists is
  * sent alone (BC fills the address from it); otherwise the code is made ''
  * and the one-off / billing-copy address fields that differ are sent.
- * Returns whether anything was written and the row's id (for the read-back).
+ * `afterWrite` runs after each successful write. Returns the row's id (for the read-back).
  */
 async function syncShipTo(
   deps: OrderSyncDeps,
   order: SalesOrderRow,
   no: string,
-): Promise<{ wrote: boolean; docId: string }> {
+  afterWrite: () => Promise<void>,
+): Promise<{ docId: string }> {
   const found = await deps.transport.list(SALES_DOCUMENT_SOURCE, {
     filter: `documentType eq 'Order' and number eq ${quote(no)}`,
   })
   let doc = found[0]
-  if (!doc) throw new Error(`BC salesDocuments has no row for order ${no}`)
-  const docId = String(doc.fields.id ?? '')
+  const docId = doc ? String(doc.fields.id ?? '') : ''
+  if (!doc || !docId) throw new Error(`BC sales document for order ${no} not found`)
   const docKey: BcKey = { values: { id: docId } }
-  let wrote = false
   const patchDoc = async (fields: Record<string, unknown>) => {
     doc = await deps.transport.patch(SALES_DOCUMENT_SOURCE, docKey, doc.etag, fields)
-    wrote = true
+    await afterWrite()
   }
 
   const code = await shipToCodeToSend(deps, order)
   const current = String(doc.fields.shipToCode ?? '')
   if (code !== '') {
     if (code !== current) await patchDoc({ shipToCode: code })
-    return { wrote, docId }
+    return { docId }
   }
   if (current !== '') await patchDoc({ shipToCode: '' })
   const diff = changedLineFields(toSalesDocShipToAddress(order), doc.fields)
   if (Object.keys(diff).length > 0) await patchDoc(diff)
-  return { wrote, docId }
+  return { docId }
 }
 
 /** A 404 counts as already removed only when a re-list confirms the line is gone. */
