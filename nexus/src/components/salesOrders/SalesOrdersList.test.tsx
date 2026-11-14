@@ -38,6 +38,18 @@ describe('SalesOrdersList', () => {
     expect(screen.getByText('Final')).toBeInTheDocument();
   });
 
+  it('Invoice # falls back to the BC order number (BC uses it as External Document No.)', () => {
+    render(<SalesOrdersList orders={[row({ id: 'o9', bc_order_number: 'SO-200', invoice_number: null })]} canEdit={false} />);
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell');
+    expect(cells[0]).toHaveTextContent('SO-200');
+    expect(cells[1]).toHaveTextContent('SO-200');
+  });
+
+  it('Invoice # shows — when the order is not in BC and has no invoice #', () => {
+    render(<SalesOrdersList orders={[row({ id: 'o9' })]} canEdit={false} />);
+    expect(within(screen.getAllByRole('row')[1]).getAllByRole('cell')[1]).toHaveTextContent('—');
+  });
+
   it('Needs attention shows only failed and conflict orders', () => {
     render(<SalesOrdersList orders={orders} canEdit={false} />);
     fireEvent.click(screen.getByRole('button', { name: /needs attention/i }));

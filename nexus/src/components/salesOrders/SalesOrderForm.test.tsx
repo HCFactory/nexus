@@ -360,4 +360,15 @@ describe('SalesOrderForm — status and locking', () => {
     await waitFor(() => expect(orderActions.retrySalesOrderSync).toHaveBeenCalledWith('so-1'));
     await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
   });
+
+  it('offers Try again on a pending order nobody is syncing that was last updated long ago', async () => {
+    orderActions.retrySalesOrderSync.mockResolvedValue({ ok: true, state: 'synced' });
+    renderForm({
+      order: order({ sync_state: 'pending', claimed_until: null, updated_at: '2026-01-01T00:00:00.000Z' }),
+      lines: [lineRow],
+      shipTos: [dock],
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(orderActions.retrySalesOrderSync).toHaveBeenCalledWith('so-1'));
+  });
 });

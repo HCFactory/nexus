@@ -408,6 +408,8 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             error={order.sync_error}
             canAct={canEdit}
             busy={busy}
+            claimedUntil={order.claimed_until}
+            updatedAt={order.updated_at}
             onRetry={() => runSync(false)}
             onOverwrite={() => runSync(true)}
           />

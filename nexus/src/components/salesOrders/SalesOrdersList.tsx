@@ -95,7 +95,7 @@ export function SalesOrdersList({ orders, canEdit }: Props) {
                     <td className="px-4 py-2.5 font-mono text-xs text-foreground-muted">
                       {o.bc_order_number ?? 'Not yet in BC'}
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-foreground-muted">{o.invoice_number ?? '—'}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-foreground-muted">{o.invoice_number ?? o.bc_order_number ?? '—'}</td>
                     <td className="px-4 py-2.5 font-medium text-foreground">{o.customer_name}</td>
                     <td className="px-4 py-2.5 text-foreground-muted">{o.customer_po || '—'}</td>
                     <td className="px-4 py-2.5 text-foreground-muted">{o.order_date}</td>
