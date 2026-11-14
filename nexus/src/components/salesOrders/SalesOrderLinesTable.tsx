@@ -1,6 +1,7 @@
 'use client';
 
-import { useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { SalesOrderItemOption } from '@/app/actions/salesOrders';
 import type { LineDraft } from '@/types/salesOrders';
 
@@ -14,6 +15,26 @@ interface Props {
 const cellInput =
   'w-full rounded border border-border bg-surface px-2 py-1 text-right text-sm text-foreground disabled:opacity-60';
 const money = (n: number) => n.toFixed(2);
+const LIST_MAX_HEIGHT = 256;
+const LIST_WIDTH = 320;
+
+type ListPosition = { top?: number; bottom?: number; left: number; maxHeight: number };
+
+/**
+ * Where the item list goes: fixed under the input (or above it when there is
+ * more room there), so the table's scroll wrapper can't clip it.
+ */
+function listPositionFor(input: HTMLElement): ListPosition {
+  const r = input.getBoundingClientRect();
+  const below = window.innerHeight - r.bottom - 8;
+  const above = r.top - 8;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - LIST_WIDTH - 8));
+  if (below < 160 && above > below) {
+    return { bottom: window.innerHeight - r.top + 4, left, maxHeight: Math.min(LIST_MAX_HEIGHT, above) };
+  }
+  return { top: r.bottom + 4, left, maxHeight: Math.min(LIST_MAX_HEIGHT, Math.max(below, 120)) };
+}
+
 const parseNumber = (raw: string): number | null => {
   if (raw.trim() === '') return null;
   const n = Number(raw);
@@ -34,6 +55,27 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
   }, [items, query]);
   const activeIndex = Math.min(active, Math.max(matches.length - 1, 0));
   const optionId = (i: number) => `${listId}-opt-${i}`;
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [position, setPosition] = useState<ListPosition | null>(null);
+
+  const show = useCallback(() => {
+    if (inputRef.current) setPosition(listPositionFor(inputRef.current));
+    setOpen(true);
+  }, []);
+
+  // Keep the list under the input while the page or the table scrolls.
+  useEffect(() => {
+    if (!open) return;
+    const follow = () => {
+      if (inputRef.current) setPosition(listPositionFor(inputRef.current));
+    };
+    window.addEventListener('scroll', follow, true);
+    window.addEventListener('resize', follow);
+    return () => {
+      window.removeEventListener('scroll', follow, true);
+      window.removeEventListener('resize', follow);
+    };
+  }, [open]);
 
   const pick = (item: SalesOrderItemOption) => {
     onPick(item);
@@ -43,8 +85,9 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
   };
 
   return (
-    <div className="relative">
+    <div>
       <input
+        ref={inputRef}
         type="text"
         role="combobox"
         aria-expanded={open}
@@ -56,18 +99,18 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
         aria-label="Add item"
         autoComplete="off"
         className="w-full rounded border border-dashed border-border bg-surface px-2 py-1 text-sm text-foreground"
-        onClick={() => setOpen(true)}
-        onFocus={() => setOpen(true)}
+        onClick={show}
+        onFocus={show}
         onBlur={() => setOpen(false)}
         onChange={(e) => {
           setQuery(e.target.value);
           setActive(0);
-          setOpen(true);
+          show();
         }}
         onKeyDown={(e) => {
           if (e.key === 'ArrowDown') {
             e.preventDefault();
-            setOpen(true);
+            if (!open) show();
             setActive(Math.min(activeIndex + 1, matches.length - 1));
           } else if (e.key === 'ArrowUp') {
             e.preventDefault();
@@ -80,33 +123,44 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
           }
         }}
       />
-      <ul
-        id={listId}
-        role="listbox"
-        hidden={!open}
-        className="absolute left-0 z-20 mt-1 max-h-64 w-80 overflow-y-auto rounded border border-border bg-surface shadow-lg"
-        onMouseDown={(e) => e.preventDefault()}
-      >
-        {open &&
-          (matches.length === 0 ? (
-            <li className="px-3 py-2 text-xs text-foreground-subtle">No matching items.</li>
-          ) : (
-            matches.map((item, i) => (
-              <li
-                key={item.bc_item_number}
-                id={optionId(i)}
-                role="option"
-                aria-selected={i === activeIndex}
-                className={`cursor-pointer px-3 py-1.5 text-sm text-foreground hover:bg-surface-raised ${
-                  i === activeIndex ? 'bg-surface-raised' : ''
-                }`}
-                onClick={() => pick(item)}
-              >
-                {`${item.bc_item_number} – ${item.display_name}`}
-              </li>
-            ))
-          ))}
-      </ul>
+      {open &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          // Outside the table's scroll wrapper, fixed under the input, so the list isn't clipped.
+          <ul
+            id={listId}
+            role="listbox"
+            className="fixed z-[10000] overflow-y-auto rounded border border-border bg-surface shadow-lg"
+            style={{
+              top: position?.top,
+              bottom: position?.bottom,
+              left: position?.left ?? 0,
+              width: LIST_WIDTH,
+              maxHeight: position?.maxHeight ?? LIST_MAX_HEIGHT,
+            }}
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            {matches.length === 0 ? (
+              <li className="px-3 py-2 text-xs text-foreground-subtle">No matching items.</li>
+            ) : (
+              matches.map((item, i) => (
+                <li
+                  key={item.bc_item_number}
+                  id={optionId(i)}
+                  role="option"
+                  aria-selected={i === activeIndex}
+                  className={`cursor-pointer px-3 py-1.5 text-sm text-foreground hover:bg-surface-raised ${
+                    i === activeIndex ? 'bg-surface-raised' : ''
+                  }`}
+                  onClick={() => pick(item)}
+                >
+                  {`${item.bc_item_number} – ${item.display_name}`}
+                </li>
+              ))
+            )}
+          </ul>,
+          document.body,
+        )}
     </div>
   );
 }

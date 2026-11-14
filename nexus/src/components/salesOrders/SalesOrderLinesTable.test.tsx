@@ -106,6 +106,19 @@ describe('SalesOrderLinesTable', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('the item list is not clipped by an overflow ancestor (rendered outside the table, fixed under the input)', () => {
+    setup([]);
+    const box = screen.getByRole('combobox');
+    fireEvent.focus(box);
+    const list = screen.getByRole('listbox');
+    expect(box).toHaveAttribute('aria-controls', list.id);
+    for (let el = list.parentElement; el; el = el.parentElement) {
+      expect(el.className).not.toMatch(/overflow-(x-|y-)?(auto|hidden|scroll)/);
+    }
+    expect(list.closest('table')).toBeNull();
+    expect(list.style.position === 'fixed' || list.className.includes('fixed')).toBe(true);
+  });
+
   it('keyboard: typing filters, Escape closes', () => {
     setup([]);
     const box = screen.getByRole('combobox');
