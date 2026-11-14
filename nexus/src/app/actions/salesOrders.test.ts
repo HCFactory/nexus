@@ -372,6 +372,12 @@ describe('final review rulings R11/R12', () => {
     expect(mocks.syncSalesOrder).not.toHaveBeenCalled();
   });
 
+  it('R13: Overwrite also refuses an order whose save did not finish', async () => {
+    setup({ sales_orders: [orderRow('o1', { sync_state: 'failed', sync_error: 'Save did not finish: disk full' })] });
+    expect(await overwriteBcWithNexus('o1')).toEqual({ ok: false, error: NOT_SAVED });
+    expect(mocks.syncSalesOrder).not.toHaveBeenCalled();
+  });
+
   it('R11: a successful re-save clears the marker (pending, sync_error null) and Try again works again', async () => {
     setup({
       sales_orders: [orderRow('o1', { sync_state: 'failed', sync_error: 'Save did not finish: disk full' })],

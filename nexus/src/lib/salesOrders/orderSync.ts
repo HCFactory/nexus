@@ -26,6 +26,7 @@ import {
   toBcLine,
   toBcShipToPatch,
 } from './bcOrderMapping'
+import { isUnfinishedSave } from './saveMarker'
 
 export interface OrderSyncDeps {
   supabase: SupabaseClient
@@ -192,6 +193,9 @@ export async function syncSalesOrder(
   opts: { overwrite?: boolean } = {},
 ): Promise<SyncState> {
   const order = await loadOrder(deps, orderId)
+  // Half-written lines: wait for a re-save. Covers the background retry loop
+  // and a sweep that read the order before the save marked it.
+  if (!opts.overwrite && isUnfinishedSave(order)) return 'failed'
   const version = order.local_version
   try {
     const lines = await loadLines(deps, orderId)

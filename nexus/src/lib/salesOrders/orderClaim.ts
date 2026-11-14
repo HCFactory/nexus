@@ -5,16 +5,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { SyncState } from '@/types/salesOrders';
 import { syncSalesOrder, type OrderSyncDeps } from './orderSync';
+import { SAVE_UNFINISHED } from './saveMarker';
 
 export const LEASE_MS = 120_000;
 export const SWEEP_BATCH = 5;
 
-/**
- * sync_error prefix of a save that stopped part-way. Such an order has
- * half-written lines, so neither the sweep nor Try again sends it until a
- * successful re-save (which sets pending and clears sync_error).
- */
-export const SAVE_UNFINISHED = 'Save did not finish';
 
 const ORDERS = 'sales_orders';
 

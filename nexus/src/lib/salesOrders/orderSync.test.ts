@@ -672,6 +672,26 @@ describe('syncSalesOrder: final review fixes', () => {
   })
 })
 
+describe('syncSalesOrder: unfinished save marker (R13)', () => {
+  it('returns failed with no BC call and no DB write for an order whose save did not finish', async () => {
+    setup(order({ sync_state: 'failed', sync_error: 'Save did not finish: disk full', sync_attempts: 2 }), [line()])
+    const before = JSON.stringify(tables)
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    for (const fn of [bc.t.list, bc.t.get, bc.t.create, bc.t.patch, bc.t.remove]) expect(fn).not.toHaveBeenCalled()
+    expect(JSON.stringify(tables)).toBe(before)
+  })
+
+  it('skips only when not overwriting', async () => {
+    setup(order({ sync_state: 'failed', sync_error: 'Save did not finish: disk full' }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID, { overwrite: true })).toBe('synced')
+  })
+
+  it('a failed order with another error still syncs', async () => {
+    setup(order({ sync_state: 'failed', sync_error: 'BC is down' }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+  })
+})
+
 describe('deleteSalesOrderInBc', () => {
   it('removes the BC order with a fresh etag', async () => {
     seedSynced([])

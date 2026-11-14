@@ -6,7 +6,6 @@ import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import {
-  SAVE_UNFINISHED,
   claimOrder,
   leaseUntil,
   releaseOrder,
@@ -15,6 +14,7 @@ import {
 } from '@/lib/salesOrders/orderClaim';
 import { canChangeStatus, canDelete, editableFields, todayIn } from '@/lib/salesOrders/orderRules';
 import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
+import { SAVE_UNFINISHED, isUnfinishedSave } from '@/lib/salesOrders/saveMarker';
 import { fetchAll } from '@/lib/supabase/fetchAll';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type { ListKey } from '@/types/customerReferences';
@@ -744,9 +744,8 @@ async function syncNow(id: string, overwrite: boolean): Promise<{ ok: true; stat
     if (!scope) return { ok: false, error: NO_PERMISSION };
     const order = await loadOrder(scope, id);
     if (!order) return { ok: false, error: NOT_FOUND };
-    if (!overwrite && order.sync_state === 'failed' && (order.sync_error ?? '').startsWith(`${SAVE_UNFINISHED}:`)) {
-      return { ok: false, error: NOT_SAVED };
-    }
+    // Try again and Overwrite alike: the order must be saved again first.
+    if (isUnfinishedSave(order)) return { ok: false, error: NOT_SAVED };
     const state = await syncWithClaim(await buildDeps(scope), id, overwrite ? { overwrite: true } : {});
     if (state === null) return { ok: false, error: BUSY };
     revalidateSalesOrders();
