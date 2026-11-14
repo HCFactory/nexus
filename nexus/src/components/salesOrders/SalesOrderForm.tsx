@@ -428,7 +428,10 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
       )}
 
       <form
-        className="min-h-0 flex-1 overflow-y-auto p-4"
+        // `relative` contains absolutely positioned descendants (e.g. the
+        // sr-only Notes label); without it they position against the page
+        // and stretch the document, adding an extra page scroll.
+        className="relative min-h-0 flex-1 overflow-y-auto p-4"
         onSubmit={(e) => {
           e.preventDefault();
           save();
