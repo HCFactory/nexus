@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fakeSupabase, type FakeSupabase, type Row } from '@/test/fakeSupabase';
 import type { LineDraft, SalesOrderInput } from '@/types/salesOrders';
 
@@ -92,8 +92,12 @@ const lineRow = (id: string, extra: Row = {}): Row => ({
 
 let db: FakeSupabase;
 
+const customer = (id: string, extra: Row = {}): Row => ({
+  id, organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C1', blocked: null, ...extra,
+});
+
 function setup(tables: Record<string, Row[]> = {}) {
-  db = fakeSupabase({ sales_orders: [], sales_order_lines: [], ...tables });
+  db = fakeSupabase({ sales_orders: [], sales_order_lines: [], business_central_customers: [customer('cust-1')], ...tables });
   mocks.createClient.mockResolvedValue(db.client);
   mocks.createServiceClient.mockReturnValue(db.client);
 }
@@ -283,6 +287,126 @@ describe('saveSalesOrder: update', () => {
   it('does not touch an order of another organization', async () => {
     setup({ sales_orders: [orderRow('o1', { organization_id: 'org-2' })] });
     expect(await saveSalesOrder({ ...input(), id: 'o1' })).toEqual({ ok: false, error: 'Sales order not found.' });
+  });
+});
+
+describe('final review fixes: saveSalesOrder', () => {
+  const CUSTOMER_BAD = { ok: false, error: 'Customer not found or blocked.' };
+
+  // I4
+  it('refuses with BUSY while a sync holds the order, and saves once the lease has expired', async () => {
+    setup({ sales_orders: [orderRow('o1', { claimed_until: '2999-01-01T00:00:00.000Z' })], sales_order_lines: [lineRow('l1')] });
+    const save = () => saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 5 })] }), id: 'o1' });
+    expect(await save()).toEqual({ ok: false, error: BUSY });
+    expect(db.writes).toEqual([]);
+    db.tables.sales_orders[0].claimed_until = '2000-01-01T00:00:00.000Z';
+    expect(await save()).toEqual({ ok: true, id: 'o1' });
+  });
+
+  // I7
+  it('create: refuses a missing, other-org or blocked customer', async () => {
+    setup({
+      business_central_customers: [
+        customer('blocked', { blocked: 'All' }),
+        customer('elsewhere', { organization_id: 'org-2' }),
+        customer('no-number', { bc_customer_number: null }),
+      ],
+    });
+    for (const id of ['missing', 'blocked', 'elsewhere', 'no-number']) {
+      expect(await saveSalesOrder(input({ customer_id: id }))).toEqual(CUSTOMER_BAD);
+    }
+    expect(db.writes).toEqual([]);
+  });
+
+  it("create: takes customer_number from the customer row, not the client's", async () => {
+    const res = await saveSalesOrder(input({ customer_number: 'HACKED' }));
+    expect(res).toMatchObject({ ok: true });
+    expect(db.tables.sales_orders[0].customer_number).toBe('C1');
+  });
+
+  it('update: refuses switching to a blocked customer; a valid switch takes its number', async () => {
+    setup({
+      sales_orders: [orderRow('o1')],
+      sales_order_lines: [lineRow('l1')],
+      business_central_customers: [customer('cust-1'), customer('c2', { bc_customer_number: 'C2' }), customer('cb', { blocked: 'Ship' })],
+    });
+    const lines = [line('k1', { id: 'l1' })];
+    expect(await saveSalesOrder({ ...input({ customer_id: 'cb', customer_number: 'CB', lines }), id: 'o1' })).toEqual(CUSTOMER_BAD);
+    expect(db.writes).toEqual([]);
+    expect(await saveSalesOrder({ ...input({ customer_id: 'c2', customer_number: 'WRONG', lines }), id: 'o1' })).toEqual({ ok: true, id: 'o1' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ customer_id: 'c2', customer_number: 'C2' });
+  });
+
+  it('update: an unchanged customer that became blocked can still be saved, keeping its number', async () => {
+    setup({
+      sales_orders: [orderRow('o1')],
+      sales_order_lines: [lineRow('l1')],
+      business_central_customers: [customer('cust-1', { blocked: 'All' })],
+    });
+    const res = await saveSalesOrder({ ...input({ customer_number: 'WRONG', lines: [line('k1', { id: 'l1', quantity: 4 })] }), id: 'o1' });
+    expect(res).toEqual({ ok: true, id: 'o1' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ customer_id: 'cust-1', customer_number: 'C1' });
+  });
+
+  // T11
+  it('marks the order failed when the save breaks after the version bump', async () => {
+    setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
+    db.failOn = (table, op, payload) =>
+      table === 'sales_orders' && op === 'update' && (payload as Row).notes !== undefined ? 'disk full' : null;
+    const res = await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 7 })] }), id: 'o1' });
+    expect(res).toEqual({ ok: false, error: 'Could not save the sales order: disk full' });
+    expect(db.tables.sales_orders[0]).toMatchObject({
+      sync_state: 'failed',
+      sync_error: 'Save did not finish: Could not save the sales order: disk full',
+    });
+    expect(mocks.after).not.toHaveBeenCalled();
+  });
+});
+
+describe('final review fixes: background sync retries (I1)', () => {
+  const T0 = new Date('2026-11-13T10:00:00.000Z');
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  async function runAfterWithTimers() {
+    const p = runAfter();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await p;
+  }
+
+  it('retries while the claim is held, and syncs once it is free', async () => {
+    setup({ sales_orders: [orderRow('o1', { claimed_until: new Date(T0.getTime() + 5_000).toISOString() })], sales_order_lines: [lineRow('l1')] });
+    // the save itself must not be refused: put the lease on after the save
+    db.tables.sales_orders[0].claimed_until = null;
+    expect(await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 3 })] }), id: 'o1' })).toEqual({ ok: true, id: 'o1' });
+    db.tables.sales_orders[0].claimed_until = new Date(T0.getTime() + 5_000).toISOString();
+    await runAfterWithTimers();
+    // attempts at +0s (held), +3s (held), +9s (free)
+    expect(mocks.syncSalesOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a pending result and stops once synced', async () => {
+    mocks.syncSalesOrder.mockResolvedValueOnce('pending').mockResolvedValueOnce('pending').mockResolvedValue('synced');
+    await saveSalesOrder(input());
+    await runAfterWithTimers();
+    expect(mocks.syncSalesOrder).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up after 3 more attempts', async () => {
+    mocks.syncSalesOrder.mockResolvedValue('pending');
+    await saveSalesOrder(input());
+    await runAfterWithTimers();
+    expect(mocks.syncSalesOrder).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not retry a failed result', async () => {
+    mocks.syncSalesOrder.mockResolvedValue('failed');
+    await saveSalesOrder(input());
+    await runAfterWithTimers();
+    expect(mocks.syncSalesOrder).toHaveBeenCalledTimes(1);
   });
 });
 

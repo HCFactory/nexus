@@ -52,6 +52,7 @@ const HAND_STATUS_ONLY = 'Shipped and Invoiced are set by the Ship and Create in
 const DELETE_RULE = 'Only Draft or Final orders can be deleted.';
 const CHANGED_ELSEWHERE = 'This order was changed by someone else. Reload and try again.';
 const LINE_GONE = 'A line on this order no longer exists. Reload and try again.';
+const CUSTOMER_BAD = 'Customer not found or blocked.';
 
 const STATUS_LABELS: Record<OrderStatus, string> = {
   draft: 'Draft',
@@ -124,11 +125,28 @@ async function buildDeps(scope: Scope): Promise<OrderSyncDeps> {
   };
 }
 
-/** Sync the order after the response is sent. Never throws; a missed sync is picked up by the list sweep. */
+/**
+ * Waits between background attempts when the order is claimed by another run
+ * or ends 'pending' (edited mid-sync). 21s in all, well inside LEASE_MS, so a
+ * normal sync holding the claim has finished by the last attempt.
+ */
+const RETRY_DELAYS_MS = [3_000, 6_000, 12_000];
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Sync the order after the response is sent, retrying a few times while the
+ * claim is held or the result is 'pending'. Never throws; a missed sync is
+ * picked up by the list sweep.
+ */
 function syncInBackground(scope: Scope, orderId: string) {
   after(async () => {
     try {
-      await syncWithClaim(await buildDeps(scope), orderId);
+      const deps = await buildDeps(scope);
+      for (let attempt = 0; ; attempt += 1) {
+        const state = await syncWithClaim(deps, orderId);
+        if ((state !== null && state !== 'pending') || attempt >= RETRY_DELAYS_MS.length) break;
+        await sleep(RETRY_DELAYS_MS[attempt]);
+      }
     } catch (e) {
       console.error(`[sales-orders] background sync of ${orderId} failed:`, e);
     }
@@ -433,6 +451,32 @@ async function writeLines(scope: Scope, orderId: string, existing: SalesOrderLin
   if (inserts.length > 0) check(await supabase.from(LINES).insert(inserts), 'Could not save the lines');
 }
 
+/** The customer row (scoped to org + connection); null when missing or without a BC number. */
+async function loadCustomer(
+  scope: Scope,
+  customerId: string,
+): Promise<{ id: string; bc_customer_number: string; blocked: string | null } | null> {
+  const row = check(
+    await createServiceClient()
+      .from('business_central_customers')
+      .select('id, bc_customer_number, blocked')
+      .eq('id', customerId)
+      .eq('organization_id', scope.orgId)
+      .eq('bc_connection_id', scope.bcConnectionId)
+      .maybeSingle(),
+    'Could not load the customer',
+  ) as { id: string; bc_customer_number: string | null; blocked: string | null } | null;
+  if (!row || !row.bc_customer_number) return null;
+  return { id: row.id, bc_customer_number: row.bc_customer_number, blocked: row.blocked ?? null };
+}
+
+/** A customer that can take an order: exists for this org + connection and isn't blocked. */
+async function orderableCustomerNumber(scope: Scope, customerId: string): Promise<string | null> {
+  const c = await loadCustomer(scope, customerId);
+  // "Not blocked" is stored as null (normalizeBlocked), same rule as the form's customer list.
+  return c && c.blocked === null ? c.bc_customer_number : null;
+}
+
 async function createOrder(scope: Scope, input: SalesOrderInput): Promise<string> {
   const supabase = createServiceClient();
   const inserted = check(
@@ -482,8 +526,10 @@ export async function saveSalesOrder(
 
     if (!input.id) {
       if (!canChangeStatus('draft', status)) return { ok: false, error: HAND_STATUS_ONLY };
-      if (!input.customer_id || !input.customer_number) return { ok: false, error: 'Choose a customer.' };
-      const id = await createOrder(scope, input);
+      if (!input.customer_id) return { ok: false, error: 'Choose a customer.' };
+      const customerNumber = await orderableCustomerNumber(scope, input.customer_id);
+      if (!customerNumber) return { ok: false, error: CUSTOMER_BAD };
+      const id = await createOrder(scope, { ...input, customer_number: customerNumber });
       syncInBackground(scope, id);
       revalidateSalesOrders();
       return { ok: true, id };
@@ -491,12 +537,27 @@ export async function saveSalesOrder(
 
     const existing = await loadOrder(scope, input.id);
     if (!existing) return { ok: false, error: NOT_FOUND };
+    // A running sync reads the order; don't change it underneath.
+    if (existing.claimed_until && Date.parse(existing.claimed_until) > Date.now()) return { ok: false, error: BUSY };
     if (status !== existing.status && !canChangeStatus(existing.status, status)) {
       return { ok: false, error: HAND_STATUS_ONLY };
     }
+    // The customer number always comes from the customer row, never the client.
+    // A new customer must exist and not be blocked; an unchanged one (even if
+    // blocked since) keeps the order's number.
+    let customerNumber = existing.customer_number;
+    if (input.customer_id !== existing.customer_id) {
+      const n = input.customer_id ? await orderableCustomerNumber(scope, input.customer_id) : null;
+      if (!n) return { ok: false, error: CUSTOMER_BAD };
+      customerNumber = n;
+    }
     const existingLines = await loadLines(scope, existing.id);
     // An empty order date means "keep the current one", for the lock check and the write alike.
-    const edited: SalesOrderInput = { ...input, order_date: input.order_date || existing.order_date };
+    const edited: SalesOrderInput = {
+      ...input,
+      customer_number: customerNumber,
+      order_date: input.order_date || existing.order_date,
+    };
     const locked = editableFields(existing.status) !== 'all';
     if (locked && lockedChange(existing, existingLines, edited)) {
       return { ok: false, error: lockedMessage(existing.status) };
@@ -518,27 +579,45 @@ export async function saveSalesOrder(
     ) as { id: string }[] | null;
     if (!taken || taken.length === 0) return { ok: false, error: CHANGED_ELSEWHERE };
 
-    // 2. Write the lines and header.
-    if (!locked) await writeLines(scope, existing.id, existingLines, edited);
-    check(
-      await scoped(scope, createServiceClient().from(ORDERS).update({
-        ...(locked ? {} : headerValues(edited)),
-        status,
-        notes: input.notes ?? '',
-        updated_at: nowIso(),
-      }).eq('id', existing.id)),
-      'Could not save the sales order',
-    );
+    try {
+      // 2. Write the lines and header.
+      if (!locked) await writeLines(scope, existing.id, existingLines, edited);
+      check(
+        await scoped(scope, createServiceClient().from(ORDERS).update({
+          ...(locked ? {} : headerValues(edited)),
+          status,
+          notes: input.notes ?? '',
+          updated_at: nowIso(),
+        }).eq('id', existing.id)),
+        'Could not save the sales order',
+      );
 
-    // 3. Bump again, so a sync that read the order during step 2 (version
-    //    v+1, half-written lines) can't mark it 'synced'. If another save has
-    //    already moved past v+1, its own final bump does the same job.
-    check(
-      await scoped(scope, createServiceClient().from(ORDERS).update({ local_version: v + 2, sync_state: 'pending' })
-        .eq('id', existing.id))
-        .eq('local_version', v + 1),
-      'Could not save the sales order',
-    );
+      // 3. Bump again, so a sync that read the order during step 2 (version
+      //    v+1, half-written lines) can't mark it 'synced'. If another save has
+      //    already moved past v+1, its own final bump does the same job.
+      check(
+        await scoped(scope, createServiceClient().from(ORDERS).update({ local_version: v + 2, sync_state: 'pending' })
+          .eq('id', existing.id))
+          .eq('local_version', v + 1),
+        'Could not save the sales order',
+      );
+    } catch (e) {
+      // The save stopped part-way: mark it failed with the reason, not pending.
+      const message = errorMessage(e);
+      try {
+        check(
+          await scoped(scope, createServiceClient().from(ORDERS).update({
+            sync_state: 'failed',
+            sync_error: `Save did not finish: ${message}`,
+            updated_at: nowIso(),
+          }).eq('id', existing.id)),
+          'Could not save the sales order',
+        );
+      } catch (markError) {
+        console.error('[sales-orders] could not mark the unfinished save as failed:', markError);
+      }
+      return { ok: false, error: message };
+    }
 
     syncInBackground(scope, existing.id);
     revalidateSalesOrders();
