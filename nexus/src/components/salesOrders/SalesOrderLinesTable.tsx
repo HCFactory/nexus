@@ -167,8 +167,8 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
 
 /**
  * Number cell that keeps the raw text while editing so it can be empty
- * mid-edit. Valid values commit on change; blur reverts invalid input, and an
- * empty field commits `emptyValue` (or reverts when that is null).
+ * mid-edit. Valid values commit on change; blur reverts invalid input. An
+ * empty field calls `onClear` when given, otherwise it reverts.
  */
 function NumberCell({
   label,
@@ -176,16 +176,16 @@ function NumberCell({
   disabled,
   step,
   valid,
-  emptyValue,
   onCommit,
+  onClear,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   disabled: boolean;
   step?: string;
   valid: (n: number) => boolean;
-  emptyValue: number | null;
   onCommit: (n: number) => void;
+  onClear?: () => void;
 }) {
   const [text, setText] = useState<string | null>(null);
   return (
@@ -194,7 +194,7 @@ function NumberCell({
       aria-label={label}
       step={step}
       disabled={disabled}
-      value={text ?? String(value)}
+      value={text ?? (value === null ? '' : String(value))}
       className={cellInput}
       onChange={(e) => {
         setText(e.target.value);
@@ -202,11 +202,17 @@ function NumberCell({
         if (n !== null && valid(n)) onCommit(n);
       }}
       onBlur={() => {
-        if (text !== null && text.trim() === '' && emptyValue !== null) onCommit(emptyValue);
+        if (text !== null && text.trim() === '' && onClear) onClear();
         setText(null);
       }}
     />
   );
+}
+
+/** Greyed hint under a blank cell: BC's value after a sync, else the estimate marked (est.). */
+function BlankHint({ bc, estimate }: { bc: number | null; estimate: number | null | undefined }) {
+  const text = bc !== null ? money(bc) : estimate !== null && estimate !== undefined ? `${money(estimate)} (est.)` : null;
+  return text === null ? null : <span className="mt-0.5 block text-right text-xs text-foreground-subtle">{text}</span>;
 }
 
 export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) {
@@ -222,7 +228,8 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
         description: item.display_name,
         quantity: 1,
         unit_price: null,
-        discount_percent: 0,
+        // null = BC decides (its price-list discount applies).
+        discount_percent: null,
         unit_of_measure_code: item.base_unit_of_measure_code ?? '',
         amount_incl_tax: null,
         estimate_price: item.unit_price,
@@ -257,7 +264,6 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   disabled={locked}
                   value={line.quantity}
                   valid={(n) => n > 0}
-                  emptyValue={null}
                   onCommit={(n) => update(line.key, { quantity: n })}
                 />
               </td>
@@ -272,29 +278,21 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   className={cellInput}
                   onChange={(e) => update(line.key, { unit_price: parseNumber(e.target.value) })}
                 />
-                {line.unit_price === null &&
-                  (line.bc_unit_price !== null ? (
-                    <span className="mt-0.5 block text-right text-xs text-foreground-subtle">
-                      {money(line.bc_unit_price)}
-                    </span>
-                  ) : (
-                    line.estimate_price !== null && (
-                      <span className="mt-0.5 block text-right text-xs text-foreground-subtle">
-                        {`${money(line.estimate_price)} (est.)`}
-                      </span>
-                    )
-                  ))}
+                {line.unit_price === null && <BlankHint bc={line.bc_unit_price} estimate={line.estimate_price} />}
               </td>
               <td className="w-24 px-3 py-2">
                 <NumberCell
                   label="Disc %"
                   step="0.01"
                   disabled={locked}
-                  value={line.discount_percent ?? 0}
+                  value={line.discount_percent}
                   valid={(n) => n >= 0 && n <= 100}
-                  emptyValue={0}
                   onCommit={(n) => update(line.key, { discount_percent: n })}
+                  onClear={() => update(line.key, { discount_percent: null })}
                 />
+                {line.discount_percent === null && (
+                  <BlankHint bc={line.bc_line_discount_percent} estimate={line.estimate_discount_percent} />
+                )}
               </td>
               <td className="whitespace-nowrap px-3 py-2 text-right text-foreground-muted">
                 {line.amount_incl_tax === null ? '—' : money(line.amount_incl_tax)}

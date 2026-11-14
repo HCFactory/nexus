@@ -156,7 +156,7 @@ describe('SalesOrderLinesTable', () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
-  it('Disc %: empty commits 0, over 100 reverts', () => {
+  it('Disc %: over 100 reverts; clearing a typed discount goes back to null', () => {
     const onChange = setup([line({ discount_percent: 10 })]);
     const disc = screen.getByLabelText('Disc %') as HTMLInputElement;
     fireEvent.change(disc, { target: { value: '150' } });
@@ -165,6 +165,38 @@ describe('SalesOrderLinesTable', () => {
     expect(disc.value).toBe('10');
     fireEvent.change(disc, { target: { value: '' } });
     fireEvent.blur(disc);
-    expect((onChange.mock.calls.at(-1)![0] as LineDraft[])[0].discount_percent).toBe(0);
+    expect((onChange.mock.calls.at(-1)![0] as LineDraft[])[0].discount_percent).toBeNull();
+  });
+
+  it('Disc %: typing sets the discount', () => {
+    const onChange = setup([line({ discount_percent: null })]);
+    const disc = screen.getByLabelText('Disc %') as HTMLInputElement;
+    expect(disc.value).toBe('');
+    fireEvent.change(disc, { target: { value: '7.5' } });
+    expect((onChange.mock.calls.at(-1)![0] as LineDraft[])[0].discount_percent).toBe(7.5);
+  });
+
+  it('Disc %: blank shows the estimated discount greyed with (est.) before sync', () => {
+    setup([line({ discount_percent: null, estimate_discount_percent: 5 })]);
+    expect(screen.getByText('5.00 (est.)')).toBeInTheDocument();
+  });
+
+  it('Disc %: blank shows BC’s discount after sync, without (est.)', () => {
+    setup([line({ discount_percent: null, estimate_discount_percent: 5, bc_line_discount_percent: 12 })]);
+    expect(screen.getByText('12.00')).toBeInTheDocument();
+    expect(screen.queryByText('5.00 (est.)')).toBeNull();
+  });
+
+  it('Disc %: a typed discount hides the estimate', () => {
+    setup([line({ discount_percent: 3, estimate_discount_percent: 5, bc_line_discount_percent: 12 })]);
+    expect(screen.queryByText('5.00 (est.)')).toBeNull();
+    expect(screen.queryByText('12.00')).toBeNull();
+  });
+
+  it('a new line leaves the discount to BC (null)', () => {
+    const onChange = setup([]);
+    fireEvent.click(screen.getByPlaceholderText('Add item…'));
+    fireEvent.click(screen.getByText('P100 – Pesto sauce'));
+    expect((onChange.mock.calls[0][0] as LineDraft[])[0].discount_percent).toBeNull();
   });
 });

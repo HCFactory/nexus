@@ -175,6 +175,12 @@ describe('saveSalesOrder: create', () => {
     expect(db.writes).toEqual([]);
   });
 
+  it('accepts a null discount and stores it as null (BC decides); a typed 0 stays 0', async () => {
+    const res = await saveSalesOrder(input({ lines: [line('k1', { discount_percent: null }), line('k2', { item_number: '2000', discount_percent: 0 })] }));
+    expect(res).toMatchObject({ ok: true });
+    expect(db.tables.sales_order_lines.map((l) => l.discount_percent)).toEqual([null, 0]);
+  });
+
   it('refuses to create a Shipped order', async () => {
     expect(await saveSalesOrder(input({ status: 'shipped' }))).toEqual({ ok: false, error: 'Shipped and Invoiced are set by the Ship and Create invoice buttons.' });
   });
@@ -567,7 +573,7 @@ describe('reads', () => {
   it('getSalesOrderFormContext returns customers, non-blocked items, selects and the most-used location', async () => {
     setup({
       business_central_customers: [
-        { id: 'c1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C1', display_name: 'A', location_code: 'MAIN' },
+        { id: 'c1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C1', display_name: 'A', location_code: 'MAIN', customer_price_group: 'WHSL' },
         { id: 'c2', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C2', display_name: 'B', location_code: 'MAIN' },
         { id: 'c3', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C3', display_name: 'C', location_code: 'EAST' },
         { id: 'c4', organization_id: 'org-2', bc_connection_id: 'conn-1', bc_customer_number: 'C4', display_name: 'D', location_code: 'EAST' },
@@ -578,10 +584,17 @@ describe('reads', () => {
         { id: 'i1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', blocked: false },
         { id: 'i2', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '2000', display_name: 'Old', unit_price: 1, base_unit_of_measure_code: 'EA', blocked: true },
       ],
+      business_central_sales_price_list_lines: [
+        { id: 'p1', organization_id: 'org-1', bc_connection_id: 'conn-1', item_number: '1000', source_no: 'WHSL', unit_price: 1.5 },
+        { id: 'p2', organization_id: 'org-2', bc_connection_id: 'conn-1', item_number: '1000', source_no: 'WHSL', unit_price: 1 },
+        { id: 'p3', organization_id: 'org-1', bc_connection_id: 'conn-2', item_number: '1000', source_no: 'WHSL', unit_price: 1 },
+      ],
     });
     mocks.getSelectOptions.mockImplementation(async (k: string) => [{ code: k, label: k }]);
     const ctx = await getSalesOrderFormContext();
     expect(ctx.customers.map((c) => c.id)).toEqual(['c1', 'c2', 'c3']);
+    expect(ctx.customers[0].customer_price_group).toBe('WHSL');
+    expect(ctx.priceListLines.map((l) => l.id)).toEqual(['p1']);
     expect(ctx.items).toEqual([{ bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA' }]);
     expect(Object.keys(ctx.selectOptions).sort()).toEqual(
       ['customerPostingGroups', 'generalBusinessPostingGroups', 'paymentTerms', 'shipmentMethods', 'taxAreas'],

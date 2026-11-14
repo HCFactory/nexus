@@ -9,7 +9,7 @@ const customer: CustomerRow = {
   email_cc: 'cc@acme.com', contact_no: 'CT001', mobile_phone_no: '555-2222',
   ship_to_code: 'DOCK', shipment_method_code: 'GROUND', payment_terms_code: 'NET30',
   tax_area_code: 'HI-STATE', tax_liable: true, customer_posting_group: 'DOM',
-  gen_bus_posting_group: 'RETAIL', location_code: 'MAIN',
+  gen_bus_posting_group: 'RETAIL', location_code: 'MAIN', customer_price_group: '',
 }
 const dock: ShipToRow = {
   id: 's1', organization_id: 'o', bc_connection_id: 'b', customer_number: '10000',

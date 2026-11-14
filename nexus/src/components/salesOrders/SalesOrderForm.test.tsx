@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SalesOrderFormContext } from '@/app/actions/salesOrders';
-import type { CustomerRow, SalesOrderLineRow, SalesOrderRow, ShipToRow } from '@/types/salesOrders';
+import type { CustomerRow, SalesOrderLineRow, SalesOrderRow, SalesPriceListLineRow, ShipToRow } from '@/types/salesOrders';
 import { SalesOrderForm } from './SalesOrderForm';
 
 const orderActions = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ const customer = (over: Partial<CustomerRow>): CustomerRow => ({
   city: 'Austin', state: 'TX', postal_code: '78701', country: 'US', phone_number: '555-0100', email: 'a@acme.test',
   email_cc: 'cc@acme.test', contact_no: 'CT1', mobile_phone_no: '555-0101', ship_to_code: 'DOCK',
   shipment_method_code: 'UPS', payment_terms_code: 'NET30', tax_area_code: 'TX', tax_liable: true,
-  customer_posting_group: 'DOMESTIC', gen_bus_posting_group: 'DOM', location_code: 'W1', ...over,
+  customer_posting_group: 'DOMESTIC', gen_bus_posting_group: 'DOM', location_code: 'W1', customer_price_group: 'WHSL', ...over,
 });
 const acme = customer({});
 const beta = customer({
@@ -32,6 +32,7 @@ const beta = customer({
   state: 'HI', postal_code: '96720', phone_number: '555-0200', email: 'b@beta.test', email_cc: '', contact_no: 'CT2',
   mobile_phone_no: '', ship_to_code: '', shipment_method_code: 'GROUND', payment_terms_code: 'NET15',
   tax_area_code: 'HI', tax_liable: false, customer_posting_group: 'EXPORT', gen_bus_posting_group: 'EXP',
+  customer_price_group: '',
 });
 
 const opts = (...codes: string[]) => codes.map((c) => ({ code: c, label: c }));
@@ -47,7 +48,15 @@ const context: SalesOrderFormContext = {
   },
   companyLocation: 'MAIN',
   today: '2026-11-13',
+  priceListLines: [],
 };
+
+const priceLine = (o: Partial<SalesPriceListLineRow>): SalesPriceListLineRow => ({
+  id: 'p', organization_id: 'o', bc_connection_id: 'b', price_list_code: 'PL1', line_no: 1, list_status: 'Active',
+  source_type: 'Customer Price Group', source_no: 'WHSL', item_number: 'P100', unit_of_measure_code: '',
+  minimum_quantity: 0, starting_date: null, ending_date: null, unit_price: 10, line_discount_percent: 0,
+  amount_type: 'Price', last_synced_at: null, created_at: '', updated_at: '', ...o,
+});
 
 const dock = {
   id: 'st-1', customer_number: 'C1', code: 'DOCK', name: 'Loading dock', address: '2 Dock Rd', address_2: '',
@@ -237,6 +246,49 @@ describe('SalesOrderForm — fields', () => {
     renderForm({ order: order(), lines: [synced, unsynced], shipTos: [dock] });
     expect(screen.getByText('11.25')).toBeInTheDocument();
     expect(screen.getAllByText('12.50 (est.)')).toHaveLength(1);
+  });
+
+  it('the estimate uses the customer price group price; quantity crossing the minimum changes it', () => {
+    const ctx = {
+      ...context,
+      priceListLines: [
+        priceLine({ id: 'p1', unit_price: 10, minimum_quantity: 0 }),
+        priceLine({ id: 'p2', unit_price: 9, minimum_quantity: 5 }),
+        priceLine({ id: 'p3', source_no: 'OTHER', unit_price: 1 }),
+        priceLine({ id: 'p4', amount_type: 'Discount', unit_price: 0, line_discount_percent: 4 }),
+      ],
+    };
+    const row = { ...lineRow, bc_unit_price: null, discount_percent: null } as SalesOrderLineRow;
+    renderForm({ order: order(), lines: [row], shipTos: [dock], context: ctx });
+    expect(screen.getByText('10.00 (est.)')).toBeInTheDocument();
+    expect(screen.getByText('4.00 (est.)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '5' } });
+    expect(screen.getByText('9.00 (est.)')).toBeInTheDocument();
+  });
+
+  it('the estimate falls back to the item price for a customer without a matching price group', () => {
+    const ctx = { ...context, priceListLines: [priceLine({ unit_price: 10 })] };
+    const row = { ...lineRow, bc_unit_price: null } as SalesOrderLineRow;
+    renderForm({ order: order({ customer_id: 'cust-2', customer_number: 'C2' }), lines: [row], context: ctx });
+    expect(screen.getByText('12.50 (est.)')).toBeInTheDocument();
+  });
+
+  it('the estimate follows the order date (a list that has not started yet does not apply)', () => {
+    const ctx = { ...context, priceListLines: [priceLine({ unit_price: 10, starting_date: '2026-12-01' })] };
+    const row = { ...lineRow, bc_unit_price: null } as SalesOrderLineRow;
+    renderForm({ order: order(), lines: [row], shipTos: [dock], context: ctx });
+    expect(screen.getByText('12.50 (est.)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-12-02' } });
+    expect(screen.getByText('10.00 (est.)')).toBeInTheDocument();
+  });
+
+  it('saves a blank discount as null', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
+    const row = { ...lineRow, discount_percent: null } as SalesOrderLineRow;
+    renderForm({ order: order(), lines: [row], shipTos: [dock] });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
+    expect(orderActions.saveSalesOrder.mock.calls[0][0].lines[0].discount_percent).toBeNull();
   });
 
   it('totals come from the BC read-back', () => {

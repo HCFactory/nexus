@@ -349,6 +349,7 @@ export async function syncSalesOrder(
       await updateLine(deps, orderId, row.id, {
         bc_etag: l.bc_etag,
         bc_unit_price: l.bc_unit_price,
+        bc_line_discount_percent: l.bc_line_discount_percent,
         amount_incl_tax: l.amount_incl_tax,
       })
     }

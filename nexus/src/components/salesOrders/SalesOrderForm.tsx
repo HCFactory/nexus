@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { bestPrice } from '@/lib/salesOrders/bestPrice';
 import { applyShipTo, customerDefaults } from '@/lib/salesOrders/orderDefaults';
 import { canDelete, editableFields } from '@/lib/salesOrders/orderRules';
 import type {
@@ -127,7 +128,7 @@ function lineDraftOf(row: SalesOrderLineRow, estimates: Map<string, number | nul
     description: row.description ?? '',
     quantity: Number(row.quantity),
     unit_price: num(row.unit_price),
-    discount_percent: Number(row.discount_percent ?? 0),
+    discount_percent: num(row.discount_percent),
     unit_of_measure_code: row.unit_of_measure_code ?? '',
     amount_incl_tax: num(row.amount_incl_tax),
     estimate_price: estimates.get(row.item_number) ?? null,
@@ -161,6 +162,8 @@ function customerFromHeader(id: string, number: string, defaultCode: string, h: 
     customer_posting_group: h.customer_posting_group,
     gen_bus_posting_group: h.gen_bus_posting_group,
     location_code: h.location_code,
+    // Unknown for a customer that is no longer pickable; the estimate falls back to customer-specific and all-customer lists.
+    customer_price_group: '',
   };
 }
 
@@ -180,7 +183,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo }: Props) {
   const router = useRouter();
-  const { customers, items, selectOptions, companyLocation, today } = context;
+  const { customers, items, selectOptions, companyLocation, today, priceListLines } = context;
   const initialCustomer = order ? customers.find((c) => c.id === order.customer_id) ?? null : null;
 
   const [customerId, setCustomerId] = useState(order?.customer_id ?? '');
@@ -229,11 +232,37 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const currentCustomer = (): CustomerRow =>
     customers.find((c) => c.id === customerId) ?? customerFromHeader(customerId, customerNumber, defaultShipCode, header);
 
+  // The price estimate for blank lines: BC's best price from the customer's price lists, else the item price.
+  const priceGroup = customers.find((c) => c.id === customerId)?.customer_price_group ?? '';
+  const itemPrices = useMemo(() => new Map(items.map((i) => [i.bc_item_number, i.unit_price])), [items]);
+  const estimateOf = (l: LineDraft) =>
+    bestPrice(
+      priceListLines,
+      {
+        customerNumber,
+        priceGroup,
+        itemNumber: l.item_number,
+        uom: l.unit_of_measure_code,
+        quantity: l.quantity,
+        orderDate,
+      },
+      itemPrices.get(l.item_number) ?? null,
+    );
+
   // Read-back amounts and BC prices arrive on refresh; show them without discarding the rep's unsaved edits.
-  const readBack = new Map(lines.map((l) => [l.id, { amount: num(l.amount_incl_tax), price: num(l.bc_unit_price) }]));
+  const readBack = new Map(
+    lines.map((l) => [
+      l.id,
+      { amount: num(l.amount_incl_tax), price: num(l.bc_unit_price), discount: num(l.bc_line_discount_percent) },
+    ]),
+  );
   const shownLines = draftLines.map((l) => {
+    const est = estimateOf(l);
+    const withEstimate = { ...l, estimate_price: est.unitPrice, estimate_discount_percent: est.discountPercent };
     const r = l.id ? readBack.get(l.id) : undefined;
-    return r ? { ...l, amount_incl_tax: r.amount, bc_unit_price: r.price } : l;
+    return r
+      ? { ...withEstimate, amount_incl_tax: r.amount, bc_unit_price: r.price, bc_line_discount_percent: r.discount }
+      : withEstimate;
   });
 
   const setField = <K extends keyof OrderHeaderDefaults>(key: K, value: OrderHeaderDefaults[K]) =>

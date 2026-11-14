@@ -59,6 +59,8 @@ export interface CustomerRow {
   customer_posting_group: string
   gen_bus_posting_group: string
   location_code: string
+  /** '' when the customer has no price group. */
+  customer_price_group: string
 }
 
 export interface SalesOrderRow {
@@ -192,6 +194,8 @@ export interface LineDraft {
   unit_of_measure_code: string
   amount_incl_tax: number | null
   estimate_price: number | null
+  /** The price-list discount BC would likely apply; shown greyed for a blank discount before sync. */
+  estimate_discount_percent?: number | null
   /** BC's unit price from the last sync; shown for a blank price once synced. */
   bc_unit_price: number | null
   /** BC's line discount from the last sync. */

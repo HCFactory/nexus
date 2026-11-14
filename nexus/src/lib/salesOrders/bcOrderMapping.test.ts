@@ -129,6 +129,13 @@ describe('toBcLine', () => {
   it('omits Unit_of_Measure_Code when empty', () => {
     expect(toBcLine('SO-1', line({ unit_of_measure_code: '' }), 'MAIN')).not.toHaveProperty('Unit_of_Measure_Code')
   })
+  it('a null discount is not sent to BC (BC decides)', () => {
+    expect(toBcLine('SO-1', line({ discount_percent: null }), 'MAIN')).not.toHaveProperty('Line_Discount_Percent')
+  })
+  it('a typed discount is sent, 0 included', () => {
+    expect(toBcLine('SO-1', line({ discount_percent: 7.5 }), 'MAIN')).toHaveProperty('Line_Discount_Percent', 7.5)
+    expect(toBcLine('SO-1', line({ discount_percent: 0 }), 'MAIN')).toHaveProperty('Line_Discount_Percent', 0)
+  })
 })
 
 describe('readBack', () => {
@@ -136,7 +143,7 @@ describe('readBack', () => {
     const r = readBack(
       rec({ No: 'SO-1', Due_Date: '2026-12-01', Document_Date: '0001-01-01', Posting_Date: '2026-11-01' }, 'H'),
       [
-        rec({ Line_No: 10000, Unit_Price: 2.5, Amount_Including_VAT: 8, Total_Amount_Excl_VAT: 0, Total_VAT_Amount: 0, Total_Amount_Incl_VAT: 0 }, 'L1'),
+        rec({ Line_No: 10000, Unit_Price: 2.5, Line_Discount_Percent: 4, Amount_Including_VAT: 8, Total_Amount_Excl_VAT: 0, Total_VAT_Amount: 0, Total_Amount_Incl_VAT: 0 }, 'L1'),
         rec({ Line_No: 20000 }, 'L2'),
       ],
       rec({ amount: 7, amountIncludingVAT: 8 }),
@@ -145,8 +152,8 @@ describe('readBack', () => {
       bc_order_number: 'SO-1', bc_etag: 'H', bc_due_date: '2026-12-01', bc_document_date: null, bc_posting_date: '2026-11-01',
       total_excl_tax: 7, total_tax: 1, total_incl_tax: 8,
       lines: [
-        { bc_line_no: 10000, bc_etag: 'L1', bc_unit_price: 2.5, amount_incl_tax: 8 },
-        { bc_line_no: 20000, bc_etag: 'L2', bc_unit_price: null, amount_incl_tax: null },
+        { bc_line_no: 10000, bc_etag: 'L1', bc_unit_price: 2.5, bc_line_discount_percent: 4, amount_incl_tax: 8 },
+        { bc_line_no: 20000, bc_etag: 'L2', bc_unit_price: null, bc_line_discount_percent: null, amount_incl_tax: null },
       ],
     })
   })

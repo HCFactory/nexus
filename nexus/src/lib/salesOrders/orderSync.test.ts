@@ -334,6 +334,7 @@ describe('syncSalesOrder: first sync', () => {
     expect(lineCreates()).toHaveLength(2)
     expect(lineCreates()[0][1]).toMatchObject({ Document_No: 'SO1001', No: 'ITEM1', Unit_Price: 5 })
     expect(lineCreates()[1][1]).not.toHaveProperty('Unit_Price')
+    expect(lineCreates()[0][1]).toHaveProperty('Line_Discount_Percent', 0)
 
     const o = orderRow()
     expect(o).toMatchObject({
@@ -484,6 +485,25 @@ describe('syncSalesOrder: existing order', () => {
     expect(bc.t.patch.mock.calls.filter(([s]) => isLineSource(s))).toHaveLength(0)
     // BC already has ship-to WH1, so only the header patch is sent
     expect(headerPatches()).toHaveLength(1)
+  })
+
+  it('a null discount is not patched over BC’s price-list discount', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    bc.lines.get('SO900|10000')!.fields.Line_Discount_Percent = 12
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), rows.map((r) => ({ ...r, discount_percent: null })))
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(bc.t.patch.mock.calls.filter(([s]) => isLineSource(s))).toHaveLength(0)
+    expect(lineRow('l1')).toMatchObject({ discount_percent: null, bc_line_discount_percent: 12 })
+  })
+
+  it('a typed discount is patched to BC', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag }), rows.map((r) => ({ ...r, discount_percent: 5 })))
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    const lp = bc.t.patch.mock.calls.filter(([s]) => isLineSource(s))
+    expect(lp).toHaveLength(1)
+    expect(lp[0][3]).toEqual({ Line_Discount_Percent: 5 })
+    expect(lineRow('l1')).toMatchObject({ bc_line_discount_percent: 5 })
   })
 
   it('removes a removed line in BC, then deletes the local row', async () => {

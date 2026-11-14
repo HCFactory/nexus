@@ -26,6 +26,7 @@ import type {
   SalesOrderLineRow,
   SalesOrderListRow,
   SalesOrderRow,
+  SalesPriceListLineRow,
   SyncState,
 } from '@/types/salesOrders';
 import { getSelectOptions } from './customerReferenceLists';
@@ -47,6 +48,8 @@ export interface SalesOrderFormContext {
   selectOptions: Record<string, Option[]>;
   companyLocation: string;
   today: string;
+  /** BC sales price list lines (read-only copies) for the order form's price estimate. */
+  priceListLines: SalesPriceListLineRow[];
 }
 
 const ORDERS = 'sales_orders';
@@ -94,7 +97,7 @@ const CUSTOMER_COLUMNS = [
   'id', 'bc_customer_number', 'display_name', 'address_line_1', 'address_line_2', 'city', 'state', 'postal_code',
   'country', 'phone_number', 'email', 'email_cc', 'contact_no', 'mobile_phone_no', 'ship_to_code',
   'shipment_method_code', 'payment_terms_code', 'tax_area_code', 'tax_liable', 'customer_posting_group',
-  'gen_bus_posting_group', 'location_code',
+  'gen_bus_posting_group', 'location_code', 'customer_price_group',
 ].join(', ');
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -285,10 +288,12 @@ function mostUsedLocation(customers: CustomerRow[]): string {
 /** Everything the order form needs: customers, sellable items, dropdowns, default location, today. */
 export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext> {
   const scope = await viewScope();
-  if (!scope) return { customers: [], items: [], selectOptions: {}, companyLocation: '', today: todayIn(null) };
+  if (!scope) {
+    return { customers: [], items: [], selectOptions: {}, companyLocation: '', today: todayIn(null), priceListLines: [] };
+  }
   const supabase = await createClient();
 
-  const [customers, items, lists] = await Promise.all([
+  const [customers, items, lists, priceListLines] = await Promise.all([
     fetchAll<CustomerRow>(
       () =>
         supabase
@@ -319,6 +324,20 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
       'items',
     ),
     Promise.all(SELECT_KEYS.map((k) => getSelectOptions(k))),
+    // All customers' lines at once: the lists are small (hundreds of lines).
+    fetchAll<SalesPriceListLineRow>(
+      () =>
+        supabase
+          .from('business_central_sales_price_list_lines')
+          .select('*')
+          .eq('organization_id', scope.orgId)
+          .eq('bc_connection_id', scope.bcConnectionId)
+          .order('price_list_code', { ascending: true })
+          .order('line_no', { ascending: true })
+          .order('id', { ascending: true }),
+      1000,
+      'price list lines',
+    ),
   ]);
 
   return {
@@ -332,6 +351,12 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
     selectOptions: Object.fromEntries(SELECT_KEYS.map((k, i) => [k, lists[i]])),
     companyLocation: mostUsedLocation(customers),
     today: todayIn(timeZoneOf(scope)),
+    priceListLines: priceListLines.map((l) => ({
+      ...l,
+      minimum_quantity: Number(l.minimum_quantity ?? 0),
+      unit_price: Number(l.unit_price ?? 0),
+      line_discount_percent: Number(l.line_discount_percent ?? 0),
+    })),
   };
 }
 
@@ -351,7 +376,9 @@ function validate(input: SalesOrderInput): string | null {
   if ((input.invoice_number ?? '').trim().length > 35) return 'Invoice # must be 35 characters or fewer.';
   for (const l of realLines(input.lines ?? [])) {
     if (!(Number(l.quantity) > 0)) return 'Quantity must be greater than 0.';
-    const d = Number(l.discount_percent ?? 0);
+    // null = no discount typed; BC decides.
+    if (l.discount_percent === null || l.discount_percent === undefined) continue;
+    const d = Number(l.discount_percent);
     if (!(d >= 0 && d <= 100)) return 'Discount % must be between 0 and 100.';
   }
   return null;
@@ -374,7 +401,7 @@ function lineValues(l: LineDraft, position: number) {
     unit_of_measure_code: l.unit_of_measure_code ?? '',
     quantity: Number(l.quantity),
     unit_price: l.unit_price === null || l.unit_price === undefined ? null : Number(l.unit_price),
-    discount_percent: Number(l.discount_percent ?? 0),
+    discount_percent: l.discount_percent === null || l.discount_percent === undefined ? null : Number(l.discount_percent),
   };
 }
 

@@ -105,12 +105,13 @@ export function toBcLine(
     Type: 'Item',
     No: line.item_number,
     Quantity: line.quantity,
-    Line_Discount_Percent: line.discount_percent ?? 0,
     // Always the header's location, '' included, so lines follow the header.
     Location_Code: locationCode,
   }
   if (line.unit_of_measure_code !== '') out.Unit_of_Measure_Code = line.unit_of_measure_code
   if (line.unit_price !== null) out.Unit_Price = line.unit_price
+  // null = the rep typed none: BC keeps the discount its price lists give.
+  if (line.discount_percent !== null) out.Line_Discount_Percent = line.discount_percent
   return out
 }
 
@@ -143,7 +144,13 @@ export interface BcReadBack {
   total_excl_tax: number
   total_tax: number
   total_incl_tax: number
-  lines: { bc_line_no: number; bc_etag: string; bc_unit_price: number | null; amount_incl_tax: number | null }[]
+  lines: {
+    bc_line_no: number
+    bc_etag: string
+    bc_unit_price: number | null
+    bc_line_discount_percent: number | null
+    amount_incl_tax: number | null
+  }[]
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -169,6 +176,7 @@ export function readBack(header: BcRecord, lines: BcRecord[], salesDocument: BcR
       bc_line_no: parseLineNo(l),
       bc_etag: l.etag,
       bc_unit_price: numOrNull(l.fields.Unit_Price),
+      bc_line_discount_percent: numOrNull(l.fields.Line_Discount_Percent),
       amount_incl_tax: numOrNull(l.fields.Amount_Including_VAT),
     })),
   }
