@@ -1,10 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ReferenceSource, ReferenceTransport } from '../customerReferences/transport';
 
-/** BC's SourceType captions, stored verbatim (measured on TEST; only the group caption occurs there). */
-export const SOURCE_ALL_CUSTOMERS = 'All Customers';
-export const SOURCE_CUSTOMER = 'Customer';
-export const SOURCE_PRICE_GROUP = 'Customer Price Group';
+export { SOURCE_ALL_CUSTOMERS, SOURCE_CUSTOMER, SOURCE_PRICE_GROUP } from './constants';
 
 export interface PriceListSyncDeps {
   supabase: SupabaseClient;
