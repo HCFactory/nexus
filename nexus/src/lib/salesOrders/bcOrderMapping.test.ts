@@ -89,10 +89,10 @@ describe('toBcHeaderPatch', () => {
   it('uses invoice number when present', () => {
     expect(toBcHeaderPatch(order({ invoice_number: 'INV-9' }), 'SO-1001').External_Document_No).toBe('INV-9')
   })
-  it('omits null dates and empty location', () => {
+  it('sends a null date and an empty location so clearing them reaches BC', () => {
     const p = toBcHeaderPatch(order({ requested_delivery_date: null, location_code: '' }), 'SO-1')
-    expect(p).not.toHaveProperty('Requested_Delivery_Date')
-    expect(p).not.toHaveProperty('Location_Code')
+    expect(p).toHaveProperty('Requested_Delivery_Date', null)
+    expect(p).toHaveProperty('Location_Code', '')
   })
   it('never sends customer PO or notes', () => {
     const outs = [toBcCreate(order(), 'NX-1'), toBcShipToPatch(order()), toBcHeaderPatch(order(), 'SO-1'), toBcLine('SO-1', line(), 'MAIN')]
@@ -110,10 +110,13 @@ describe('toBcLine', () => {
       Line_Discount_Percent: 10, Unit_of_Measure_Code: 'PCS', Unit_Price: 2.5, Location_Code: 'MAIN',
     })
   })
-  it('omits Unit_Price when null and Location_Code when empty', () => {
+  it('omits Unit_Price when null, but always sends the header location (empty allowed)', () => {
     const l = toBcLine('SO-1', line({ unit_price: null }), '')
     expect(l).not.toHaveProperty('Unit_Price')
-    expect(l).not.toHaveProperty('Location_Code')
+    expect(l).toHaveProperty('Location_Code', '')
+  })
+  it('omits Unit_of_Measure_Code when empty', () => {
+    expect(toBcLine('SO-1', line({ unit_of_measure_code: '' }), 'MAIN')).not.toHaveProperty('Unit_of_Measure_Code')
   })
 })
 

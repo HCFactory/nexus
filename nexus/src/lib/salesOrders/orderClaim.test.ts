@@ -100,6 +100,21 @@ describe('sweepPendingOrders', () => {
     expect(d.tables.sales_orders.every((r) => r.id === 'claimed' || r.claimed_until === null)).toBe(true);
   });
 
+  it('orders by sync_attempts, then updated_at, so failing orders do not starve newer pending ones', async () => {
+    const rows = [
+      ...Array.from({ length: 5 }, (_, i) =>
+        order(`stuck${i}`, { sync_state: 'failed', sync_attempts: 4, updated_at: `2026-01-0${i + 1}T00:00:00.000Z` }),
+      ),
+      order('new-late', { sync_attempts: 0, updated_at: '2026-11-12T00:00:00.000Z' }),
+      order('new-early', { sync_attempts: 0, updated_at: '2026-11-11T00:00:00.000Z' }),
+      order('once', { sync_state: 'failed', sync_attempts: 1, updated_at: '2026-11-01T00:00:00.000Z' }),
+    ];
+    const d = deps(rows);
+    mocks.syncSalesOrder.mockResolvedValue('failed');
+    await sweepPendingOrders(d.deps, 4);
+    expect(mocks.syncSalesOrder.mock.calls.map((c) => c[1])).toEqual(['new-early', 'new-late', 'once', 'stuck0']);
+  });
+
   it('keeps going when one order throws', async () => {
     const d = deps([order('a', { updated_at: '2026-01-01' }), order('b', { updated_at: '2026-01-02' })]);
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);

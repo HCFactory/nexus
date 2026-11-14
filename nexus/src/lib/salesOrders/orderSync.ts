@@ -66,22 +66,45 @@ async function updateOrder(deps: OrderSyncDeps, id: string, values: Record<strin
   )
 }
 
+/** Returns how many rows were updated (0 when the row was deleted meanwhile). */
 async function updateLine(
   deps: OrderSyncDeps,
   orderId: string,
   lineId: string,
   values: Record<string, unknown>,
-): Promise<void> {
-  check(
+): Promise<number> {
+  const rows = check(
     await deps.supabase
       .from(LINES)
       .update(values)
       .eq('id', lineId)
       .eq('sales_order_id', orderId)
       .eq('organization_id', deps.orgId)
-      .eq('bc_connection_id', deps.connectionId),
+      .eq('bc_connection_id', deps.connectionId)
+      .select('id'),
     'Could not save the sales order line',
+  ) as { id: string }[] | null
+  return rows?.length ?? 0
+}
+
+/**
+ * The Ship_to_Code to send: the order's code while that ship-to still exists
+ * for the customer, else '' (the copied address fields still go in the header).
+ */
+async function shipToCodeToSend(deps: OrderSyncDeps, order: SalesOrderRow): Promise<string> {
+  if (!order.ship_to_code) return ''
+  const row = check(
+    await deps.supabase
+      .from('customer_ship_to_addresses')
+      .select('code')
+      .eq('organization_id', deps.orgId)
+      .eq('bc_connection_id', deps.connectionId)
+      .eq('customer_number', order.customer_number)
+      .eq('code', order.ship_to_code)
+      .maybeSingle(),
+    'Could not load the ship-to address',
   )
+  return row ? order.ship_to_code : ''
 }
 
 async function loadOrder(deps: OrderSyncDeps, orderId: string): Promise<SalesOrderRow> {
@@ -173,13 +196,13 @@ export async function syncSalesOrder(
   try {
     const lines = await loadLines(deps, orderId)
     let no: string
-    let headerEtag: string
+    let bcHeader: BcRecord
     let bcLines: BcRecord[]
 
     if (!order.bc_order_number) {
       no = await ensureBcOrder(deps, order)
       // Read back for the current etag: BC may touch the record after the POST.
-      headerEtag = (await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))).etag
+      bcHeader = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
       bcLines = []
     } else {
       no = order.bc_order_number
@@ -196,17 +219,45 @@ export async function syncSalesOrder(
         // still a conflict).
         const storedEtag = order.bc_etag ?? header.etag
         if (bcChangedOutsideNexus({ bc_etag: storedEtag, lines: compared }, { header, lines: bcLines })) {
-          await updateOrder(deps, order.id, { sync_state: 'conflict', sync_error: CHANGED_IN_BC })
+          await updateOrder(deps, order.id, { sync_state: 'conflict', sync_error: CHANGED_IN_BC, updated_at: deps.now() })
           return 'conflict'
         }
       }
-      headerEtag = header.etag
+      bcHeader = header
     }
 
-    // Step 4: ship-to first (BC refills address/tax/location from it), then the header.
-    headerEtag = (await deps.transport.patch(SALES_ORDER_SOURCE, orderKey(no), headerEtag, toBcShipToPatch(order))).etag
-    headerEtag = (await deps.transport.patch(SALES_ORDER_SOURCE, orderKey(no), headerEtag, toBcHeaderPatch(order, no))).etag
-    await updateOrder(deps, order.id, { bc_etag: headerEtag })
+    // Each header write is stored right away, so a failure after one of our
+    // own writes isn't read as a change in BC on the retry.
+    const patchHeader = async (fields: Record<string, unknown>) => {
+      bcHeader = await deps.transport.patch(SALES_ORDER_SOURCE, orderKey(no), bcHeader.etag, fields)
+      await updateOrder(deps, order.id, { bc_etag: bcHeader.etag })
+    }
+
+    // Step 4: customer first (BC refills its defaults; measured: works on an
+    // order with lines and keeps them), then ship-to (BC refills
+    // address/tax/location from it), then the header, whose Nexus values
+    // overwrite whatever BC refilled.
+    if (String(bcHeader.fields.Sell_to_Customer_No ?? '') !== order.customer_number) {
+      await patchHeader({ Sell_to_Customer_No: order.customer_number })
+    }
+    const shipToCode = await shipToCodeToSend(deps, order)
+    if (shipToCode !== String(bcHeader.fields.Ship_to_Code ?? '')) {
+      await patchHeader(toBcShipToPatch({ ...order, ship_to_code: shipToCode }))
+    }
+    await patchHeader(toBcHeaderPatch(order, no))
+
+    // A header patch can change the lines' etags (measured: Tax_Area_Code is
+    // pushed to the lines), so read them again before any line write and
+    // store the new etags of the lines Nexus knows.
+    bcLines = await listBcLines(deps, no)
+    for (const rec of bcLines) {
+      const n = parseLineNo(rec)
+      const known = lines.find((l) => l.bc_line_no === n)
+      if (known && known.bc_etag !== rec.etag) {
+        await updateLine(deps, orderId, known.id, { bc_etag: rec.etag })
+        known.bc_etag = rec.etag
+      }
+    }
 
     // Inserting or deleting a line changes the header's etag in BC (a line
     // patch does not). Store the new one right away so a failure later in the
@@ -259,7 +310,14 @@ export async function syncSalesOrder(
       }
       if (!rec) {
         const created = await deps.transport.create(SALES_LINE_SOURCE, wanted)
-        await updateLine(deps, orderId, line.id, { bc_line_no: parseLineNo(created), bc_etag: created.etag })
+        const createdNo = parseLineNo(created)
+        const saved = await updateLine(deps, orderId, line.id, { bc_line_no: createdNo, bc_etag: created.etag })
+        if (saved === 0) {
+          // The row was deleted while we were creating its BC line: take the
+          // BC line out again (fresh etag) so BC doesn't keep an orphan.
+          const fresh = await deps.transport.get(SALES_LINE_SOURCE, lineKey(no, createdNo))
+          await removeBcLine(deps, no, createdNo, fresh.etag)
+        }
         await refreshHeaderEtag()
         continue
       }
@@ -293,6 +351,7 @@ export async function syncSalesOrder(
       total_incl_tax: rb.total_incl_tax,
       synced_version: version,
       last_synced_at: deps.now(),
+      updated_at: deps.now(),
       sync_error: null,
       sync_attempts: 0,
     }
@@ -318,6 +377,7 @@ export async function syncSalesOrder(
       sync_state: 'failed',
       sync_error: message,
       sync_attempts: order.sync_attempts + 1,
+      updated_at: deps.now(),
     })
     return 'failed'
   }

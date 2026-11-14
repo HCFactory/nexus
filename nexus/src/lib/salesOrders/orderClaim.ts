@@ -88,7 +88,7 @@ export async function syncWithClaim(
 }
 
 /**
- * Pick up the oldest pending/failed orders whose lease is free and sync each
+ * Pick up pending/failed orders (fewest attempts, then oldest) whose lease is free and sync each
  * one. Conflicts are never retried automatically. Returns how many orders
  * were synced (whatever state they ended in).
  */
@@ -101,6 +101,9 @@ export async function sweepPendingOrders(deps: OrderSyncDeps, limit = SWEEP_BATC
     .eq('bc_connection_id', deps.connectionId)
     .in('sync_state', ['pending', 'failed'])
     .or(`claimed_until.is.null,claimed_until.lt.${nowIso}`)
+    // Fewest failed attempts first, so orders that keep failing don't starve
+    // newer pending ones; then oldest first (sync writes updated_at each run).
+    .order('sync_attempts', { ascending: true })
     .order('updated_at', { ascending: true })
     .order('id', { ascending: true })
     .limit(limit);

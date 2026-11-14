@@ -66,9 +66,11 @@ export function toBcHeaderPatch(order: SalesOrderRow, bcNumber: string): Record<
     Gen_Bus_Posting_Group: order.gen_bus_posting_group,
     Customer_Posting_Group: order.customer_posting_group,
     Shipment_Method_Code: order.shipment_method_code,
+    // Sent even when empty: BC (TEST, measured) clears the date on null
+    // (stores 0001-01-01) and the location on ''.
+    Requested_Delivery_Date: order.requested_delivery_date,
+    Location_Code: order.location_code,
   }
-  if (order.requested_delivery_date !== null) patch.Requested_Delivery_Date = order.requested_delivery_date
-  if (order.location_code !== '') patch.Location_Code = order.location_code
   return patch
 }
 
@@ -84,10 +86,11 @@ export function toBcLine(
     No: line.item_number,
     Quantity: line.quantity,
     Line_Discount_Percent: line.discount_percent,
-    Unit_of_Measure_Code: line.unit_of_measure_code,
+    // Always the header's location, '' included, so lines follow the header.
+    Location_Code: locationCode,
   }
+  if (line.unit_of_measure_code !== '') out.Unit_of_Measure_Code = line.unit_of_measure_code
   if (line.unit_price !== null) out.Unit_Price = line.unit_price
-  if (locationCode !== '') out.Location_Code = locationCode
   return out
 }
 
