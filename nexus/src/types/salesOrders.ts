@@ -134,11 +134,13 @@ export interface SalesOrderLineRow {
   unit_of_measure_code: string
   quantity: number
   unit_price: number | null
-  discount_percent: number
+  /** null = not typed; BC decides. */
+  discount_percent: number | null
   removed: boolean
   bc_line_no: number | null
   bc_etag: string | null
   bc_unit_price: number | null
+  bc_line_discount_percent: number | null
   amount_incl_tax: number | null
   created_at: string
   updated_at: string
@@ -185,12 +187,15 @@ export interface LineDraft {
   description: string
   quantity: number
   unit_price: number | null
-  discount_percent: number
+  /** null = not typed; BC decides. */
+  discount_percent: number | null
   unit_of_measure_code: string
   amount_incl_tax: number | null
   estimate_price: number | null
   /** BC's unit price from the last sync; shown for a blank price once synced. */
   bc_unit_price: number | null
+  /** BC's line discount from the last sync. */
+  bc_line_discount_percent: number | null
 }
 
 /**
@@ -224,4 +229,27 @@ export interface SalesOrderListRow {
   total_incl_tax: number | null
   sync_state: SyncState
   sync_error: string | null
+}
+
+/** A copy of one BC sales price list line (read-only). */
+export interface SalesPriceListLineRow {
+  id: string
+  organization_id: string
+  bc_connection_id: string
+  price_list_code: string
+  line_no: number
+  list_status: string
+  source_type: string
+  source_no: string
+  item_number: string
+  unit_of_measure_code: string
+  minimum_quantity: number
+  starting_date: string | null
+  ending_date: string | null
+  unit_price: number
+  line_discount_percent: number
+  amount_type: string
+  last_synced_at: string | null
+  created_at: string
+  updated_at: string
 }

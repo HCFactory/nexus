@@ -105,7 +105,7 @@ export function toBcLine(
     Type: 'Item',
     No: line.item_number,
     Quantity: line.quantity,
-    Line_Discount_Percent: line.discount_percent,
+    Line_Discount_Percent: line.discount_percent ?? 0,
     // Always the header's location, '' included, so lines follow the header.
     Location_Code: locationCode,
   }

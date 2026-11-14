@@ -227,6 +227,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
         amount_incl_tax: null,
         estimate_price: item.unit_price,
         bc_unit_price: null,
+        bc_line_discount_percent: null,
       },
     ]);
 
@@ -289,7 +290,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   label="Disc %"
                   step="0.01"
                   disabled={locked}
-                  value={line.discount_percent}
+                  value={line.discount_percent ?? 0}
                   valid={(n) => n >= 0 && n <= 100}
                   emptyValue={0}
                   onCommit={(n) => update(line.key, { discount_percent: n })}

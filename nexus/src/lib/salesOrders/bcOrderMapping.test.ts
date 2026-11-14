@@ -45,7 +45,7 @@ function line(over: Partial<SalesOrderLineRow> = {}): SalesOrderLineRow {
     id: 'l1', organization_id: 'o', bc_connection_id: 'c', sales_order_id: 'x', position: 1,
     item_number: 'ITEM1', description: 'd', unit_of_measure_code: 'PCS', quantity: 3,
     unit_price: 2.5, discount_percent: 10, removed: false, bc_line_no: null, bc_etag: null,
-    bc_unit_price: null, amount_incl_tax: null, created_at: '', updated_at: '',
+    bc_unit_price: null, bc_line_discount_percent: null, amount_incl_tax: null, created_at: '', updated_at: '',
     ...over,
   }
 }

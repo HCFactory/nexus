@@ -14,7 +14,7 @@ const items: SalesOrderItemOption[] = [
 ];
 const line = (over: Partial<LineDraft> = {}): LineDraft => ({
   key: 'k1', id: 'l1', item_number: 'P100', description: 'Pesto sauce', quantity: 2, unit_price: null,
-  discount_percent: 0, unit_of_measure_code: 'CASE', amount_incl_tax: null, estimate_price: 12.5, bc_unit_price: null, ...over,
+  discount_percent: 0, unit_of_measure_code: 'CASE', amount_incl_tax: null, estimate_price: 12.5, bc_unit_price: null, bc_line_discount_percent: null, ...over,
 });
 afterEach(cleanup);
 

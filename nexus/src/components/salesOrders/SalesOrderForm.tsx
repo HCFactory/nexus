@@ -132,6 +132,7 @@ function lineDraftOf(row: SalesOrderLineRow, estimates: Map<string, number | nul
     amount_incl_tax: num(row.amount_incl_tax),
     estimate_price: estimates.get(row.item_number) ?? null,
     bc_unit_price: num(row.bc_unit_price),
+    bc_line_discount_percent: num(row.bc_line_discount_percent),
   };
 }
 
