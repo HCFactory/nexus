@@ -49,6 +49,9 @@ const TEXT: Partial<Record<InvoiceState, string>> = {
   post_failed: 'text-destructive', billcom_failed: 'text-warning', done: 'text-foreground',
 };
 
+export const RECEIVABLES_NOTE = 'Appears in Receivables after the next Receivables sync.';
+export const SAVE_FIRST = 'Save your changes before invoicing.';
+
 /** The invoice status line, with Retry for a failed step and View invoice once BC has the posted invoice. */
 export function InvoiceStatus({
   order,
@@ -74,10 +77,10 @@ export function InvoiceStatus({
     try {
       const res = await retryInvoice(order.id);
       if (!res.ok) onError?.(res.error);
-      else router.refresh();
     } catch (e) {
       onError?.(e instanceof Error ? e.message : 'Could not retry the invoice.');
     } finally {
+      router.refresh();
       setRetrying(false);
     }
   };
@@ -97,8 +100,10 @@ export function InvoiceStatus({
           Retry
         </Button>
       )}
+      {number && <span className="text-foreground-muted">Invoice {number} ·</span>}
       {number && (
         <Link
+          title={RECEIVABLES_NOTE}
           href={`/receivables/invoices?q=${encodeURIComponent(number)}`}
           className="text-primary underline-offset-2 hover:underline"
         >
@@ -134,7 +139,7 @@ export function InvoiceControls({ order, canEdit, dirty, blockedReason, invoiceN
 
   if (!showsCreateInvoice(order, canEdit)) return null;
   const enabled = canStartInvoice(order) && !dirty && !blockedReason && !busy;
-  const title = blockedReason || (dirty ? 'Save your changes before invoicing.' : undefined);
+  const title = blockedReason || (dirty ? SAVE_FIRST : undefined);
 
   const create = async () => {
     setBusy(true);
@@ -146,10 +151,11 @@ export function InvoiceControls({ order, canEdit, dirty, blockedReason, invoiceN
         return;
       }
       setOpen(false);
-      router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not create the invoice.');
     } finally {
+      // Even a failed attempt may have written state (e.g. post_failed); show it.
+      router.refresh();
       setBusy(false);
     }
   };

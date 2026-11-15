@@ -690,6 +690,7 @@ describe('invoicing in the header', () => {
     expect(screen.getByRole('button', { name: 'Create invoice' })).toBeEnabled();
     fireEvent.change(screen.getByLabelText('Customer PO'), { target: { value: 'PO-2' } });
     expect(screen.getByRole('button', { name: 'Create invoice' })).toBeDisabled();
+    expect(screen.getByText('Save your changes before invoicing.')).toBeInTheDocument();
   });
   it('blocked: disables the button and shows the reason', () => {
     withLine({ invoiceBlockedReason: 'Bill.com is turned off. Turn it on in Settings before invoicing.' });
@@ -707,6 +708,39 @@ describe('invoicing in the header', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Invoiced · In Bill.com');
     expect(screen.queryByText('In BC')).toBeNull();
     expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices?q=SI-1');
+    expect(screen.getByText('Invoice SI-1 ·')).toBeInTheDocument();
+    expect(screen.getByText('Appears in Receivables after the next Receivables sync.')).toBeInTheDocument();
+  });
+  describe('polling', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+    it('refreshes every 3 s while running, caps at 40, and stops on unmount', () => {
+      renderForm({ order: final({ status: 'final', invoice_state: 'posting' }), lines: [lineRow] });
+      vi.advanceTimersByTime(9000);
+      expect(nav.refresh).toHaveBeenCalledTimes(3);
+      vi.advanceTimersByTime(3000 * 60);
+      expect(nav.refresh).toHaveBeenCalledTimes(40);
+      cleanup();
+      nav.refresh.mockClear();
+      const second = renderForm({ order: final({ invoice_state: 'billcom_sending' }), lines: [lineRow] });
+      second.unmount();
+      vi.advanceTimersByTime(10000);
+      expect(nav.refresh).not.toHaveBeenCalled();
+    });
+    it('does not poll once the state is settled', () => {
+      renderForm({ order: final({ invoice_state: 'done' }), lines: [lineRow] });
+      vi.advanceTimersByTime(10000);
+      expect(nav.refresh).not.toHaveBeenCalled();
+    });
+    it('stops when the state leaves the running set', () => {
+      const props: Omit<Props, 'order'> = { lines: [lineRow], context, shipTos: [], canEdit: true, canSaveShipTo: true };
+      const { rerender } = render(<SalesOrderForm order={final({ invoice_state: 'posting' })} {...props} />);
+      vi.advanceTimersByTime(3000);
+      expect(nav.refresh).toHaveBeenCalledTimes(1);
+      rerender(<SalesOrderForm order={final({ invoice_state: 'done' })} {...props} />);
+      vi.advanceTimersByTime(10000);
+      expect(nav.refresh).toHaveBeenCalledTimes(1);
+    });
   });
   it('shows BC\'s message in the notice bar when posting failed, and Retry', () => {
     withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'Posting date not allowed' }) });

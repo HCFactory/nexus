@@ -89,7 +89,7 @@ describe('confirm box', () => {
     const buttons = screen.getAllByRole('button', { name: 'Create invoice' });
     fireEvent.click(buttons[buttons.length - 1]);
     expect(await screen.findByText('BC said no')).toBeInTheDocument();
-    expect(nav.refresh).not.toHaveBeenCalled();
+    await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
   });
 });
 
@@ -118,6 +118,7 @@ describe('status line', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Invoiced · Not in Bill.com');
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(onError).toHaveBeenCalledWith('Nope'));
+    await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
   });
   it('hides Retry without permission', () => {
     status({ invoice_state: 'billcom_failed' }, false);
@@ -127,5 +128,7 @@ describe('status line', () => {
     status({ invoice_state: 'done', bc_posted_invoice_number: 'SI 1/2' });
     expect(screen.getByRole('status')).toHaveTextContent('Invoiced · In Bill.com');
     expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices?q=SI%201%2F2');
+    expect(screen.getByText('Invoice SI 1/2 ·')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('title', 'Appears in Receivables after the next Receivables sync.');
   });
 });

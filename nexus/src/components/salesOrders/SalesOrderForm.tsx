@@ -23,7 +23,7 @@ import { Switch } from '@/components/ui/switch';
 import { bestPrice } from '@/lib/salesOrders/bestPrice';
 import { lineAmounts, orderTotals, taxLabel, taxRatePercent } from '@/lib/salesOrders/lineAmounts';
 import { applyShipTo, customerDefaults } from '@/lib/salesOrders/orderDefaults';
-import { autoInvoiceNumber, canDelete, editableFields } from '@/lib/salesOrders/orderRules';
+import { autoInvoiceNumber, canDelete, canStartInvoice, editableFields } from '@/lib/salesOrders/orderRules';
 import type {
   CustomerRow,
   LineDraft,
@@ -42,7 +42,7 @@ import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
-import { InvoiceControls, InvoiceStatus, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
+import { InvoiceControls, InvoiceStatus, RECEIVABLES_NOTE, SAVE_FIRST, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
 
 interface Props {
   /** null = a new order. */
@@ -66,6 +66,7 @@ const FORM_ID = 'sales-order-form';
 const POLL_MS = 4000;
 const MAX_POLLS = 15;
 const INVOICE_POLL_MS = 3000;
+const MAX_INVOICE_POLLS = 40;
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
 const INPUT_CLASS = 'border-input bg-field dark:bg-field';
@@ -261,7 +262,12 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const invoiceState = order?.invoice_state ?? 'none';
   useEffect(() => {
     if (!orderId || !isInvoiceRunning(invoiceState)) return;
-    const timer = setInterval(() => router.refresh(), INVOICE_POLL_MS);
+    let polls = 0;
+    const timer = setInterval(() => {
+      polls += 1;
+      router.refresh();
+      if (polls >= MAX_INVOICE_POLLS) clearInterval(timer);
+    }, INVOICE_POLL_MS);
     return () => clearInterval(timer);
   }, [orderId, invoiceState, router]);
 
@@ -595,8 +601,13 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           {error}
         </div>
       )}
-      {order && showsCreateInvoice(order, canEdit) && invoiceBlockedReason && (
-        <div className="border-b border-border bg-surface px-5 py-2 text-sm text-foreground-muted">{invoiceBlockedReason}</div>
+      {order && showsCreateInvoice(order, canEdit) && (invoiceBlockedReason || (dirty && canStartInvoice(order))) && (
+        <div className="border-b border-border bg-surface px-5 py-2 text-sm text-foreground-muted">
+          {invoiceBlockedReason || SAVE_FIRST}
+        </div>
+      )}
+      {order?.bc_posted_invoice_number && (invoiceState === 'done' || invoiceState === 'billcom_failed') && (
+        <div className="border-b border-border bg-surface px-5 py-2 text-sm text-foreground-muted">{RECEIVABLES_NOTE}</div>
       )}
       {order && canEdit && (invoiceState === 'post_failed' || invoiceState === 'billcom_failed') && order.invoice_error && (
         <div className="border-b border-border bg-warning-subtle px-5 py-2 text-sm text-foreground">{order.invoice_error}</div>
