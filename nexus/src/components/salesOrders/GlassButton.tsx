@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, type ComponentProps, type CSSProperties } from 'react';
+import { forwardRef, type ComponentProps } from 'react';
 import { Button as GlisseButton } from 'glisse';
 
 type Variant = 'default' | 'outline' | 'ghost' | 'destructive' | 'blue-glass';
@@ -9,7 +9,7 @@ type Size = 'default' | 'sm' | 'icon' | 'icon-sm' | 'icon-xs';
 interface Props extends Omit<ComponentProps<typeof GlisseButton>, 'variant'> {
   /**
    * Same names as the app's shadcn Button: default = filled blue, destructive = filled red,
-   * outline/ghost = clear glass. blue-glass = clear glass tinted mostly-opaque blue, white label.
+   * outline/ghost = clear glass. blue-glass = glass styled like the header's organisation pill.
    */
   variant?: Variant;
   size?: Size;
@@ -17,8 +17,9 @@ interface Props extends Omit<ComponentProps<typeof GlisseButton>, 'variant'> {
 
 // Glisse's stylesheet is unlayered, so it beats Tailwind's layered utilities: classes
 // that must override it (size, position, colour) need the important suffix `!`.
-/** Glisse reads these custom properties: the glass fill and the label colour. */
-const BLUE_GLASS = { '--lg-glass': 'oklch(0.6 0.2 255 / 0.65)', '--lg-foreground': '#fff' } as CSSProperties;
+/** Matches the header's organisation pill: faint blue fill, blue edge and label; the fill thickens on hover. */
+const BLUE_GLASS_CLASS =
+  'border! border-primary/50! bg-primary/10! text-primary! font-medium! hover:bg-primary/40! transition-colors!';
 
 const SIZE_CLASS: Record<Size, string> = {
   default: 'h-9! px-4! text-sm!',
@@ -33,7 +34,7 @@ const SIZE_CLASS: Record<Size, string> = {
  * A `className` that overrides Glisse's look needs `!` on each class (see SIZE_CLASS).
  */
 export const GlassButton = forwardRef<HTMLButtonElement, Props>(function GlassButton(
-  { variant = 'default', size = 'default', destructive, className, style, ...props },
+  { variant = 'default', size = 'default', destructive, className, ...props },
   ref,
 ) {
   const filled = variant === 'default' || variant === 'destructive';
@@ -42,9 +43,8 @@ export const GlassButton = forwardRef<HTMLButtonElement, Props>(function GlassBu
       ref={ref}
       variant={filled ? 'filled' : 'glass'}
       {...props}
-      style={variant === 'blue-glass' ? { ...BLUE_GLASS, ...style } : style}
       destructive={variant === 'destructive' || destructive}
-      className={`${SIZE_CLASS[size]} ${className ?? ''}`.trim()}
+      className={`${SIZE_CLASS[size]} ${variant === 'blue-glass' ? BLUE_GLASS_CLASS : ''} ${className ?? ''}`.trim()}
     />
   );
 });
