@@ -517,7 +517,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         <div className="flex flex-col items-end">
           {order && (
             <SyncBadge
-              className="text-xs leading-4"
+              className="-mb-0.5 text-xs leading-3"
               state={order.sync_state}
               error={order.sync_error}
               canAct={canEdit}
