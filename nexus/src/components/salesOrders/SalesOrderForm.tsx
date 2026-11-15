@@ -29,10 +29,12 @@ import type {
   OrderStatus,
   SalesOrderInput,
   SalesOrderLineRow,
+  SalesOrderNoteView,
   SalesOrderRow,
   ShipToRow,
 } from '@/types/salesOrders';
 import { CustomerPicker, customerLabel } from './CustomerPicker';
+import { NotesPanel } from './NotesPanel';
 import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import { ShipToPicker, type ShipToAddressFields, type ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
@@ -46,6 +48,8 @@ interface Props {
   /** The order customer's saved ship-tos (empty for a new order). */
   shipTos: ShipToRow[];
   canEdit: boolean;
+  /** Note entries; they save on their own, so they stay editable on a locked order. */
+  notes?: SalesOrderNoteView[];
   /** "Save to customer" on a one-off ship-to needs customer edit permission. */
   canSaveShipTo: boolean;
 }
@@ -199,7 +203,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo }: Props) {
+export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo, notes = [] }: Props) {
   const router = useRouter();
   const { customers, items, selectOptions, companyLocation, today, priceListLines, taxAreaLines, taxDetails } = context;
   const initialCustomer = order ? customers.find((c) => c.id === order.customer_id) ?? null : null;
@@ -219,7 +223,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const invoiceAtFocus = useRef<{ value: string | null; shown: string }>({ value: null, shown: '' });
   const [invoiceChange, setInvoiceChange] = useState<{ from: string; to: string } | null>(null);
   const [customerPo, setCustomerPo] = useState(order?.customer_po ?? '');
-  const [notes, setNotes] = useState(order?.notes ?? '');
   const [draftLines, setDraftLines] = useState<LineDraft[]>(() => {
     const estimates = new Map(items.map((i) => [i.bc_item_number, i.unit_price]));
     return lines.map((l) => lineDraftOf(l, estimates));
@@ -364,7 +367,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     }
     startTransition(async () => {
       // Locked order, only the status changed: status is Nexus-only, so skip the save (and its BC sync).
-      if (order && locked && notes === order.notes && status !== order.status) {
+      if (order && locked && status !== order.status) {
         const res = await setSalesOrderStatus(order.id, status);
         if (!res.ok) setError(res.error);
         else router.refresh();
@@ -413,7 +416,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         requested_delivery_date: requestedDate || null,
         invoice_number: invoiceNumber?.trim() || null,
         customer_po: customerPo,
-        notes,
         lines: draftLines,
         ...(order ? { id: order.id } : {}),
       };
@@ -687,15 +689,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           </Section>
 
           <Section title="Notes">
-            <Label htmlFor="so-notes" className="sr-only">Notes</Label>
-            <textarea
-              id="so-notes"
-              rows={3}
-              value={notes}
-              disabled={!canEdit || busy}
-              onChange={(e) => setNotes(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
-            />
+            <NotesPanel orderId={order?.id ?? null} canEdit={canEdit} initialNotes={notes} />
           </Section>
 
           {canEdit && (

@@ -71,7 +71,7 @@ const line = (key: string, extra: Partial<LineDraft> = {}): LineDraft => ({
 const input = (extra: Partial<SalesOrderInput> = {}): SalesOrderInput => ({
   ...header,
   customer_id: 'cust-1', customer_number: 'C1', status: 'draft', order_date: '2026-11-13',
-  requested_delivery_date: null, invoice_number: null, customer_po: 'PO-1', notes: '',
+  requested_delivery_date: null, invoice_number: null, customer_po: 'PO-1',
   lines: [line('k1')], ...extra,
 });
 
@@ -196,7 +196,7 @@ describe('saveSalesOrder: update', () => {
     expect(mocks.after).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a changed customer_po on a final order, but allows changing only notes', async () => {
+  it('refuses a changed customer_po on a final order, but allows an unchanged save', async () => {
     setup({ sales_orders: [orderRow('o1', { status: 'final' })], sales_order_lines: [lineRow('l1')] });
     const lines = [line('k1', { id: 'l1' })];
     expect(await saveSalesOrder({ ...input({ status: 'final', customer_po: 'PO-2', lines }), id: 'o1' })).toEqual({
@@ -204,8 +204,8 @@ describe('saveSalesOrder: update', () => {
       error: 'This order is Final. Move it back to Draft to change it.',
     });
     expect(db.writes).toEqual([]);
-    expect(await saveSalesOrder({ ...input({ status: 'final', notes: 'call first', lines }), id: 'o1' })).toEqual({ ok: true, id: 'o1' });
-    expect(db.tables.sales_orders[0]).toMatchObject({ notes: 'call first', customer_po: 'PO-1' });
+    expect(await saveSalesOrder({ ...input({ status: 'final', lines }), id: 'o1' })).toEqual({ ok: true, id: 'o1' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ notes: '', customer_po: 'PO-1' });
   });
 
   it('refuses a changed line on a final order', async () => {
@@ -282,9 +282,9 @@ describe('saveSalesOrder: update', () => {
 
   it('an empty order date keeps the current one, also on a locked order', async () => {
     setup({ sales_orders: [orderRow('o1', { status: 'final' })], sales_order_lines: [lineRow('l1')] });
-    const res = await saveSalesOrder({ ...input({ status: 'final', order_date: '', notes: 'n', lines: [line('k1', { id: 'l1' })] }), id: 'o1' });
+    const res = await saveSalesOrder({ ...input({ status: 'final', order_date: '', lines: [line('k1', { id: 'l1' })] }), id: 'o1' });
     expect(res).toEqual({ ok: true, id: 'o1' });
-    expect(db.tables.sales_orders[0]).toMatchObject({ order_date: '2026-11-13', notes: 'n' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ order_date: '2026-11-13' });
     setup({ sales_orders: [orderRow('o2')], sales_order_lines: [lineRow('l2', { sales_order_id: 'o2' })] });
     await saveSalesOrder({ ...input({ order_date: '', lines: [line('k2', { id: 'l2' })] }), id: 'o2' });
     expect(db.tables.sales_orders[0].order_date).toBe('2026-11-13');
@@ -358,7 +358,7 @@ describe('final review fixes: saveSalesOrder', () => {
   it('marks the order failed when the save breaks after the version bump', async () => {
     setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
     db.failOn = (table, op, payload) =>
-      table === 'sales_orders' && op === 'update' && (payload as Row).notes !== undefined ? 'disk full' : null;
+      table === 'sales_orders' && op === 'update' && (payload as Row).status !== undefined ? 'disk full' : null;
     const res = await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 7 })] }), id: 'o1' });
     expect(res).toEqual({ ok: false, error: 'Could not save the sales order: disk full' });
     expect(db.tables.sales_orders[0]).toMatchObject({

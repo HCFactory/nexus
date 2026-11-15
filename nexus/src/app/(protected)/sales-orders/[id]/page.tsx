@@ -1,5 +1,6 @@
 import { notFound } from 'next/navigation';
 import { getSalesOrder, getSalesOrderFormContext } from '@/app/actions/salesOrders';
+import { listSalesOrderNotes } from '@/app/actions/salesOrderNotes';
 import { listShipTos } from '@/app/actions/shipToAddresses';
 import { SalesOrderForm } from '@/components/salesOrders/SalesOrderForm';
 import { resolveSalesOrderPageAccess, SalesOrderPageNotice } from '../salesOrderPageAccess';
@@ -15,7 +16,10 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   if (!found) notFound();
   const { order, lines } = found;
   // Ship-tos need customer view permission; without it the picker just lists none.
-  const shipTos = await listShipTos(order.customer_number).catch(() => []);
+  const [shipTos, notes] = await Promise.all([
+    listShipTos(order.customer_number).catch(() => []),
+    listSalesOrderNotes(order.id),
+  ]);
 
   return (
     <SalesOrderForm
@@ -26,6 +30,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
       lines={lines}
       context={context}
       shipTos={shipTos}
+      notes={notes}
       canEdit={gate.access.canEditSalesOrders}
       canSaveShipTo={gate.access.canEditCustomers}
     />

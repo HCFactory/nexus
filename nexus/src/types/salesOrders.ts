@@ -231,7 +231,6 @@ export interface SalesOrderInput extends OrderHeaderDefaults {
   requested_delivery_date: string | null
   invoice_number: string | null
   customer_po: string
-  notes: string
   lines: LineDraft[]
 }
 

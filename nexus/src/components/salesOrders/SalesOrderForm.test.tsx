@@ -12,6 +12,7 @@ const orderActions = vi.hoisted(() => ({
   retrySalesOrderSync: vi.fn(),
   overwriteBcWithNexus: vi.fn(),
 }));
+vi.mock('@/app/actions/salesOrderNotes', () => ({ addSalesOrderNote: vi.fn(), updateSalesOrderNote: vi.fn(), deleteSalesOrderNote: vi.fn() }));
 const shipActions = vi.hoisted(() => ({ refreshShipTos: vi.fn(), saveShipToAction: vi.fn() }));
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/app/actions/salesOrders', () => orderActions);
@@ -83,7 +84,7 @@ const dock = {
 
 const order = (over: Partial<SalesOrderRow> = {}): SalesOrderRow => ({
   id: 'so-1', status: 'draft', customer_id: 'cust-1', customer_number: 'C1', order_date: '2026-11-10',
-  requested_delivery_date: null, invoice_number: null, customer_po: 'PO-1', notes: 'Call first',
+  requested_delivery_date: null, invoice_number: null, customer_po: 'PO-1', notes: '',
   bill_name: 'Acme Foods', bill_address: '1 Main St', bill_address_2: '', bill_city: 'Austin', bill_state: 'TX',
   bill_post_code: '78701', bill_country: 'US', bill_contact_no: 'CT1', bill_phone: '555-0100', bill_mobile: '',
   bill_email: 'a@acme.test', bill_email_cc: '', ship_to_code: 'DOCK', ship_to_name: 'Loading dock',
@@ -159,9 +160,8 @@ describe('SalesOrderForm — picking a customer', () => {
     expect(screen.getByRole('combobox', { name: 'Ship to' })).toHaveValue('billing');
   });
 
-  it('switching customer silently refills, keeping lines, notes, customer PO and invoice #', async () => {
+  it('switching customer silently refills, keeping lines, customer PO and invoice #', async () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
-    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Keep me' } });
     fireEvent.change(screen.getByLabelText('Customer PO'), { target: { value: 'PO-9' } });
     fireEvent.change(screen.getByLabelText('Invoice # (Ext. Doc No.)'), { target: { value: 'INV-7' } });
 
@@ -173,7 +173,6 @@ describe('SalesOrderForm — picking a customer', () => {
     expect(screen.getByLabelText('Payment terms')).toHaveValue('NET15');
     expect(screen.getByLabelText('Tax area')).toHaveValue('HI');
     expect(screen.getByRole('switch', { name: 'Tax liable' })).not.toBeChecked();
-    expect(screen.getByLabelText('Notes')).toHaveValue('Keep me');
     expect(screen.getByLabelText('Customer PO')).toHaveValue('PO-9');
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveValue('INV-7');
     expect(screen.getByText('Pesto sauce')).toBeInTheDocument();
@@ -379,10 +378,9 @@ describe('SalesOrderForm — fields', () => {
 });
 
 describe('SalesOrderForm — status and locking', () => {
-  it('a Final order disables every field except Status and Notes', () => {
+  it('a Final order disables every field except Status', () => {
     renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
     expect(screen.getByRole('combobox', { name: 'Status' })).toBeEnabled();
-    expect(screen.getByLabelText('Notes')).toBeEnabled();
     expect(screen.getByRole('combobox', { name: 'Customer' })).toBeDisabled();
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toBeDisabled();
     expect(screen.getByLabelText('Customer PO')).toBeDisabled();
@@ -412,21 +410,6 @@ describe('SalesOrderForm — status and locking', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Status refused');
-  });
-
-  it('saving a Final order sends the status and notes', async () => {
-    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
-    renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'draft' } });
-    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Unlocked' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
-    const input = orderActions.saveSalesOrder.mock.calls[0][0];
-    expect(input).toMatchObject({ id: 'so-1', status: 'draft', notes: 'Unlocked', customer_id: 'cust-1', ship_to_code: 'DOCK' });
-    expect(input.lines).toHaveLength(1);
-    expect(input.lines[0]).toMatchObject({ id: 'l1', item_number: 'P100', quantity: 2 });
-    expect(orderActions.setSalesOrderStatus).not.toHaveBeenCalled();
-    await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
   });
 
   it('a failed save shows the error in the alert banner', async () => {
@@ -459,7 +442,6 @@ describe('SalesOrderForm — status and locking', () => {
   it('read-only without edit permission', () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock], canEdit: false });
     expect(screen.getByRole('combobox', { name: 'Status' })).toBeDisabled();
-    expect(screen.getByLabelText('Notes')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
   });

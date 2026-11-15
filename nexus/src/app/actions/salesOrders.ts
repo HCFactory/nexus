@@ -5,6 +5,7 @@ import { after } from 'next/server';
 import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
+import { editScope, NO_PERMISSION, type Fail, type Scope } from '@/lib/salesOrders/editScope';
 import {
   claimOrder,
   leaseUntil,
@@ -32,8 +33,6 @@ import type {
 } from '@/types/salesOrders';
 import { getSelectOptions } from './customerReferenceLists';
 
-type Fail = { ok: false; error: string };
-type Scope = Awaited<ReturnType<typeof requireActiveBusinessCentralScope>>;
 type Option = { code: string; label: string };
 
 export interface SalesOrderItemOption {
@@ -60,7 +59,6 @@ export interface SalesOrderFormContext {
 const ORDERS = 'sales_orders';
 const LINES = 'sales_order_lines';
 
-const NO_PERMISSION = "You don't have permission to change sales orders";
 const NOT_FOUND = 'Sales order not found.';
 const BUSY = 'This order is being sent to BC. Try again in a moment.';
 const HAND_STATUS_ONLY = 'Shipped and Invoiced are set by the Ship and Create invoice buttons.';
@@ -111,11 +109,6 @@ const nowIso = () => new Date().toISOString();
 function revalidateSalesOrders() {
   // 'layout' also refreshes /sales-orders/[id] and /sales-orders/new.
   revalidatePath('/sales-orders', 'layout');
-}
-
-async function editScope(): Promise<Scope | null> {
-  const scope = await requireActiveBusinessCentralScope();
-  return scope.access.canEditSalesOrders && scope.access.canViewSalesOrders ? scope : null;
 }
 
 async function viewScope(): Promise<Scope | null> {
@@ -563,7 +556,6 @@ async function createOrder(scope: Scope, input: SalesOrderInput): Promise<string
         ...headerValues(input),
         order_date: input.order_date || todayIn(timeZoneOf(scope)),
         status: input.status ?? 'draft',
-        notes: input.notes ?? '',
         organization_id: scope.orgId,
         bc_connection_id: scope.bcConnectionId,
         sync_state: 'pending',
@@ -665,8 +657,7 @@ export async function saveSalesOrder(
         await scoped(scope, createServiceClient().from(ORDERS).update({
           ...(locked ? {} : headerValues(edited)),
           status,
-          notes: input.notes ?? '',
-          updated_at: nowIso(),
+            updated_at: nowIso(),
         }).eq('id', existing.id)),
         'Could not save the sales order',
       );
