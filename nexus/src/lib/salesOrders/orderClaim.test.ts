@@ -4,7 +4,7 @@ import { fakeSupabase, type Row } from '@/test/fakeSupabase';
 const mocks = vi.hoisted(() => ({ syncSalesOrder: vi.fn() }));
 vi.mock('./orderSync', () => ({ syncSalesOrder: mocks.syncSalesOrder }));
 
-import { LEASE_MS, SWEEP_BATCH, claimOrder, releaseOrder, sweepPendingOrders, syncWithClaim } from './orderClaim';
+import { LEASE_MS, SWEEP_BATCH, claimOrder, releaseOrder, sweepPendingOrders, syncWithClaim, withOrderLease } from './orderClaim';
 import type { OrderSyncDeps } from './orderSync';
 
 const T0 = '2026-11-13T10:00:00.000Z';
@@ -55,6 +55,30 @@ function deps(rows: Row[]): { deps: OrderSyncDeps; tables: Record<string, Row[]>
     deps: { supabase: fake.client, transport: {} as never, orgId: 'org-1', connectionId: 'conn-1', now: () => T0 },
   };
 }
+
+describe('withOrderLease', () => {
+  it('renews while we hold the lease and releases the renewed lease', async () => {
+    const d = deps([order('o1')]);
+    const res = await withOrderLease(d.deps, 'o1', async (lease) => {
+      expect(await lease.renew(300_000)).toBe(true);
+      expect(d.tables.sales_orders[0].claimed_until).toBe(at(300_000));
+      expect(await lease.renew(LEASE_MS)).toBe(true);
+      expect(d.tables.sales_orders[0].claimed_until).toBe(at(LEASE_MS));
+      return 'ok';
+    });
+    expect(res).toEqual({ claimed: true, value: 'ok' });
+    expect(d.tables.sales_orders[0].claimed_until).toBeNull();
+  });
+
+  it('renew returns false once someone else holds the lease, and leaves their lease alone', async () => {
+    const d = deps([order('o1')]);
+    await withOrderLease(d.deps, 'o1', async (lease) => {
+      d.tables.sales_orders[0].claimed_until = at(999_000);
+      expect(await lease.renew(300_000)).toBe(false);
+    });
+    expect(d.tables.sales_orders[0].claimed_until).toBe(at(999_000));
+  });
+});
 
 describe('syncWithClaim', () => {
   it('claims, syncs and always releases, even when the sync throws', async () => {

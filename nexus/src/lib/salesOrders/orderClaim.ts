@@ -60,23 +60,62 @@ async function safeRelease(supabase: SupabaseClient, orderId: string, until: str
   }
 }
 
+/** A held lease that can be extended. */
+export interface OrderLease {
+  /**
+   * Moves claimed_until to now + `ms`, only while we still hold the lease
+   * (claimed_until is still the value we last wrote). False = lost it.
+   */
+  renew(ms: number): Promise<boolean>;
+}
+
 /**
  * Run `fn` while holding the order's lease; null (fn not run) when someone
- * else holds it. The lease is always released.
+ * else holds it. The lease (as last renewed) is always released.
  */
-export async function withOrderClaim<T>(
+export async function withOrderLease<T>(
   deps: Pick<OrderSyncDeps, 'supabase' | 'orgId' | 'connectionId' | 'now'>,
   orderId: string,
-  fn: () => Promise<T>,
+  fn: (lease: OrderLease) => Promise<T>,
 ): Promise<{ claimed: true; value: T } | { claimed: false }> {
   const nowIso = deps.now();
   const scope = { orgId: deps.orgId, connectionId: deps.connectionId };
   if (!(await claimOrder(deps.supabase, orderId, nowIso, scope))) return { claimed: false };
+  let until = leaseUntil(nowIso);
+  const lease: OrderLease = {
+    async renew(ms) {
+      const next = new Date(Date.parse(deps.now()) + ms).toISOString();
+      const { data, error } = await deps.supabase
+        .from(ORDERS)
+        .update({ claimed_until: next })
+        .eq('id', orderId)
+        .eq('organization_id', deps.orgId)
+        .eq('bc_connection_id', deps.connectionId)
+        .eq('claimed_until', until)
+        .select('id');
+      if (error) throw new Error(`Could not renew the sales order lease: ${error.message}`);
+      if (!Array.isArray(data) || data.length === 0) return false;
+      until = next;
+      return true;
+    },
+  };
   try {
-    return { claimed: true, value: await fn() };
+    return { claimed: true, value: await fn(lease) };
   } finally {
-    await safeRelease(deps.supabase, orderId, leaseUntil(nowIso));
+    await safeRelease(deps.supabase, orderId, until);
   }
+}
+
+/**
+ * Run `fn` while holding the order's lease; null (fn not run) when someone
+ * else holds it. The lease is always released.
+ */
+export function withOrderClaim<T>(
+  deps: Pick<OrderSyncDeps, 'supabase' | 'orgId' | 'connectionId' | 'now'>,
+  orderId: string,
+  fn: () => Promise<T>,
+): Promise<{ claimed: true; value: T } | { claimed: false }> {
+  return withOrderLease(deps, orderId, () => fn());
 }
 
 /** Claim, sync and release one order; null when it is already claimed. */

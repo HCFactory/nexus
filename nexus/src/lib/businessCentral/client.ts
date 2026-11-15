@@ -157,7 +157,7 @@ export class BcApiError extends Error {
   }
 }
 
-const INVOKE_ACTION_TIMEOUT_MS = 120_000;
+export const INVOKE_ACTION_TIMEOUT_MS = 120_000;
 
 export interface BcClient {
   readonly config: Omit<BcClientConfig, "clientSecret" | "fetchImpl">;

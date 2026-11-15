@@ -6,7 +6,7 @@ import type { BillcomClient } from '@/lib/billcom/client'
 import { BillcomApiError } from '@/lib/billcom/errors'
 import { LINE_SNAPSHOT_FIELDS, snapshotOf } from './bcOrderMapping'
 import { LEASE_MS } from './orderClaim'
-import { retryInvoiceProcess, runInvoiceProcess, startInvoiceProcess, type InvoiceDeps } from './invoiceProcess'
+import { NOT_IN_SYNC, retryInvoiceProcess, runInvoiceProcess, startInvoiceProcess, type InvoiceDeps } from './invoiceProcess'
 
 const T0 = '2026-11-15T15:00:00.000Z'
 const NOT_CONFIRMED = "BC didn't confirm the posting. Retry checks BC first, so it won't post twice."
@@ -178,7 +178,10 @@ function expectAtMostOnce() {
   expect(bill.posts.length).toBeLessThanOrEqual(1)
 }
 
-beforeEach(() => setup())
+beforeEach(() => {
+  vi.restoreAllMocks()
+  setup()
+})
 
 describe('startInvoiceProcess', () => {
   it('sets posting and who started it, without running any step', async () => {
@@ -299,6 +302,7 @@ describe('runInvoiceProcess', () => {
   })
 
   it('post outcome unknown but BC posted: records it and finishes', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     setup({ invoice_state: 'posting' })
     bc.state.onPost = async () => {
       bc.state.posted.push({ ...INVOICE })
@@ -306,22 +310,27 @@ describe('runInvoiceProcess', () => {
     }
     expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('done')
     expect(order()).toMatchObject({ status: 'invoiced', bc_posted_invoice_id: 'inv-guid' })
+    expect(logged).toHaveBeenCalledTimes(1)
     expectAtMostOnce()
   })
 
   it('post outcome unknown and nothing posted: post_failed with the not-confirmed message', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     setup({ invoice_state: 'posting' })
     bc.state.onPost = async () => { throw new BcApiError({ status: 503, statusText: 'Unavailable', message: 'down', url: 'u' }) }
     expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('post_failed')
     expect(order()).toMatchObject({ invoice_state: 'post_failed', invoice_error: NOT_CONFIRMED, status: 'final' })
+    expect(logged).toHaveBeenCalledTimes(1)
     expectAtMostOnce()
   })
 
   it('a network error on the post is treated as unknown', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     setup({ invoice_state: 'posting' })
     bc.state.onPost = async () => { throw new TypeError('fetch failed') }
     expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('post_failed')
     expect(order().invoice_error).toBe(NOT_CONFIRMED)
+    expect(logged).toHaveBeenCalledTimes(1)
     expectAtMostOnce()
   })
 
@@ -425,6 +434,101 @@ describe('runInvoiceProcess', () => {
   })
 })
 
+describe('lease and ownership', () => {
+  it('holds the lease past BC\'s post timeout during the post, and releases it after', async () => {
+    setup({ invoice_state: 'posting' })
+    let during: string | null = null
+    bc.state.onPost = async () => {
+      during = order().claimed_until as string
+      bc.state.posted.push({ ...INVOICE })
+    }
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('done')
+    expect(Date.parse(during!)).toBeGreaterThanOrEqual(Date.parse(T0) + 180_000)
+    expect(order().claimed_until).toBeNull()
+  })
+
+  it('a renewal that matches no row (lease taken) stops before posting, without writing', async () => {
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setup({ invoice_state: 'posting' })
+    const other = new Date(Date.parse(T0) + 999_000).toISOString()
+    // Another runner claims the order while we set the dates.
+    bc.patch.mockImplementationOnce(async () => {
+      order().claimed_until = other
+      return { key: { values: {} }, etag: 'x', fields: {} }
+    })
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBeNull()
+    expect(bc.invokeAction).not.toHaveBeenCalled()
+    expect(order()).toMatchObject({ invoice_state: 'posting', invoice_error: null, claimed_until: other })
+    expect(db.writes.filter(([t, op, p]) => t === 'sales_orders' && op === 'update' && 'invoice_state' in (p as Row))).toHaveLength(0)
+    expect(warned).toHaveBeenCalledTimes(1)
+  })
+
+  it('a renewal at a later step that matches no row stops before Bill.com', async () => {
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setup({ invoice_state: 'posting' })
+    db.failOn = (table, op, p) => {
+      // After `posted` is saved, someone else takes the lease.
+      if (table === 'sales_orders' && op === 'update' && (p as Row).invoice_state === 'posted') {
+        order().claimed_until = '2099-01-01T00:00:00.000Z'
+      }
+      return null
+    }
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBeNull()
+    expect(order().invoice_state).toBe('posted')
+    expect(bill.request).not.toHaveBeenCalled()
+    expect(warned).toHaveBeenCalledTimes(1)
+  })
+
+  it('a compare-and-set miss on the posted write stops without further writes', async () => {
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setup({ invoice_state: 'posting' })
+    bc.state.onPost = async () => {
+      bc.state.posted.push({ ...INVOICE })
+      // Another runner finished the order meanwhile.
+      Object.assign(order(), { invoice_state: 'done', billcom_invoice_id: 'BINV-OTHER' })
+    }
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBeNull()
+    expect(order()).toMatchObject({ invoice_state: 'done', billcom_invoice_id: 'BINV-OTHER', invoice_error: null })
+    const stateWrites = db.writes.filter(([t, op, p]) => t === 'sales_orders' && op === 'update' && 'invoice_state' in (p as Row))
+    expect(stateWrites.map(([, , p]) => (p as Row).invoice_state)).toEqual(['posted'])
+    expect(bill.request).not.toHaveBeenCalled()
+    expect(warned).toHaveBeenCalledTimes(1)
+    expectAtMostOnce()
+  })
+
+  it('a late post_failed never overwrites a newer state', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    setup({ invoice_state: 'posting' })
+    bc.state.onPost = async () => {
+      Object.assign(order(), { invoice_state: 'posted' })
+      throw new BcApiError({ status: 400, statusText: 'Bad Request', message: 'refused', url: 'u' })
+    }
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBeNull()
+    expect(order()).toMatchObject({ invoice_state: 'posted', invoice_error: null })
+  })
+})
+
+describe('posting needs an order that is In BC', () => {
+  it.each([
+    [{ sync_state: 'pending' }],
+    [{ sync_state: 'failed' }],
+    [{ status: 'draft' }],
+  ])('posting with %o: post_failed with the save message, nothing posted', async (extra) => {
+    setup({ invoice_state: 'posting', ...extra })
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('post_failed')
+    expect(order()).toMatchObject({ invoice_state: 'post_failed', invoice_error: NOT_IN_SYNC })
+    expect(bc.patch).not.toHaveBeenCalled()
+    expect(bc.invokeAction).not.toHaveBeenCalled()
+  })
+
+  it('still records an already-posted invoice first, even when the order is not in sync', async () => {
+    setup({ invoice_state: 'posting', sync_state: 'pending' })
+    bc.state.posted.push({ ...INVOICE })
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('done')
+    expect(bc.invokeAction).not.toHaveBeenCalled()
+  })
+})
+
 function postedColumns(): Row {
   return {
     bc_posted_invoice_id: 'inv-guid',
@@ -468,6 +572,22 @@ describe('retryInvoiceProcess', () => {
     expect(await retryInvoiceProcess(makeDeps(), 'o1')).toEqual({ ok: true, state: 'billcom_failed' })
     expect(order().invoice_error).toBe("This customer couldn't be sent to Bill.com. Retry it from Customers first.")
     expect(bill.request).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ status: 'draft' }],
+    [{ sync_state: 'pending' }],
+    [{ sync_state: 'failed' }],
+  ])('post_failed with %o: refuses up front with the save message', async (extra) => {
+    setup({ invoice_state: 'post_failed', invoice_error: 'Item ITEM-1 is blocked.', ...extra })
+    expect(await retryInvoiceProcess(makeDeps(), 'o1')).toEqual({ ok: false, error: NOT_IN_SYNC })
+    expect(order()).toMatchObject({ invoice_state: 'post_failed', invoice_error: 'Item ITEM-1 is blocked.' })
+    expect(bc.list).not.toHaveBeenCalled()
+  })
+
+  it('billcom_failed retries even though the order is no longer Final (it is Invoiced)', async () => {
+    setup({ invoice_state: 'billcom_failed', status: 'invoiced', ...postedColumns() })
+    expect(await retryInvoiceProcess(makeDeps(), 'o1')).toEqual({ ok: true, state: 'done' })
   })
 
   it.each(['none', 'posting', 'done'] as const)('refuses in %s', async (state) => {
