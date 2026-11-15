@@ -514,10 +514,10 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           </h1>
         </div>
         {/* Sync state sits above the buttons; the column is no taller than the title block. */}
-        <div className="flex flex-col items-end">
+        <div className="flex flex-col items-end gap-1.5">
           {order && (
             <SyncBadge
-              className="-mb-0.5 text-xs leading-3"
+              className="-mt-2.5 text-xs leading-4"
               state={order.sync_state}
               error={order.sync_error}
               canAct={canEdit}
