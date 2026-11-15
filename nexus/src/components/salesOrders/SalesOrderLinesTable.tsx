@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { SalesOrderItemOption } from '@/app/actions/salesOrders';
+import { effectiveDiscount, effectivePrice, lineAmounts } from '@/lib/salesOrders/lineAmounts';
 import type { LineDraft } from '@/types/salesOrders';
 
 interface Props {
@@ -10,6 +11,10 @@ interface Props {
   items: SalesOrderItemOption[];
   locked: boolean;
   onChange: (lines: LineDraft[]) => void;
+  /** The tax % for a line (0 when not given). */
+  taxRate?: (line: LineDraft) => number;
+  /** Show BC's read-back amount incl. tax instead of the live one (the order is synced and unchanged). */
+  showBcAmounts?: boolean;
 }
 
 const cellInput =
@@ -167,57 +172,97 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
 
 /**
  * Number cell that keeps the raw text while editing so it can be empty
- * mid-edit. Valid values commit on change; blur reverts invalid input. An
- * empty field calls `onClear` when given, otherwise it reverts.
+ * mid-edit. Valid values commit on change; blur reverts invalid or empty input.
  */
 function NumberCell({
   label,
   value,
   disabled,
-  step,
   valid,
   onCommit,
-  onClear,
 }: {
   label: string;
-  value: number | null;
+  value: number;
   disabled: boolean;
-  step?: string;
   valid: (n: number) => boolean;
   onCommit: (n: number) => void;
-  onClear?: () => void;
 }) {
   const [text, setText] = useState<string | null>(null);
   return (
     <input
       type="number"
       aria-label={label}
-      step={step}
       disabled={disabled}
-      value={text ?? (value === null ? '' : String(value))}
+      value={text ?? String(value)}
       className={cellInput}
       onChange={(e) => {
         setText(e.target.value);
         const n = parseNumber(e.target.value);
         if (n !== null && valid(n)) onCommit(n);
       }}
+      onBlur={() => setText(null)}
+    />
+  );
+}
+
+/**
+ * Price/discount cell: shows the value the line will use (typed, BC's or the
+ * estimate) and holds the raw text while being typed. On blur an empty field
+ * commits null (back to BC/estimate), a valid number commits it, anything
+ * else reverts.
+ */
+function EffectiveCell({
+  label,
+  shown,
+  disabled,
+  step,
+  valid,
+  onCommit,
+}: {
+  label: string;
+  shown: string;
+  disabled: boolean;
+  step: string;
+  valid: (n: number) => boolean;
+  onCommit: (n: number | null) => void;
+}) {
+  const [text, setText] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      aria-label={label}
+      min={0}
+      step={step}
+      disabled={disabled}
+      value={text ?? shown}
+      className={cellInput}
+      onChange={(e) => setText(e.target.value)}
       onBlur={() => {
-        if (text !== null && text.trim() === '' && onClear) onClear();
+        if (text !== null) {
+          const n = parseNumber(text);
+          if (text.trim() === '') onCommit(null);
+          else if (n !== null && valid(n)) onCommit(n);
+        }
         setText(null);
       }}
     />
   );
 }
 
-/** Greyed hint under a blank cell: BC's value after a sync, else the estimate marked (est.). */
-function BlankHint({ bc, estimate }: { bc: number | null; estimate: number | null | undefined }) {
-  const text = bc !== null ? money(bc) : estimate !== null && estimate !== undefined ? `${money(estimate)} (est.)` : null;
-  return text === null ? null : <span className="mt-0.5 block text-right text-xs text-foreground-subtle">{text}</span>;
-}
+const shownPrice = (l: LineDraft) => {
+  const p = effectivePrice(l);
+  return p === null ? '' : money(p);
+};
+const shownDiscount = (l: LineDraft) => {
+  const d = effectiveDiscount(l);
+  return d === 0 ? '' : String(d);
+};
 
-export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) {
+export function SalesOrderLinesTable({ lines, items, locked, onChange, taxRate, showBcAmounts = false }: Props) {
   const update = (key: string, patch: Partial<LineDraft>) =>
     onChange(lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const amountOf = (l: LineDraft) =>
+    showBcAmounts && l.amount_incl_tax !== null ? l.amount_incl_tax : lineAmounts(l, taxRate?.(l) ?? 0).incl;
 
   const addItem = (item: SalesOrderItemOption) =>
     onChange([
@@ -264,39 +309,33 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   disabled={locked}
                   value={line.quantity}
                   valid={(n) => n > 0}
-                  onCommit={(n) => update(line.key, { quantity: n })}
+                  // BC's price, discount and amount were for the old quantity; the estimate takes over.
+                  onCommit={(n) =>
+                    update(line.key, { quantity: n, bc_unit_price: null, bc_line_discount_percent: null, amount_incl_tax: null })
+                  }
                 />
               </td>
               <td className="w-36 px-3 py-2">
-                <input
-                  type="number"
-                  aria-label="Unit price"
-                  min={0}
+                <EffectiveCell
+                  label="Unit price"
                   step="0.01"
                   disabled={locked}
-                  value={line.unit_price ?? ''}
-                  className={cellInput}
-                  onChange={(e) => update(line.key, { unit_price: parseNumber(e.target.value) })}
+                  shown={shownPrice(line)}
+                  valid={(n) => n >= 0}
+                  onCommit={(n) => update(line.key, { unit_price: n })}
                 />
-                {line.unit_price === null && <BlankHint bc={line.bc_unit_price} estimate={line.estimate_price} />}
               </td>
               <td className="w-24 px-3 py-2">
-                <NumberCell
+                <EffectiveCell
                   label="Disc %"
                   step="0.01"
                   disabled={locked}
-                  value={line.discount_percent}
+                  shown={shownDiscount(line)}
                   valid={(n) => n >= 0 && n <= 100}
                   onCommit={(n) => update(line.key, { discount_percent: n })}
-                  onClear={() => update(line.key, { discount_percent: null })}
                 />
-                {line.discount_percent === null && (
-                  <BlankHint bc={line.bc_line_discount_percent} estimate={line.estimate_discount_percent} />
-                )}
               </td>
-              <td className="whitespace-nowrap px-3 py-2 text-right text-foreground-muted">
-                {line.amount_incl_tax === null ? '—' : money(line.amount_incl_tax)}
-              </td>
+              <td className="whitespace-nowrap px-3 py-2 text-right text-foreground-muted">{money(amountOf(line))}</td>
               <td className="px-3 py-2 text-right">
                 <button
                   type="button"

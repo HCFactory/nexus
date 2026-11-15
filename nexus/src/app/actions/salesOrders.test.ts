@@ -581,7 +581,7 @@ describe('reads', () => {
         { id: 'c6', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C6', display_name: 'F', location_code: 'EAST', blocked: 'Ship' },
       ],
       business_central_items: [
-        { id: 'i1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', blocked: false },
+        { id: 'i1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', tax_group_code: 'TAXABLE', blocked: false },
         { id: 'i2', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '2000', display_name: 'Old', unit_price: 1, base_unit_of_measure_code: 'EA', blocked: true },
       ],
       business_central_sales_price_list_lines: [
@@ -589,13 +589,29 @@ describe('reads', () => {
         { id: 'p2', organization_id: 'org-2', bc_connection_id: 'conn-1', item_number: '1000', source_no: 'WHSL', unit_price: 1 },
         { id: 'p3', organization_id: 'org-1', bc_connection_id: 'conn-2', item_number: '1000', source_no: 'WHSL', unit_price: 1 },
       ],
+      business_central_tax_area_lines: [
+        { id: 'a1', organization_id: 'org-1', bc_connection_id: 'conn-1', tax_area_code: 'HI-HNL-WHSL', tax_jurisdiction_code: 'HI-HN-WHSL' },
+        { id: 'a2', organization_id: 'org-2', bc_connection_id: 'conn-1', tax_area_code: 'X', tax_jurisdiction_code: 'X' },
+        { id: 'a3', organization_id: 'org-1', bc_connection_id: 'conn-2', tax_area_code: 'Y', tax_jurisdiction_code: 'Y' },
+      ],
+      business_central_tax_details: [
+        { id: 'd1', organization_id: 'org-1', bc_connection_id: 'conn-1', tax_jurisdiction_code: 'HI-HN-RT', tax_group_code: 'TAXABLE', tax_type: 'Sales Tax', effective_date: '2025-03-06', tax_below_maximum: '4.712' },
+        { id: 'd2', organization_id: 'org-2', bc_connection_id: 'conn-1', tax_jurisdiction_code: 'X', tax_group_code: 'TAXABLE', tax_type: 'Sales Tax', effective_date: '2025-03-06', tax_below_maximum: 1 },
+        { id: 'd3', organization_id: 'org-1', bc_connection_id: 'conn-2', tax_jurisdiction_code: 'Y', tax_group_code: 'TAXABLE', tax_type: 'Sales Tax', effective_date: '2025-03-06', tax_below_maximum: 1 },
+      ],
     });
     mocks.getSelectOptions.mockImplementation(async (k: string) => [{ code: k, label: k }]);
     const ctx = await getSalesOrderFormContext();
     expect(ctx.customers.map((c) => c.id)).toEqual(['c1', 'c2', 'c3']);
     expect(ctx.customers[0].customer_price_group).toBe('WHSL');
     expect(ctx.priceListLines.map((l) => l.id)).toEqual(['p1']);
-    expect(ctx.items).toEqual([{ bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA' }]);
+    expect(ctx.items).toEqual([
+      { bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', tax_group_code: 'TAXABLE' },
+    ]);
+    expect(ctx.taxAreaLines).toEqual([{ tax_area_code: 'HI-HNL-WHSL', tax_jurisdiction_code: 'HI-HN-WHSL' }]);
+    expect(ctx.taxDetails).toEqual([
+      { tax_jurisdiction_code: 'HI-HN-RT', tax_group_code: 'TAXABLE', tax_type: 'Sales Tax', effective_date: '2025-03-06', tax_below_maximum: 4.712 },
+    ]);
     expect(Object.keys(ctx.selectOptions).sort()).toEqual(
       ['customerPostingGroups', 'generalBusinessPostingGroups', 'paymentTerms', 'shipmentMethods', 'taxAreas'],
     );

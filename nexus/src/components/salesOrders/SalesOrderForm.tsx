@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { bestPrice } from '@/lib/salesOrders/bestPrice';
+import { lineAmounts, orderTotals, taxRatePercent } from '@/lib/salesOrders/lineAmounts';
 import { applyShipTo, customerDefaults } from '@/lib/salesOrders/orderDefaults';
 import { canDelete, editableFields } from '@/lib/salesOrders/orderRules';
 import type {
@@ -51,7 +52,6 @@ interface Props {
 
 type Option = { code: string; label: string };
 
-const NOT_SENT = 'Calculated when sent to BC';
 const POLL_MS = 4000;
 const MAX_POLLS = 15;
 
@@ -137,6 +137,24 @@ function lineDraftOf(row: SalesOrderLineRow, estimates: Map<string, number | nul
   };
 }
 
+/** True when the edited lines still match the loaded ones (same lines, same order, same values). */
+function linesUnchanged(draft: LineDraft[], loaded: SalesOrderLineRow[]): boolean {
+  return (
+    draft.length === loaded.length &&
+    draft.every((d, i) => {
+      const r = loaded[i];
+      return (
+        d.id === r.id &&
+        d.item_number === r.item_number &&
+        d.quantity === Number(r.quantity) &&
+        d.unit_price === num(r.unit_price) &&
+        d.discount_percent === num(r.discount_percent) &&
+        d.unit_of_measure_code === (r.unit_of_measure_code ?? '')
+      );
+    })
+  );
+}
+
 /** Stand-in for a customer that is no longer pickable (e.g. blocked), built from the order's own values. */
 function customerFromHeader(id: string, number: string, defaultCode: string, h: OrderHeaderDefaults): CustomerRow {
   return {
@@ -183,7 +201,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo }: Props) {
   const router = useRouter();
-  const { customers, items, selectOptions, companyLocation, today, priceListLines } = context;
+  const { customers, items, selectOptions, companyLocation, today, priceListLines, taxAreaLines, taxDetails } = context;
   const initialCustomer = order ? customers.find((c) => c.id === order.customer_id) ?? null : null;
 
   const [customerId, setCustomerId] = useState(order?.customer_id ?? '');
@@ -250,20 +268,41 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     );
 
   // Read-back amounts and BC prices arrive on refresh; show them without discarding the rep's unsaved edits.
+  // They only apply while the line still has the item and quantity BC priced.
   const readBack = new Map(
     lines.map((l) => [
       l.id,
-      { amount: num(l.amount_incl_tax), price: num(l.bc_unit_price), discount: num(l.bc_line_discount_percent) },
+      {
+        item: l.item_number,
+        quantity: Number(l.quantity),
+        amount: num(l.amount_incl_tax),
+        price: num(l.bc_unit_price),
+        discount: num(l.bc_line_discount_percent),
+      },
     ]),
   );
   const shownLines = draftLines.map((l) => {
     const est = estimateOf(l);
     const withEstimate = { ...l, estimate_price: est.unitPrice, estimate_discount_percent: est.discountPercent };
     const r = l.id ? readBack.get(l.id) : undefined;
-    return r
+    return r && r.item === l.item_number && r.quantity === l.quantity
       ? { ...withEstimate, amount_incl_tax: r.amount, bc_unit_price: r.price, bc_line_discount_percent: r.discount }
       : withEstimate;
   });
+
+  // Live tax: the order's tax area and liability, the item's tax group, rates in effect on the order date.
+  const taxGroups = useMemo(() => new Map(items.map((i) => [i.bc_item_number, i.tax_group_code ?? ''])), [items]);
+  const taxRate = (l: LineDraft) =>
+    taxRatePercent(
+      {
+        taxAreaCode: header.tax_area_code,
+        taxGroupCode: taxGroups.get(l.item_number) ?? '',
+        date: orderDate,
+        taxLiable: header.tax_liable,
+      },
+      taxAreaLines,
+      taxDetails,
+    );
 
   const setField = <K extends keyof OrderHeaderDefaults>(key: K, value: OrderHeaderDefaults[K]) =>
     setHeader((h) => ({ ...h, [key]: value }));
@@ -410,11 +449,21 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     });
   }
 
-  const showTotals = order !== null && order.sync_state !== 'pending';
-  const total = (v: number | null | undefined) => {
-    const n = num(v);
-    return showTotals && n !== null ? money(n) : NOT_SENT;
-  };
+  // BC's figures while the order is synced and nothing changed since load; otherwise the live estimate.
+  const loadedHeader = order ? headerOf(order) : null;
+  const bcTotals =
+    order &&
+    loadedHeader &&
+    order.sync_state === 'synced' &&
+    num(order.total_incl_tax) !== null &&
+    customerId === order.customer_id &&
+    orderDate === order.order_date &&
+    HEADER_KEYS.every((k) => header[k] === loadedHeader[k]) &&
+    linesUnchanged(draftLines, lines)
+      ? { subtotal: num(order.total_excl_tax) ?? 0, tax: num(order.total_tax) ?? 0, total: num(order.total_incl_tax) ?? 0 }
+      : null;
+  const showBc = bcTotals !== null;
+  const totals = bcTotals ?? orderTotals(shownLines.map((l) => lineAmounts(l, taxRate(l))));
   const shipAddress = Object.fromEntries(SHIP_ADDRESS_KEYS.map((k) => [k, header[k]])) as ShipToAddressFields;
 
   return (
@@ -610,14 +659,21 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           </Section>
 
           <Section title="Lines">
-            <SalesOrderLinesTable lines={shownLines} items={items} locked={locked || busy} onChange={setDraftLines} />
+            <SalesOrderLinesTable
+              lines={shownLines}
+              items={items}
+              locked={locked || busy}
+              onChange={setDraftLines}
+              taxRate={taxRate}
+              showBcAmounts={showBc}
+            />
             <dl className="ml-auto mt-4 grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 text-sm">
               <dt className="text-foreground-muted">Subtotal</dt>
-              <dd data-testid="total-subtotal" className="text-right text-foreground">{total(order?.total_excl_tax)}</dd>
-              <dt className="text-foreground-muted">Tax (from BC)</dt>
-              <dd data-testid="total-tax" className="text-right text-foreground">{total(order?.total_tax)}</dd>
+              <dd data-testid="total-subtotal" className="text-right text-foreground">{money(totals.subtotal)}</dd>
+              <dt className="text-foreground-muted">{showBc ? 'Tax' : 'Tax (estimate)'}</dt>
+              <dd data-testid="total-tax" className="text-right text-foreground">{money(totals.tax)}</dd>
               <dt className="font-semibold text-foreground">Total</dt>
-              <dd data-testid="total-total" className="text-right font-semibold text-foreground">{total(order?.total_incl_tax)}</dd>
+              <dd data-testid="total-total" className="text-right font-semibold text-foreground">{money(totals.total)}</dd>
             </dl>
           </Section>
 

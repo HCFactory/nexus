@@ -12,6 +12,7 @@ import {
   sweepPendingOrders,
   syncWithClaim,
 } from '@/lib/salesOrders/orderClaim';
+import type { TaxAreaLine, TaxDetail } from '@/lib/salesOrders/lineAmounts';
 import { canChangeStatus, canDelete, editableFields, todayIn } from '@/lib/salesOrders/orderRules';
 import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
 import { SAVE_UNFINISHED, isUnfinishedSave } from '@/lib/salesOrders/saveMarker';
@@ -40,6 +41,7 @@ export interface SalesOrderItemOption {
   display_name: string;
   unit_price: number | null;
   base_unit_of_measure_code: string | null;
+  tax_group_code: string | null;
 }
 
 export interface SalesOrderFormContext {
@@ -50,6 +52,9 @@ export interface SalesOrderFormContext {
   today: string;
   /** BC sales price list lines (read-only copies) for the order form's price estimate. */
   priceListLines: SalesPriceListLineRow[];
+  /** Tax area → jurisdictions, and each jurisdiction's rates, for the live tax estimate. */
+  taxAreaLines: TaxAreaLine[];
+  taxDetails: TaxDetail[];
 }
 
 const ORDERS = 'sales_orders';
@@ -289,11 +294,11 @@ function mostUsedLocation(customers: CustomerRow[]): string {
 export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext> {
   const scope = await viewScope();
   if (!scope) {
-    return { customers: [], items: [], selectOptions: {}, companyLocation: '', today: todayIn(null), priceListLines: [] };
+    return { customers: [], items: [], selectOptions: {}, companyLocation: '', today: todayIn(null), priceListLines: [], taxAreaLines: [], taxDetails: [] };
   }
   const supabase = await createClient();
 
-  const [customers, items, lists, priceListLines] = await Promise.all([
+  const [customers, items, lists, priceListLines, taxAreaLines, taxDetails] = await Promise.all([
     fetchAll<CustomerRow>(
       () =>
         supabase
@@ -313,7 +318,7 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
       () =>
         supabase
           .from('business_central_items')
-          .select('id, bc_item_number, display_name, unit_price, base_unit_of_measure_code')
+          .select('id, bc_item_number, display_name, unit_price, base_unit_of_measure_code, tax_group_code')
           .eq('organization_id', scope.orgId)
           .eq('bc_connection_id', scope.bcConnectionId)
           .eq('blocked', false)
@@ -338,6 +343,28 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
       1000,
       'price list lines',
     ),
+    fetchAll<TaxAreaLine & { id: string }>(
+      () =>
+        supabase
+          .from('business_central_tax_area_lines')
+          .select('id, tax_area_code, tax_jurisdiction_code')
+          .eq('organization_id', scope.orgId)
+          .eq('bc_connection_id', scope.bcConnectionId)
+          .order('id', { ascending: true }),
+      1000,
+      'tax area lines',
+    ),
+    fetchAll<TaxDetail & { id: string }>(
+      () =>
+        supabase
+          .from('business_central_tax_details')
+          .select('id, tax_jurisdiction_code, tax_group_code, tax_type, effective_date, tax_below_maximum')
+          .eq('organization_id', scope.orgId)
+          .eq('bc_connection_id', scope.bcConnectionId)
+          .order('id', { ascending: true }),
+      1000,
+      'tax details',
+    ),
   ]);
 
   return {
@@ -347,6 +374,7 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
       display_name: i.display_name,
       unit_price: i.unit_price === null || i.unit_price === undefined ? null : Number(i.unit_price),
       base_unit_of_measure_code: i.base_unit_of_measure_code ?? null,
+      tax_group_code: i.tax_group_code ?? null,
     })),
     selectOptions: Object.fromEntries(SELECT_KEYS.map((k, i) => [k, lists[i]])),
     companyLocation: mostUsedLocation(customers),
@@ -356,6 +384,14 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
       minimum_quantity: Number(l.minimum_quantity ?? 0),
       unit_price: Number(l.unit_price ?? 0),
       line_discount_percent: Number(l.line_discount_percent ?? 0),
+    })),
+    taxAreaLines: taxAreaLines.map((l) => ({ tax_area_code: l.tax_area_code, tax_jurisdiction_code: l.tax_jurisdiction_code })),
+    taxDetails: taxDetails.map((d) => ({
+      tax_jurisdiction_code: d.tax_jurisdiction_code,
+      tax_group_code: d.tax_group_code,
+      tax_type: d.tax_type,
+      effective_date: d.effective_date,
+      tax_below_maximum: Number(d.tax_below_maximum ?? 0),
     })),
   };
 }

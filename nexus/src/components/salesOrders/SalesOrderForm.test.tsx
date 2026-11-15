@@ -38,7 +38,7 @@ const beta = customer({
 const opts = (...codes: string[]) => codes.map((c) => ({ code: c, label: c }));
 const context: SalesOrderFormContext = {
   customers: [acme, beta],
-  items: [{ bc_item_number: 'P100', display_name: 'Pesto sauce', unit_price: 12.5, base_unit_of_measure_code: 'CASE' }],
+  items: [{ bc_item_number: 'P100', display_name: 'Pesto sauce', unit_price: 12.5, base_unit_of_measure_code: 'CASE', tax_group_code: 'TAXABLE' }],
   selectOptions: {
     paymentTerms: opts('NET30', 'NET15'),
     taxAreas: opts('TX', 'HI'),
@@ -49,6 +49,23 @@ const context: SalesOrderFormContext = {
   companyLocation: 'MAIN',
   today: '2026-11-13',
   priceListLines: [],
+  taxAreaLines: [],
+  taxDetails: [],
+};
+
+/** Texas at 8.25% for TAXABLE items. */
+const taxed: SalesOrderFormContext = {
+  ...context,
+  taxAreaLines: [{ tax_area_code: 'TX', tax_jurisdiction_code: 'TX-ST' }],
+  taxDetails: [
+    { tax_jurisdiction_code: 'TX-ST', tax_group_code: 'TAXABLE', tax_type: 'Sales Tax', effective_date: '2020-01-01', tax_below_maximum: 8.25 },
+  ],
+};
+const priceInputs = () => screen.getAllByLabelText('Unit price').map((el) => (el as HTMLInputElement).value);
+const totals = () => ['total-subtotal', 'total-tax', 'total-total'].map((id) => screen.getByTestId(id).textContent);
+const addItem = (label: string) => {
+  fireEvent.click(screen.getByPlaceholderText('Add item…'));
+  fireEvent.click(screen.getByRole('option', { name: label }));
 };
 
 const priceLine = (o: Partial<SalesPriceListLineRow>): SalesPriceListLineRow => ({
@@ -244,8 +261,7 @@ describe('SalesOrderForm — fields', () => {
     const synced = { ...lineRow, bc_unit_price: 11.25 } as SalesOrderLineRow;
     const unsynced = { ...lineRow, id: 'l2', bc_unit_price: null } as SalesOrderLineRow;
     renderForm({ order: order(), lines: [synced, unsynced], shipTos: [dock] });
-    expect(screen.getByText('11.25')).toBeInTheDocument();
-    expect(screen.getAllByText('12.50 (est.)')).toHaveLength(1);
+    expect(priceInputs()).toEqual(['11.25', '12.50']);
   });
 
   it('the estimate uses the customer price group price; quantity crossing the minimum changes it', () => {
@@ -260,26 +276,26 @@ describe('SalesOrderForm — fields', () => {
     };
     const row = { ...lineRow, bc_unit_price: null, discount_percent: null } as SalesOrderLineRow;
     renderForm({ order: order(), lines: [row], shipTos: [dock], context: ctx });
-    expect(screen.getByText('10.00 (est.)')).toBeInTheDocument();
-    expect(screen.getByText('4.00 (est.)')).toBeInTheDocument();
+    expect(priceInputs()).toEqual(['10.00']);
+    expect(screen.getByLabelText('Disc %')).toHaveValue(4);
     fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '5' } });
-    expect(screen.getByText('9.00 (est.)')).toBeInTheDocument();
+    expect(priceInputs()).toEqual(['9.00']);
   });
 
   it('the estimate falls back to the item price for a customer without a matching price group', () => {
     const ctx = { ...context, priceListLines: [priceLine({ unit_price: 10 })] };
     const row = { ...lineRow, bc_unit_price: null } as SalesOrderLineRow;
     renderForm({ order: order({ customer_id: 'cust-2', customer_number: 'C2' }), lines: [row], context: ctx });
-    expect(screen.getByText('12.50 (est.)')).toBeInTheDocument();
+    expect(priceInputs()).toEqual(['12.50']);
   });
 
   it('the estimate follows the order date (a list that has not started yet does not apply)', () => {
     const ctx = { ...context, priceListLines: [priceLine({ unit_price: 10, starting_date: '2026-12-01' })] };
     const row = { ...lineRow, bc_unit_price: null } as SalesOrderLineRow;
     renderForm({ order: order(), lines: [row], shipTos: [dock], context: ctx });
-    expect(screen.getByText('12.50 (est.)')).toBeInTheDocument();
+    expect(priceInputs()).toEqual(['12.50']);
     fireEvent.change(screen.getByLabelText('Order date'), { target: { value: '2026-12-02' } });
-    expect(screen.getByText('10.00 (est.)')).toBeInTheDocument();
+    expect(priceInputs()).toEqual(['10.00']);
   });
 
   it('saves a blank discount as null', async () => {
@@ -291,25 +307,64 @@ describe('SalesOrderForm — fields', () => {
     expect(orderActions.saveSalesOrder.mock.calls[0][0].lines[0].discount_percent).toBeNull();
   });
 
-  it('totals come from the BC read-back', () => {
+  it('a synced, unchanged order shows BC’s totals and line amounts', () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
-    expect(screen.getByTestId('total-subtotal')).toHaveTextContent('100.00');
-    expect(screen.getByTestId('total-tax')).toHaveTextContent('8.25');
-    expect(screen.getByTestId('total-total')).toHaveTextContent('108.25');
-    expect(screen.getByText('Tax (from BC)')).toBeInTheDocument();
+    expect(totals()).toEqual(['100.00', '8.25', '108.25']);
+    expect(screen.getByText('Tax')).toBeInTheDocument();
+    expect(screen.queryByText('Tax (estimate)')).toBeNull();
+    expect(screen.getByText('27.00')).toBeInTheDocument();
   });
 
-  it('totals read "Calculated when sent to BC" while pending', () => {
-    renderForm({ order: order({ sync_state: 'pending' }), lines: [lineRow], shipTos: [dock] });
-    expect(screen.getAllByText('Calculated when sent to BC')).toHaveLength(3);
+  it('editing a synced order switches to live totals marked as an estimate', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock], context: taxed });
+    fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '4' } });
+    expect(totals()).toEqual(['50.00', '4.13', '54.13']);
+    expect(screen.getByText('Tax (estimate)')).toBeInTheDocument();
+  });
+
+  it('a header change (not tax liable) also switches to live totals', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock], context: taxed });
+    fireEvent.click(screen.getByRole('switch', { name: 'Tax liable' }));
+    expect(totals()).toEqual(['25.00', '0.00', '25.00']);
+  });
+
+  it('changing a synced line’s quantity drops BC’s price so the estimate takes over', () => {
+    const synced = { ...lineRow, bc_unit_price: 11.25 } as SalesOrderLineRow;
+    renderForm({ order: order(), lines: [synced], shipTos: [dock] });
+    expect(priceInputs()).toEqual(['11.25']);
+    fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '3' } });
+    expect(priceInputs()).toEqual(['12.50']);
+  });
+
+  it('a pending order shows live totals', () => {
+    renderForm({ order: order({ sync_state: 'pending' }), lines: [lineRow], shipTos: [dock], context: taxed });
+    expect(totals()).toEqual(['25.00', '2.06', '27.06']);
+    expect(screen.getByText('Tax (estimate)')).toBeInTheDocument();
     expect(screen.getByText('Sending to BC…')).toBeInTheDocument();
+  });
+
+  it('adding an item updates Subtotal, Tax and Total right away', () => {
+    renderForm({ context: taxed });
+    pickCustomer('C1 – Acme Foods');
+    expect(totals()).toEqual(['0.00', '0.00', '0.00']);
+    addItem('P100 – Pesto sauce');
+    expect(totals()).toEqual(['12.50', '1.03', '13.53']);
+    expect(screen.getByText('13.53', { selector: 'td' })).toBeInTheDocument();
+  });
+
+  it('changing customer (a new estimate) updates the amounts', () => {
+    renderForm({ context: { ...taxed, priceListLines: [priceLine({ unit_price: 20 })] } });
+    pickCustomer('C1 – Acme Foods');
+    addItem('P100 – Pesto sauce');
+    expect(totals()).toEqual(['20.00', '1.65', '21.65']);
+    pickCustomer('C2 – Beta Bakery');
+    expect(totals()).toEqual(['12.50', '0.00', '12.50']);
   });
 
   it('a new order shows no sync badge and no Delete', () => {
     renderForm();
     expect(screen.queryByText('In BC')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
-    expect(screen.getAllByText('Calculated when sent to BC')).toHaveLength(3);
   });
 });
 
