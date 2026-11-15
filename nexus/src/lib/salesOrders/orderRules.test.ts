@@ -12,7 +12,7 @@ describe('orderRules', () => {
     expect(canChangeStatus('shipped', 'final')).toBe(false)
   })
   it('locks fields after draft', () => {
-    expect(editableFields('final')).toEqual(['status', 'notes'])
+    expect(editableFields('final')).toEqual(['status'])
     expect(editableFields('draft')).toBe('all')
   })
   it('only deletes draft and final', () => {

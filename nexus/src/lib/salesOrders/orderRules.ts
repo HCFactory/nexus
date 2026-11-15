@@ -7,9 +7,9 @@ export function canChangeStatus(from: OrderStatus, to: OrderStatus): boolean {
   return HAND_STATUSES.includes(from) && HAND_STATUSES.includes(to)
 }
 
-/** Draft is fully editable; later statuses only allow status and notes. */
-export function editableFields(status: OrderStatus): 'all' | readonly ['status', 'notes'] {
-  return status === 'draft' ? 'all' : (['status', 'notes'] as const)
+/** Draft is fully editable; later statuses only allow the status to change (notes are separate entries). */
+export function editableFields(status: OrderStatus): 'all' | readonly ['status'] {
+  return status === 'draft' ? 'all' : (['status'] as const)
 }
 
 export function canDelete(status: OrderStatus): boolean {

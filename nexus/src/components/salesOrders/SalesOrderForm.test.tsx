@@ -247,7 +247,7 @@ describe('SalesOrderForm — fields', () => {
     renderForm();
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('placeholder', 'Set when sent to BC');
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('maxlength', '35');
-    expect(screen.getByText('Nexus and Bill.com only, not sent to BC')).toBeInTheDocument();
+    expect(screen.getByText('Not sent to BC on its own; included in the automatic Invoice #.')).toBeInTheDocument();
   });
 
   it('keeps the order date and requested date; document, posting and due dates are gone', () => {
@@ -510,6 +510,23 @@ describe('SalesOrderForm — invoice #', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(invoice().value).toBe('SO-10234 / PO-1');
+  });
+
+  it('uses "set" wording when there was no previous invoice number', async () => {
+    renderForm({ order: order({ bc_order_number: null, customer_po: '' }), lines: [lineRow] });
+    fireEvent.focus(invoice());
+    fireEvent.change(invoice(), { target: { value: 'INV-7' } });
+    fireEvent.blur(invoice());
+    expect(await screen.findByRole('dialog')).toHaveTextContent('You set the invoice number to INV-7. Keep it?');
+  });
+
+  it('does not open the dialog when the value is unchanged', () => {
+    renderForm({ order: order(), lines: [lineRow] });
+    fireEvent.focus(invoice());
+    fireEvent.change(invoice(), { target: { value: 'X' } });
+    fireEvent.change(invoice(), { target: { value: 'SO-10234 / PO-1' } });
+    fireEvent.blur(invoice());
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('Keep leaves the manual value', async () => {

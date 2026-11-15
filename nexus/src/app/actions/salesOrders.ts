@@ -85,7 +85,7 @@ const SELECT_KEYS: ListKey[] = [
   'shipmentMethods',
 ];
 
-/** Header columns copied from the input (status and notes are handled separately). */
+/** Header columns copied from the input (status is handled separately; notes are separate entries). */
 const HEADER_FIELDS = [
   'customer_id', 'customer_number', 'order_date', 'requested_delivery_date', 'invoice_number', 'customer_po',
   'bill_name', 'bill_address', 'bill_address_2', 'bill_city', 'bill_state', 'bill_post_code', 'bill_country',
@@ -434,7 +434,7 @@ function lineValues(l: LineDraft, position: number) {
   };
 }
 
-/** True when a locked order's header (other than status/notes) or lines would change. */
+/** True when a locked order's header (other than status) or lines would change. */
 function lockedChange(existing: SalesOrderRow, existingLines: SalesOrderLineRow[], input: SalesOrderInput): boolean {
   const wanted = headerValues(input);
   if (HEADER_FIELDS.some((k) => !sameValue(existing[k], wanted[k]))) return true;
@@ -657,7 +657,7 @@ export async function saveSalesOrder(
         await scoped(scope, createServiceClient().from(ORDERS).update({
           ...(locked ? {} : headerValues(edited)),
           status,
-            updated_at: nowIso(),
+          updated_at: nowIso(),
         }).eq('id', existing.id)),
         'Could not save the sales order',
       );

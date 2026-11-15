@@ -576,7 +576,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                     onChange={(e) => setCustomerPo(e.target.value)}
                   />
                   <p id="so-customer-po-help" className="text-xs text-foreground-subtle">
-                    Nexus and Bill.com only, not sent to BC
+                    Not sent to BC on its own; included in the automatic Invoice #.
                   </p>
                 </div>
                 <div className="space-y-1.5">
@@ -591,7 +591,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                     onFocus={() => { invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown }; }}
                     onChange={(e) => setInvoiceNumber(e.target.value === '' ? null : e.target.value)}
                     onBlur={() => {
-                      if (invoiceNumber !== invoiceAtFocus.current.value) {
+                      if (invoiceNumber !== invoiceAtFocus.current.value && invoiceAtFocus.current.shown !== invoiceShown) {
                         setInvoiceChange({ from: invoiceAtFocus.current.shown, to: invoiceShown });
                       }
                     }}
@@ -696,7 +696,9 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           <DialogHeader>
             <DialogTitle>Change invoice number?</DialogTitle>
             <DialogDescription>
-              {`You changed the invoice number from ${invoiceChange?.from ?? ''} to ${invoiceChange?.to ?? ''}. Keep it?`}
+              {invoiceChange?.from
+                ? `You changed the invoice number from ${invoiceChange.from} to ${invoiceChange.to}. Keep it?`
+                : `You set the invoice number to ${invoiceChange?.to ?? ''}. Keep it?`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -18,7 +18,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   // Ship-tos need customer view permission; without it the picker just lists none.
   const [shipTos, notes] = await Promise.all([
     listShipTos(order.customer_number).catch(() => []),
-    listSalesOrderNotes(order.id),
+    listSalesOrderNotes(order.id).catch(() => []),
   ]);
 
   return (
