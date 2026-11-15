@@ -230,19 +230,16 @@ describe('SalesOrderForm — ship-to', () => {
     expect(input.ship_to_address).toBe('5 Pier St');
   });
 
-  it('a one-off name follows the address until the rep types a name', () => {
+  it('a one-off starts with the customer name and keeps a typed name', () => {
     renderForm();
     pickCustomer('C2 – Beta Bakery');
     fireEvent.change(shipSelect(), { target: { value: 'oneoff' } });
     const name = screen.getByLabelText('Ship-to name') as HTMLInputElement;
+    expect(name.value).toBe('Beta Bakery');
     fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '5 Pier St' } });
-    fireEvent.change(screen.getByLabelText('Ship-to city'), { target: { value: 'Hilo' } });
-    expect(name.value).toBe('5 Pier St, Hilo');
+    expect(name.value).toBe('Beta Bakery');
     fireEvent.change(name, { target: { value: 'Pier warehouse' } });
-    fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '7 Pier St' } });
     expect(name.value).toBe('Pier warehouse');
-    fireEvent.change(name, { target: { value: '' } });
-    expect(name.value).toBe('7 Pier St, Hilo');
   });
 
   it('does not save the order when saving the ship-to fails', async () => {

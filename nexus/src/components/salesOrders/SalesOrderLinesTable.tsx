@@ -285,10 +285,10 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
         <thead className="bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
           <tr>
             <th className="px-3 py-2 font-medium">Item</th>
-            <th className="px-3 py-2 text-right font-medium">Qty</th>
-            <th className="px-3 py-2 text-right font-medium">Unit price</th>
-            <th className="px-3 py-2 text-right font-medium">Disc %</th>
-            <th className="whitespace-nowrap px-3 py-2 text-right font-medium">Amount excl. tax</th>
+            <th className="px-1.5 py-2 text-right font-medium">Qty</th>
+            <th className="px-1.5 py-2 text-right font-medium">Unit price</th>
+            <th className="px-1.5 py-2 text-right font-medium">Disc %</th>
+            <th className="whitespace-nowrap px-1.5 py-2 text-right font-medium">Amount excl. tax</th>
             <th className="w-10 px-3 py-2" />
           </tr>
         </thead>
@@ -299,7 +299,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                 <span className="font-mono text-foreground-muted">{line.item_number}</span>
                 {line.description && <span className="ml-2">{line.description}</span>}
               </td>
-              <td className="w-24 px-3 py-2">
+              <td className="w-[5.25rem] px-1.5 py-2">
                 <NumberCell
                   label="Qty"
                   disabled={locked}
@@ -311,7 +311,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   }
                 />
               </td>
-              <td className="w-36 px-3 py-2">
+              <td className="w-[7.125rem] px-1.5 py-2">
                 <EffectiveCell
                   label="Unit price"
                   step="0.01"
@@ -321,7 +321,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   onCommit={(n) => update(line.key, { unit_price: n })}
                 />
               </td>
-              <td className="w-24 px-3 py-2">
+              <td className="w-[4.5625rem] px-1.5 py-2">
                 <EffectiveCell
                   label="Disc %"
                   step="0.01"
@@ -331,7 +331,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   onCommit={(n) => update(line.key, { discount_percent: n })}
                 />
               </td>
-              <td className="w-36 px-3 py-2">
+              <td className="w-[8.25rem] px-1.5 py-2">
                 {/* A read-only box the size of the input cells, so the column gaps match. */}
                 <div className="whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-right text-sm text-foreground-muted">
                   {money(amountOf(line))}

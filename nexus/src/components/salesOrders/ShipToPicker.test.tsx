@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ShipToRow } from '@/types/salesOrders';
-import { oneOffShipToName, ShipToPicker, type ShipToAddressFields } from './ShipToPicker';
+import { ShipToPicker, type ShipToAddressFields } from './ShipToPicker';
 
 afterEach(cleanup);
 
@@ -73,14 +73,5 @@ describe('ShipToPicker', () => {
   it('keeps an order’s saved code visible when it is not in the list', () => {
     setup({ choice: { kind: 'saved', code: 'GONE' }, address: { ...address, ship_to_name: 'Old dock' } });
     expect(screen.getByRole('option', { name: 'GONE – Old dock' })).toBeInTheDocument();
-  });
-});
-
-describe('oneOffShipToName', () => {
-  it('is "address, city", skipping blanks, cut to 100 characters', () => {
-    expect(oneOffShipToName({ ship_to_address: ' 1 Main St ', ship_to_city: 'Austin' })).toBe('1 Main St, Austin');
-    expect(oneOffShipToName({ ship_to_address: '', ship_to_city: 'Austin' })).toBe('Austin');
-    expect(oneOffShipToName({ ship_to_address: '', ship_to_city: '' })).toBe('');
-    expect(oneOffShipToName({ ship_to_address: 'x'.repeat(120), ship_to_city: 'Austin' })).toHaveLength(100);
   });
 });

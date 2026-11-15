@@ -37,7 +37,7 @@ import { BillingCard, ShipToCard } from './AddressCards';
 import { CustomerPicker, customerLabel } from './CustomerPicker';
 import { NotesPanel } from './NotesPanel';
 import { SalesOrderLinesTable } from './SalesOrderLinesTable';
-import { oneOffShipToName, type ShipToAddressFields, type ShipToChoice } from './ShipToPicker';
+import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
 
@@ -236,8 +236,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   // Which customer pick is current, and whether the rep chose a ship-to since; read only in async callbacks.
   const pickToken = useRef(0);
   const shipTouched = useRef(false);
-  // A one-off ship-to's name follows its address until the rep types a name.
-  const shipNameTyped = useRef(true);
 
   const syncState = order?.sync_state;
   const orderId = order?.id;
@@ -353,8 +351,8 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     shipTouched.current = true;
     setShipChoice(choice);
     if (choice.kind === 'oneoff') {
-      shipNameTyped.current = false;
-      setHeader((h) => ({ ...h, ship_to_code: '', ship_to_name: oneOffShipToName(h) }));
+      // A one-off ship-to starts with the customer's name; the rep can change it.
+      setHeader((h) => ({ ...h, ship_to_code: '', ship_to_name: customerName }));
       return;
     }
     setSaveToCustomer(false);
@@ -365,14 +363,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     }
     const row = shipTos.find((r) => r.code === choice.code);
     if (row) setHeader((h) => applyShipTo(h, customer, row, companyLocation));
-  }
-
-  function changeShipAddress(patch: Partial<ShipToAddressFields>) {
-    if ('ship_to_name' in patch) shipNameTyped.current = (patch.ship_to_name ?? '') !== '';
-    setHeader((h) => {
-      const next = { ...h, ...patch };
-      return shipNameTyped.current ? next : { ...next, ship_to_name: oneOffShipToName(next) };
-    });
   }
 
   function save() {
@@ -671,7 +661,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
               canSaveToCustomer={canSaveShipTo}
               disabled={locked || busy}
               onChoose={chooseShipTo}
-              onAddressChange={changeShipAddress}
+              onAddressChange={(patch) => setHeader((h) => ({ ...h, ...patch }))}
               onSaveToCustomerChange={setSaveToCustomer}
             />
           </div>
