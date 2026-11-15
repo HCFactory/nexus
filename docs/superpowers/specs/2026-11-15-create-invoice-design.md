@@ -54,7 +54,7 @@ Posting in BC **cannot be undone**. Three systems are involved (Nexus, BC, Bill.
 
 ### When the button is available
 
-Create invoice shows for users who can edit sales orders (see Decisions, item P1) when **all** of these hold:
+Create invoice shows for users who can edit sales orders (decided, P1) when **all** of these hold:
 
 - The order is saved and has a BC order number.
 - Its sync state is **In BC** (`synced`), with no unsaved edits in the form.
@@ -173,7 +173,7 @@ Sales orders (project 1) and Create invoice go live together.
 
 ## Calls I made (for the user to check)
 
-- **P1. Permission.** Create invoice uses the existing "Edit sales orders" permission, with no separate "Create invoices" permission. Posting is significant, so say if invoicing should be limited to fewer people.
+- **P1. Permission — decided by the user (2026-11-15).** Create invoice and its Retry use the existing "Edit sales orders" permission. There is no separate "Create invoices" permission.
 - **P2. Statuses.** Create invoice is allowed from **Final or Pulled**, not Draft.
 - **P3. Dates.** Invoice date = posting date = today, with no date picker. This matches the sales-orders design note.
 - **P4. Failure after posting.** The BC invoice always stands, and the order is Invoiced even if Bill.com fails. Bill.com is retried separately.
