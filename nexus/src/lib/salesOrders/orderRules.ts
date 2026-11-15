@@ -1,8 +1,8 @@
-import type { OrderStatus } from '@/types/salesOrders'
+import type { InvoiceState, OrderStatus, SalesOrderRow } from '@/types/salesOrders'
 
 const HAND_STATUSES: readonly OrderStatus[] = ['draft', 'final', 'pulled']
 
-/** Draft, final and pulled can move between each other; shipped/invoiced are set by BC only. */
+/** Draft, final and pulled can move between each other; shipped/invoiced are set by the invoice process only. */
 export function canChangeStatus(from: OrderStatus, to: OrderStatus): boolean {
   return HAND_STATUSES.includes(from) && HAND_STATUSES.includes(to)
 }
@@ -26,4 +26,34 @@ export function autoInvoiceNumber(bcOrderNumber: string | null, customerPo: stri
   if (!bcOrderNumber) return ''
   const po = customerPo.trim()
   return (po ? `${bcOrderNumber} / ${po}` : bcOrderNumber).slice(0, 35)
+}
+
+/** True once BC holds the posted invoice (so the order can no longer be restarted). */
+export function isPastPosting(state: InvoiceState): boolean {
+  return state === 'posted' || state === 'billcom_sending' || state === 'billcom_failed' || state === 'done'
+}
+
+export function canStartInvoice(
+  o: Pick<SalesOrderRow, 'status' | 'sync_state' | 'invoice_state' | 'bc_order_number'>,
+): boolean {
+  return (
+    (o.status === 'final' || o.status === 'pulled') &&
+    o.sync_state === 'synced' &&
+    o.invoice_state === 'none' &&
+    !!o.bc_order_number
+  )
+}
+
+/** Why the customer can't be invoiced yet, or null when ready. Bill.com off is checked first. */
+export function invoiceBlockReason(
+  link: { status: string; billcom_customer_id: string | null } | null,
+  billcomOn: boolean,
+): string | null {
+  if (!billcomOn) return 'Bill.com is turned off. Turn it on in Settings before invoicing.'
+  if (link?.status === 'needs_attention') return 'Add a name and email to this customer in Customers before invoicing.'
+  if (link?.status === 'failed') return "This customer couldn't be sent to Bill.com. Retry it from Customers first."
+  if (!link || link.status !== 'synced' || !link.billcom_customer_id) {
+    return "This customer isn't in Bill.com yet. Push it from Customers first."
+  }
+  return null
 }

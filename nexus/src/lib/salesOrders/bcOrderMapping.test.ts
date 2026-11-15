@@ -38,7 +38,7 @@ function order(over: Partial<SalesOrderRow> = {}): SalesOrderRow {
     total_excl_tax: null, total_tax: null, total_incl_tax: null,
     sync_state: 'pending', sync_error: null, sync_attempts: 0, claimed_until: null,
     last_synced_at: null, local_version: 1, synced_version: 0, created_by: null,
-    bc_snapshot: null, created_at: '', updated_at: '',
+    bc_snapshot: null, invoice_state: 'none', invoice_error: null, bc_posted_invoice_id: null, bc_posted_invoice_number: null, posted_at: null, invoice_date: null, invoice_due_date: null, posted_total_excl_tax: null, posted_total_tax: null, posted_total_incl_tax: null, billcom_invoice_id: null, billcom_invoiced_at: null, invoice_started_by: null, created_at: '', updated_at: '',
     ...over,
   }
 }

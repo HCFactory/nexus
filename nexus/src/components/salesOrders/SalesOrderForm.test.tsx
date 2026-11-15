@@ -97,7 +97,7 @@ const order = (over: Partial<SalesOrderRow> = {}): SalesOrderRow => ({
   bc_create_marker: null, bc_due_date: '2026-12-10', bc_document_date: null, bc_posting_date: null,
   total_excl_tax: 100, total_tax: 8.25, total_incl_tax: 108.25, sync_state: 'synced', sync_error: null,
   sync_attempts: 0, claimed_until: null, last_synced_at: null, local_version: 3, synced_version: 3,
-  created_by: null, bc_snapshot: null, created_at: '', updated_at: '', organization_id: 'o', bc_connection_id: 'b', ...over,
+  created_by: null, bc_snapshot: null, invoice_state: 'none', invoice_error: null, bc_posted_invoice_id: null, bc_posted_invoice_number: null, posted_at: null, invoice_date: null, invoice_due_date: null, posted_total_excl_tax: null, posted_total_tax: null, posted_total_incl_tax: null, billcom_invoice_id: null, billcom_invoiced_at: null, invoice_started_by: null, created_at: '', updated_at: '', organization_id: 'o', bc_connection_id: 'b', ...over,
 });
 const lineRow = { id: 'l1', item_number: 'P100', description: 'Pesto sauce', quantity: 2, unit_price: null,
   discount_percent: 0, unit_of_measure_code: 'CASE', amount_incl_tax: 27, position: 0 } as unknown as SalesOrderLineRow;

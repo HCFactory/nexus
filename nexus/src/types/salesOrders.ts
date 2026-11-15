@@ -4,6 +4,11 @@
 export const ORDER_STATUSES = ['draft', 'final', 'pulled', 'shipped', 'invoiced'] as const
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 
+export const INVOICE_STATES = [
+  'none', 'posting', 'post_failed', 'posted', 'billcom_sending', 'billcom_failed', 'done',
+] as const
+export type InvoiceState = (typeof INVOICE_STATES)[number]
+
 export type SyncState = 'pending' | 'synced' | 'failed' | 'conflict'
 
 export interface ShipToValues {
@@ -122,6 +127,19 @@ export interface SalesOrderRow {
   synced_version: number
   /** BC values as last read; used to detect BC-side changes. */
   bc_snapshot: Record<string, unknown> | null
+  invoice_state: InvoiceState
+  invoice_error: string | null
+  bc_posted_invoice_id: string | null
+  bc_posted_invoice_number: string | null
+  posted_at: string | null
+  invoice_date: string | null
+  invoice_due_date: string | null
+  posted_total_excl_tax: number | null
+  posted_total_tax: number | null
+  posted_total_incl_tax: number | null
+  billcom_invoice_id: string | null
+  billcom_invoiced_at: string | null
+  invoice_started_by: string | null
   created_by: string | null
   created_at: string
   updated_at: string
