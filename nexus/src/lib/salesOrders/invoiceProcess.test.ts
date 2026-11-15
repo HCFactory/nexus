@@ -6,7 +6,7 @@ import type { BillcomClient } from '@/lib/billcom/client'
 import { BillcomApiError } from '@/lib/billcom/errors'
 import { LINE_SNAPSHOT_FIELDS, snapshotOf } from './bcOrderMapping'
 import { LEASE_MS } from './orderClaim'
-import { NOT_IN_SYNC, retryInvoiceProcess, runInvoiceProcess, startInvoiceProcess, type InvoiceDeps } from './invoiceProcess'
+import { NOT_IN_SYNC, retryInvoiceProcess, runInvoiceProcess, startInvoiceProcess, sweepInvoiceSteps, type InvoiceDeps } from './invoiceProcess'
 
 const T0 = '2026-11-15T15:00:00.000Z'
 const NOT_CONFIRMED = "BC didn't confirm the posting. Retry checks BC first, so it won't post twice."
@@ -600,5 +600,48 @@ describe('retryInvoiceProcess', () => {
     setup({ invoice_state: 'post_failed', claimed_until: new Date(Date.parse(T0) + 5000).toISOString() })
     expect(await retryInvoiceProcess(makeDeps(), 'o1')).toEqual({ ok: false, error: 'This order is busy. Try again in a moment.' })
     expect(order().invoice_state).toBe('post_failed')
+  })
+})
+
+describe('sweepInvoiceSteps', () => {
+  it('resumes a stuck billcom_sending order and leaves others alone', async () => {
+    setup({
+      invoice_state: 'billcom_sending',
+      bc_posted_invoice_id: 'inv-guid',
+      bc_posted_invoice_number: 'PSI-100',
+      invoice_date: '2026-11-15',
+      invoice_due_date: '2026-12-15',
+      posted_total_excl_tax: 100,
+      posted_total_tax: 8.25,
+      posted_total_incl_tax: 108.25,
+    })
+    db.tables.sales_orders.push(
+      orderRow({ id: 'o-none' }),
+      orderRow({ id: 'o-held', invoice_state: 'posting', claimed_until: '2999-01-01T00:00:00.000Z' }),
+      orderRow({ id: 'o-other', invoice_state: 'billcom_sending', organization_id: 'org-2' }),
+      orderRow({ id: 'o-failed', invoice_state: 'billcom_failed' }),
+    )
+    expect(await sweepInvoiceSteps(makeDeps())).toBe(1)
+    expect(order()).toMatchObject({ invoice_state: 'done' })
+    expect(bill.posts).toHaveLength(1)
+    expect(db.tables.sales_orders.find((r) => r.id === 'o-none')!.invoice_state).toBe('none')
+    expect(db.tables.sales_orders.find((r) => r.id === 'o-failed')!.invoice_state).toBe('billcom_failed')
+  })
+
+  it('logs and continues when one order throws', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    setup({ invoice_state: 'posting', updated_at: '2026-01-01T00:00:00.000Z' })
+    db.tables.sales_orders.push(orderRow({ id: 'o2', invoice_state: 'posting', updated_at: '2026-01-02T00:00:00.000Z' }))
+    let failed = false
+    db.failOn = (table, op) => {
+      if (table === 'sales_orders' && op === 'update' && !failed) {
+        failed = true
+        return 'db down'
+      }
+      return null
+    }
+    const n = await sweepInvoiceSteps(makeDeps())
+    expect(logged).toHaveBeenCalledTimes(1)
+    expect(n).toBe(1)
   })
 })

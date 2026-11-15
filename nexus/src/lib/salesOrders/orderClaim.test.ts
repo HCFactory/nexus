@@ -15,6 +15,7 @@ const order = (id: string, extra: Row = {}): Row => ({
   organization_id: 'org-1',
   bc_connection_id: 'conn-1',
   sync_state: 'pending',
+  invoice_state: 'none',
   claimed_until: null,
   updated_at: T0,
   ...extra,
@@ -106,6 +107,17 @@ describe('syncWithClaim', () => {
 });
 
 describe('sweepPendingOrders', () => {
+  it('skips orders whose invoice_state is not none', async () => {
+    const d = deps([
+      order('posting', { invoice_state: 'posting' }),
+      order('done', { invoice_state: 'done' }),
+      order('plain'),
+    ]);
+    mocks.syncSalesOrder.mockResolvedValue('synced');
+    expect(await sweepPendingOrders(d.deps)).toBe(1);
+    expect(mocks.syncSalesOrder.mock.calls.map((c) => c[1])).toEqual(['plain']);
+  });
+
   it('skips conflict and synced orders and handles at most 5, oldest first', async () => {
     const rows = [
       order('conflict', { sync_state: 'conflict', updated_at: '2026-01-01T00:00:00.000Z' }),

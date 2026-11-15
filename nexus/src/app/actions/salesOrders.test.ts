@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   deleteSalesOrderInBc: vi.fn(),
   findBcOrderByMarker: vi.fn(),
   getSelectOptions: vi.fn(),
+  sweepInvoiceSteps: vi.fn(),
+  buildInvoiceDeps: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -29,6 +31,8 @@ vi.mock('@/lib/salesOrders/orderSync', () => ({
   deleteSalesOrderInBc: mocks.deleteSalesOrderInBc,
   findBcOrderByMarker: mocks.findBcOrderByMarker,
 }));
+vi.mock('@/lib/salesOrders/invoiceProcess', () => ({ sweepInvoiceSteps: mocks.sweepInvoiceSteps }));
+vi.mock('@/lib/salesOrders/invoiceDeps', () => ({ buildInvoiceDeps: mocks.buildInvoiceDeps }));
 vi.mock('./customerReferenceLists', () => ({ getSelectOptions: mocks.getSelectOptions }));
 
 import {
@@ -80,7 +84,7 @@ const orderRow = (id: string, extra: Row = {}): Row => ({
   id, organization_id: 'org-1', bc_connection_id: 'conn-1', ...header,
   customer_id: 'cust-1', customer_number: 'C1', status: 'draft', order_date: '2026-11-13',
   requested_delivery_date: null, invoice_number: null, customer_po: 'PO-1', notes: '',
-  bc_order_number: null, bc_create_marker: null, sync_state: 'synced', sync_error: null,
+  bc_order_number: null, bc_create_marker: null, sync_state: 'synced', sync_error: null, invoice_state: 'none',
   sync_attempts: 0, claimed_until: null, local_version: 3, synced_version: 3,
   updated_at: '2026-11-01T00:00:00.000Z', created_at: '2026-11-01T00:00:00.000Z', ...extra,
 });
@@ -116,6 +120,8 @@ beforeEach(() => {
   mocks.createTransport.mockReturnValue({ transport: true });
   mocks.syncSalesOrder.mockResolvedValue('synced');
   mocks.getSelectOptions.mockResolvedValue([]);
+  mocks.sweepInvoiceSteps.mockResolvedValue(0);
+  mocks.buildInvoiceDeps.mockResolvedValue({ invoiceDeps: true });
   setup();
 });
 
@@ -542,6 +548,54 @@ describe('retry and overwrite', () => {
     setup({ sales_orders: [orderRow('o1', { claimed_until: '2999-01-01T00:00:00.000Z' })] });
     expect(await retrySalesOrderSync('o1')).toEqual({ ok: false, error: BUSY });
     expect(mocks.syncSalesOrder).not.toHaveBeenCalled();
+  });
+});
+
+const INVOICED = "This order is invoiced and can't be changed.";
+const INVOICING = 'This order is being invoiced. Try again in a moment.';
+
+describe('invoiced orders are left alone', () => {
+  for (const state of ['posted', 'billcom_sending', 'billcom_failed', 'done']) {
+    it(`refuses save, retry, overwrite and delete for ${state}`, async () => {
+      setup({ sales_orders: [orderRow('o1', { invoice_state: state, bc_order_number: 'SO1' })] });
+      expect(await saveSalesOrder({ ...input(), id: 'o1' })).toEqual({ ok: false, error: INVOICED });
+      expect(await retrySalesOrderSync('o1')).toEqual({ ok: false, error: INVOICED });
+      expect(await overwriteBcWithNexus('o1')).toEqual({ ok: false, error: INVOICED });
+      expect(await deleteSalesOrder('o1')).toEqual({ ok: false, error: INVOICED });
+      expect(mocks.syncSalesOrder).not.toHaveBeenCalled();
+      expect(mocks.deleteSalesOrderInBc).not.toHaveBeenCalled();
+      expect(mocks.createBcClientForOrg).not.toHaveBeenCalled();
+      expect(db.tables.sales_orders).toHaveLength(1);
+    });
+  }
+
+  it('refuses save, retry, overwrite and delete while the invoice is posting', async () => {
+    setup({ sales_orders: [orderRow('o1', { invoice_state: 'posting', bc_order_number: 'SO1' })] });
+    expect(await saveSalesOrder({ ...input(), id: 'o1' })).toEqual({ ok: false, error: INVOICING });
+    expect(await retrySalesOrderSync('o1')).toEqual({ ok: false, error: INVOICING });
+    expect(await overwriteBcWithNexus('o1')).toEqual({ ok: false, error: INVOICING });
+    expect(await deleteSalesOrder('o1')).toEqual({ ok: false, error: INVOICING });
+    expect(mocks.syncSalesOrder).not.toHaveBeenCalled();
+    expect(mocks.createBcClientForOrg).not.toHaveBeenCalled();
+    expect(db.tables.sales_orders).toHaveLength(1);
+  });
+
+  it('the list sweep also resumes stuck invoice steps, after the order sweep', async () => {
+    setup({ sales_orders: [orderRow('o1', { invoice_state: 'billcom_sending' })] });
+    await listSalesOrders();
+    await runAfter();
+    expect(mocks.buildInvoiceDeps).toHaveBeenCalledWith(expect.objectContaining({ orgId: 'org-1' }));
+    expect(mocks.sweepInvoiceSteps).toHaveBeenCalledWith({ invoiceDeps: true });
+  });
+
+  it('a failing invoice sweep is logged and does not throw', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    setup({ sales_orders: [orderRow('o1', { invoice_state: 'posting' })] });
+    mocks.sweepInvoiceSteps.mockRejectedValue(new Error('boom'));
+    await listSalesOrders();
+    await expect(runAfter()).resolves.toBeUndefined();
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 });
 

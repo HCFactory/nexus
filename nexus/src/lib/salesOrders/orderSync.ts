@@ -33,6 +33,7 @@ import {
   toBcLine,
   toSalesDocShipToAddress,
 } from './bcOrderMapping'
+import { isPastPosting } from './orderRules'
 import { isUnfinishedSave } from './saveMarker'
 
 export interface OrderSyncDeps {
@@ -231,6 +232,8 @@ export async function syncSalesOrder(
   opts: { overwrite?: boolean } = {},
 ): Promise<SyncState> {
   const order = await loadOrder(deps, orderId)
+  // Invoiced orders are never synced to BC again.
+  if (isPastPosting(order.invoice_state)) return order.sync_state
   // Half-written lines: wait for a re-save. Covers the background retry loop
   // and a sweep that read the order before the save marked it.
   if (!opts.overwrite && isUnfinishedSave(order)) return 'failed'

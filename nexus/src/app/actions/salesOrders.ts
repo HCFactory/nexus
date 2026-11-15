@@ -14,7 +14,9 @@ import {
   syncWithClaim,
 } from '@/lib/salesOrders/orderClaim';
 import type { TaxAreaLine, TaxDetail } from '@/lib/salesOrders/lineAmounts';
-import { canChangeStatus, canDelete, editableFields, todayIn } from '@/lib/salesOrders/orderRules';
+import { buildInvoiceDeps } from '@/lib/salesOrders/invoiceDeps';
+import { sweepInvoiceSteps } from '@/lib/salesOrders/invoiceProcess';
+import { canChangeStatus, canDelete, editableFields, isPastPosting, todayIn } from '@/lib/salesOrders/orderRules';
 import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
 import { SAVE_UNFINISHED, isUnfinishedSave } from '@/lib/salesOrders/saveMarker';
 import { fetchAll } from '@/lib/supabase/fetchAll';
@@ -175,6 +177,16 @@ async function loadOrder(scope: Scope, id: string): Promise<SalesOrderRow | null
   return (data as SalesOrderRow | null) ?? null;
 }
 
+const INVOICED = "This order is invoiced and can't be changed.";
+const INVOICING = 'This order is being invoiced. Try again in a moment.';
+
+/** Why an order can't be changed or synced now because of invoicing, or null. */
+function invoiceLock(order: Pick<SalesOrderRow, 'invoice_state'>): string | null {
+  if (isPastPosting(order.invoice_state)) return INVOICED;
+  if (order.invoice_state === 'posting') return INVOICING;
+  return null;
+}
+
 async function loadLines(scope: Scope, orderId: string): Promise<SalesOrderLineRow[]> {
   const { data, error } = await createServiceClient()
     .from(LINES)
@@ -200,7 +212,7 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
         .from(ORDERS)
         .select(
           'id, status, customer_id, customer_number, bill_name, order_date, requested_delivery_date, invoice_number, ' +
-            'bc_order_number, customer_po, total_incl_tax, sync_state, sync_error, customer:business_central_customers(display_name)',
+            'bc_order_number, customer_po, total_incl_tax, sync_state, sync_error, invoice_state, customer:business_central_customers(display_name)',
         )
         .eq('organization_id', scope.orgId)
         .eq('bc_connection_id', scope.bcConnectionId)
@@ -229,10 +241,13 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
     };
   });
 
-  if (list.some((r) => r.sync_state === 'pending' || r.sync_state === 'failed')) {
+  const needsSweep = list.some((r) => r.sync_state === 'pending' || r.sync_state === 'failed');
+  const invoiceStuck = rows.some((r) => r.invoice_state === 'posting' || r.invoice_state === 'billcom_sending');
+  if (needsSweep || invoiceStuck) {
     after(async () => {
       try {
         await sweepPendingOrders(await buildDeps(scope));
+        await sweepInvoiceSteps(await buildInvoiceDeps(scope));
       } catch (e) {
         console.error('[sales-orders] background sweep failed:', e);
       }
@@ -650,6 +665,8 @@ export async function saveSalesOrder(
 
     const existing = await loadOrder(scope, input.id);
     if (!existing) return { ok: false, error: NOT_FOUND };
+    const invoiceLocked = invoiceLock(existing);
+    if (invoiceLocked) return { ok: false, error: invoiceLocked };
     // A running sync reads the order; don't change it underneath.
     if (existing.claimed_until && Date.parse(existing.claimed_until) > Date.now()) return { ok: false, error: BUSY };
     if (status !== existing.status && !canChangeStatus(existing.status, status)) {
@@ -775,6 +792,8 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | Fail>
     if (!scope) return { ok: false, error: NO_PERMISSION };
     const first = await loadOrder(scope, id);
     if (!first) return { ok: false, error: NOT_FOUND };
+    const lockedFirst = invoiceLock(first);
+    if (lockedFirst) return { ok: false, error: lockedFirst };
     if (!canDelete(first.status)) return { ok: false, error: DELETE_RULE };
 
     const supabase = createServiceClient();
@@ -786,6 +805,8 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | Fail>
       // Re-read under the lease: a sync that just finished may have stored the BC number.
       const order = await loadOrder(scope, id);
       if (!order) return { ok: false, error: NOT_FOUND };
+      const locked = invoiceLock(order);
+      if (locked) return { ok: false, error: locked };
       if (!canDelete(order.status)) return { ok: false, error: DELETE_RULE };
       if (order.bc_order_number || order.bc_create_marker) {
         try {
@@ -842,6 +863,8 @@ async function syncNow(id: string, overwrite: boolean): Promise<{ ok: true; stat
     if (!scope) return { ok: false, error: NO_PERMISSION };
     const order = await loadOrder(scope, id);
     if (!order) return { ok: false, error: NOT_FOUND };
+    const locked = invoiceLock(order);
+    if (locked) return { ok: false, error: locked };
     // Try again and Overwrite alike: the order must be saved again first.
     if (isUnfinishedSave(order)) return { ok: false, error: NOT_SAVED };
     const state = await syncWithClaim(await buildDeps(scope), id, overwrite ? { overwrite: true } : {});

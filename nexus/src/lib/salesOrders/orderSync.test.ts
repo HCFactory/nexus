@@ -317,6 +317,17 @@ beforeEach(() => {
   bc = fakeBc()
 })
 
+describe('syncSalesOrder: invoiced orders', () => {
+  it('makes no BC call for a past-posting order and returns its sync_state', async () => {
+    setup(order({ invoice_state: 'posted', sync_state: 'synced', bc_order_number: 'SO900' }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(bc.t.get).not.toHaveBeenCalled()
+    expect(bc.t.list).not.toHaveBeenCalled()
+    expect(bc.t.create).not.toHaveBeenCalled()
+    expect(bc.t.patch).not.toHaveBeenCalled()
+  })
+})
+
 describe('syncSalesOrder: first sync', () => {
   it('creates the order, sets the ship-to through salesDocuments, patches the header, creates each line, and ends synced with BC totals', async () => {
     setup(order(), [line({ id: 'l1', position: 1 }), line({ id: 'l2', position: 2, item_number: 'ITEM2', unit_price: null })])

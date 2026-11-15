@@ -1,0 +1,45 @@
+import 'server-only'
+import { createBillcomClientForConnection } from '@/lib/billcom/connection'
+import { BillcomConnectionDisabledError } from '@/lib/billcom/errors'
+import type { BillcomClient } from '@/lib/billcom/client'
+import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks'
+import { createBcClientForOrg } from '@/lib/businessCentral/client'
+import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport'
+import { createServiceClient } from '@/lib/supabase/server'
+import type { Scope } from './editScope'
+import type { InvoiceDeps } from './invoiceProcess'
+
+/**
+ * Everything the invoice process needs for the active BC connection: the same
+ * BC setup as the order sync (buildDeps in actions/salesOrders.ts, which is a
+ * 'use server' file and can't export this), plus invokeAction, the time zone
+ * and the org's Bill.com client (null when Bill.com is off or missing).
+ */
+export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } = {}): Promise<InvoiceDeps> {
+  const bc = await createBcClientForOrg(scope.orgId, scope.bcConnectionId)
+  const company = await bc.getCompany(bc.config.companyId)
+  const supabase = createServiceClient()
+
+  const conn = await resolveBillcomConnection(supabase, scope.orgId)
+  let billcom: BillcomClient | null = null
+  if (conn?.enabled) {
+    try {
+      billcom = await createBillcomClientForConnection(conn.id, scope.orgId, { supabase })
+    } catch (e) {
+      if (!(e instanceof BillcomConnectionDisabledError)) throw e
+    }
+  }
+
+  return {
+    supabase,
+    transport: createReferenceTransport(bc, company.name),
+    orgId: scope.orgId,
+    connectionId: scope.bcConnectionId,
+    now: () => new Date().toISOString(),
+    invokeAction: (path) => bc.invokeAction(path),
+    billcom,
+    billcomConnectionId: conn?.id ?? null,
+    timeZone: (scope.connection as { time_zone?: string | null } | null)?.time_zone ?? null,
+    userId: opts.userId,
+  }
+}

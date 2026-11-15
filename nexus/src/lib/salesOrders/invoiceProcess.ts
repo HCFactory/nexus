@@ -29,7 +29,7 @@ import {
   type BcInvoicingDeps,
   type PostedInvoice,
 } from './bcInvoicing'
-import { LEASE_MS, withOrderLease, type OrderLease } from './orderClaim'
+import { LEASE_MS, SWEEP_BATCH, withOrderLease, type OrderLease } from './orderClaim'
 import { autoInvoiceNumber, canStartInvoice, invoiceBlockReason, todayIn } from './orderRules'
 import { loadLines, loadOrder, orderChangedInBc, readBcOrder } from './orderSync'
 
@@ -367,4 +367,34 @@ export async function retryInvoiceProcess(deps: InvoiceDeps, orderId: string): P
   const state = await runInvoiceProcess(deps, orderId)
   // Someone took the lease between our release and the run; they run the step.
   return { ok: true, state: state ?? (await loadOrder(deps, orderId)).invoice_state }
+}
+
+/**
+ * Resume invoice steps that stopped midway (a crash, a closed tab): orders in
+ * `posting` or `billcom_sending` whose lease is free, oldest first. Each run
+ * is safe to repeat (it checks BC / Bill.com before acting). Returns how many
+ * runs got the order (non-null result).
+ */
+export async function sweepInvoiceSteps(deps: InvoiceDeps, limit = SWEEP_BATCH): Promise<number> {
+  const nowIso = deps.now()
+  const { data, error } = await deps.supabase
+    .from(ORDERS)
+    .select('id')
+    .eq('organization_id', deps.orgId)
+    .eq('bc_connection_id', deps.connectionId)
+    .in('invoice_state', ['posting', 'billcom_sending'])
+    .or(`claimed_until.is.null,claimed_until.lt.${nowIso}`)
+    .order('updated_at', { ascending: true })
+    .order('id', { ascending: true })
+    .limit(limit)
+  if (error) throw new Error(`Could not read stuck invoices: ${error.message}`)
+  let handled = 0
+  for (const { id } of (data ?? []) as { id: string }[]) {
+    try {
+      if ((await runInvoiceProcess(deps, id)) !== null) handled += 1
+    } catch (e) {
+      console.error(`[sales-orders] background invoice step of ${id} failed:`, e)
+    }
+  }
+  return handled
 }

@@ -141,6 +141,7 @@ export async function sweepPendingOrders(deps: OrderSyncDeps, limit = SWEEP_BATC
     .eq('organization_id', deps.orgId)
     .eq('bc_connection_id', deps.connectionId)
     .in('sync_state', ['pending', 'failed'])
+    .eq('invoice_state', 'none')
     .or(`claimed_until.is.null,claimed_until.lt.${nowIso}`)
     .or(`sync_state.eq.pending,sync_error.is.null,sync_error.not.like.${SAVE_UNFINISHED}*`)
     // Fewest failed attempts first, so orders that keep failing don't starve
