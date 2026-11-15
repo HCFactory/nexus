@@ -46,10 +46,14 @@ export function taxRatePercent(q: TaxRateQuery, areaLines: TaxAreaLine[], detail
 }
 
 /** The price the line will use: typed, else BC's from the last sync, else the estimate. */
-export const effectivePrice = (l: LineDraft): number | null => l.unit_price ?? l.bc_unit_price ?? l.estimate_price;
+export const effectivePrice = (
+  l: Pick<LineDraft, 'unit_price' | 'bc_unit_price'> & Partial<Pick<LineDraft, 'estimate_price'>>,
+): number | null => l.unit_price ?? l.bc_unit_price ?? l.estimate_price ?? null;
 
 /** The discount the line will use: typed, else BC's, else the estimate, else 0. */
-export const effectiveDiscount = (l: LineDraft): number =>
+export const effectiveDiscount = (
+  l: Pick<LineDraft, 'discount_percent' | 'bc_line_discount_percent'> & Partial<Pick<LineDraft, 'estimate_discount_percent'>>,
+): number =>
   l.discount_percent ?? l.bc_line_discount_percent ?? l.estimate_discount_percent ?? 0;
 
 /** Line amount excluding tax (rounded), its unrounded tax, and the amount including tax (rounded). */
