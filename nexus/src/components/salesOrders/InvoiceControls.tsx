@@ -7,13 +7,13 @@ import { useRouter } from 'next/navigation';
 import { createInvoice, retryInvoice } from '@/app/actions/salesOrderInvoicing';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formatMoney } from '@/lib/format';
-import { canStartInvoice, isPastPosting } from '@/lib/salesOrders/orderRules';
+import { canStartInvoice, isInvoiceResumable, isPastPosting } from '@/lib/salesOrders/orderRules';
 import type { InvoiceState, SalesOrderRow } from '@/types/salesOrders';
 import { GlassButton as Button } from './GlassButton';
 
 /** The one-line invoice status (header status line and list Sync column); null before an invoice starts. */
 export function invoiceStatusText(state: InvoiceState): string | null {
-  if (state === 'posting' || state === 'posted' || state === 'billcom_sending') return 'Invoicing…';
+  if (isInvoiceResumable(state)) return 'Invoicing…';
   if (state === 'post_failed') return "Couldn't post";
   if (state === 'billcom_failed') return 'Invoiced · Not in Bill.com';
   if (state === 'done') return 'Invoiced · In Bill.com';
@@ -22,7 +22,7 @@ export function invoiceStatusText(state: InvoiceState): string | null {
 
 /** True while the invoice process is mid-step (the page polls for the result). */
 export function isInvoiceRunning(state: InvoiceState): boolean {
-  return state === 'posting' || state === 'posted' || state === 'billcom_sending';
+  return isInvoiceResumable(state);
 }
 
 /** True when the order is locked by the invoice process (posting or past it). */

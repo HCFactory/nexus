@@ -272,6 +272,9 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   }, [orderId, invoiceState, router]);
 
   const invoiceLocked = isInvoiceLocked(invoiceState);
+  // The BC sync state (with Try again / Overwrite) shows before invoicing, and
+  // after a failed post when the order isn't In BC (a rep fixing it before Retry).
+  const showSyncBadge = invoiceState === 'none' || (invoiceState === 'post_failed' && order?.sync_state !== 'synced');
   const locked = !canEdit || invoiceLocked || (order ? editableFields(order.status) !== 'all' : false);
   const busy = pending;
   const invoiceShown = invoiceNumber ?? autoInvoiceNumber(order?.bc_order_number ?? null, customerPo);
@@ -540,26 +543,30 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         </div>
         {/* Sync state sits above the buttons; the column is no taller than the title block. */}
         <div className="flex flex-col items-end gap-1.5">
-          {order && invoiceState !== 'none' && (
-            <InvoiceStatus
-              className="-mt-2.5 text-xs leading-4"
-              order={order}
-              canEdit={canEdit}
-              onError={setError}
-            />
-          )}
-          {order && invoiceState === 'none' && (
-            <SyncBadge
-              className="-mt-2.5 text-xs leading-4"
-              state={order.sync_state}
-              error={order.sync_error}
-              canAct={canEdit}
-              busy={busy}
-              claimedUntil={order.claimed_until}
-              updatedAt={order.updated_at}
-              onRetry={() => runSync(false)}
-              onOverwrite={() => runSync(true)}
-            />
+          {order && (invoiceState !== 'none' || showSyncBadge) && (
+            <div className="-mt-2.5 flex items-center justify-end gap-3 whitespace-nowrap text-xs leading-4">
+              {invoiceState !== 'none' && (
+                <InvoiceStatus
+                  className="text-xs leading-4"
+                  order={order}
+                  canEdit={canEdit}
+                  onError={setError}
+                />
+              )}
+              {showSyncBadge && (
+                <SyncBadge
+                  className="text-xs leading-4"
+                  state={order.sync_state}
+                  error={order.sync_error}
+                  canAct={canEdit}
+                  busy={busy}
+                  claimedUntil={order.claimed_until}
+                  updatedAt={order.updated_at}
+                  onRetry={() => runSync(false)}
+                  onOverwrite={() => runSync(true)}
+                />
+              )}
+            </div>
           )}
           <div className="flex items-center gap-2">
             <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy || invoiceLocked} />
@@ -578,7 +585,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             {canEdit && !invoiceLocked && (
               <Button type="submit" variant="blue-glass" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
             )}
-            {canEdit && !invoiceLocked && order && canDelete(order.status) && (
+            {canEdit && invoiceState === 'none' && order && canDelete(order.status) && (
               <Button
                 type="button"
                 variant="outline"

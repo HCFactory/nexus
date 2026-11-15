@@ -749,6 +749,30 @@ describe('invoicing in the header', () => {
       expect(nav.refresh).toHaveBeenCalledTimes(1);
     });
   });
+  it('post_failed hides Delete (BC may hold the posted invoice) but keeps Save', () => {
+    withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'x' }) });
+    expect(screen.queryByRole('button', { name: 'Delete order' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+  });
+  it('post_failed and In BC: shows only the invoice status in the status line', () => {
+    withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'x' }) });
+    expect(screen.getByText("Couldn't post")).toBeInTheDocument();
+    expect(screen.queryByText('In BC')).toBeNull();
+  });
+  it('post_failed and not In BC: shows the sync state with Try again beside the invoice status', async () => {
+    orderActions.retrySalesOrderSync.mockResolvedValue({ ok: true, state: 'synced' });
+    withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'x', sync_state: 'failed', sync_error: 'Boom' }) });
+    expect(screen.getByText("Couldn't post")).toBeInTheDocument();
+    expect(screen.getByText('Failed: Boom')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(orderActions.retrySalesOrderSync).toHaveBeenCalledWith('so-1'));
+  });
+  it('post_failed and Changed in BC: offers Overwrite', () => {
+    withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'x', sync_state: 'conflict', sync_error: 'Changed in BC' }) });
+    expect(screen.getByText('Changed in BC')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Overwrite/ })).toBeInTheDocument();
+  });
   it('shows BC\'s message in the notice bar when posting failed, and Retry', () => {
     withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'Posting date not allowed' }) });
     expect(screen.getByText('Posting date not allowed')).toBeInTheDocument();

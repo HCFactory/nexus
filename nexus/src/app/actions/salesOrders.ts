@@ -16,7 +16,7 @@ import {
 import type { TaxAreaLine, TaxDetail } from '@/lib/salesOrders/lineAmounts';
 import { buildInvoiceDeps } from '@/lib/salesOrders/invoiceDeps';
 import { sweepInvoiceSteps } from '@/lib/salesOrders/invoiceProcess';
-import { canChangeStatus, canDelete, editableFields, isPastPosting, todayIn } from '@/lib/salesOrders/orderRules';
+import { canChangeStatus, canDelete, editableFields, isInvoiceResumable, isPastPosting, todayIn } from '@/lib/salesOrders/orderRules';
 import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
 import { SAVE_UNFINISHED, isUnfinishedSave } from '@/lib/salesOrders/saveMarker';
 import { fetchAll } from '@/lib/supabase/fetchAll';
@@ -180,11 +180,18 @@ async function loadOrder(scope: Scope, id: string): Promise<SalesOrderRow | null
 
 const INVOICED = "This order is invoiced and can't be changed.";
 const INVOICING = 'This order is being invoiced. Try again in a moment.';
+const INVOICE_IN_PROGRESS = 'This order has an invoice in progress. Use Retry instead.';
 
-/** Why an order can't be changed or synced now because of invoicing, or null. */
-function invoiceLock(order: Pick<SalesOrderRow, 'invoice_state'>): string | null {
+/**
+ * Why an order can't be changed, synced or deleted now because of invoicing,
+ * or null. Saves and syncs are allowed in `none` and `post_failed` (a rep may
+ * fix the order and retry); delete only in `none`, because after a failed or
+ * unconfirmed post BC may already hold the posted invoice.
+ */
+function invoiceLock(order: Pick<SalesOrderRow, 'invoice_state'>, action: 'change' | 'delete' = 'change'): string | null {
   if (isPastPosting(order.invoice_state)) return INVOICED;
   if (order.invoice_state === 'posting') return INVOICING;
+  if (action === 'delete' && order.invoice_state !== 'none') return INVOICE_IN_PROGRESS;
   return null;
 }
 
@@ -245,7 +252,7 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
   });
 
   const needsSweep = list.some((r) => r.sync_state === 'pending' || r.sync_state === 'failed');
-  const invoiceStuck = rows.some((r) => r.invoice_state === 'posting' || r.invoice_state === 'billcom_sending');
+  const invoiceStuck = list.some((r) => isInvoiceResumable(r.invoice_state));
   if (needsSweep || invoiceStuck) {
     after(async () => {
       try {
@@ -699,7 +706,8 @@ export async function saveSalesOrder(
     if (!locked && refersToGoneLine(existingLines, edited)) return { ok: false, error: LINE_GONE };
 
     // 1. Take the save: bump the version only if nobody saved since we read
-    //    it. A sync already running now ends 'pending', not 'synced'.
+    //    it and no invoice has started since (posting or past it locks the
+    //    order). A sync already running now ends 'pending', not 'synced'.
     const v = existing.local_version;
     const taken = check(
       await scoped(scope, createServiceClient().from(ORDERS).update({
@@ -709,6 +717,7 @@ export async function saveSalesOrder(
         updated_at: nowIso(),
       }).eq('id', existing.id))
         .eq('local_version', v)
+        .in('invoice_state', ['none', 'post_failed'])
         .select('id'),
       'Could not save the sales order',
     ) as { id: string }[] | null;
@@ -795,7 +804,7 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | Fail>
     if (!scope) return { ok: false, error: NO_PERMISSION };
     const first = await loadOrder(scope, id);
     if (!first) return { ok: false, error: NOT_FOUND };
-    const lockedFirst = invoiceLock(first);
+    const lockedFirst = invoiceLock(first, 'delete');
     if (lockedFirst) return { ok: false, error: lockedFirst };
     if (!canDelete(first.status)) return { ok: false, error: DELETE_RULE };
 
@@ -808,7 +817,7 @@ export async function deleteSalesOrder(id: string): Promise<{ ok: true } | Fail>
       // Re-read under the lease: a sync that just finished may have stored the BC number.
       const order = await loadOrder(scope, id);
       if (!order) return { ok: false, error: NOT_FOUND };
-      const locked = invoiceLock(order);
+      const locked = invoiceLock(order, 'delete');
       if (locked) return { ok: false, error: locked };
       if (!canDelete(order.status)) return { ok: false, error: DELETE_RULE };
       if (order.bc_order_number || order.bc_create_marker) {

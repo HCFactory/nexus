@@ -26,7 +26,11 @@ export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } =
     try {
       billcom = await createBillcomClientForConnection(conn.id, scope.orgId, { supabase })
     } catch (e) {
-      if (!(e instanceof BillcomConnectionDisabledError)) throw e
+      // A broken Bill.com setup must not block BC work (posting, resuming a
+      // post): the Bill.com step then fails with the "turned off" message.
+      if (!(e instanceof BillcomConnectionDisabledError)) {
+        console.error('[invoice] could not create the Bill.com client:', e)
+      }
     }
   }
 

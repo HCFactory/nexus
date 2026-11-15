@@ -28,6 +28,17 @@ export function autoInvoiceNumber(bcOrderNumber: string | null, customerPo: stri
   return (po ? `${bcOrderNumber} / ${po}` : bcOrderNumber).slice(0, 35)
 }
 
+/**
+ * Invoice states with a step still to run (the runner, the sweep, opening the
+ * order and the list all resume these). `posted` is here: a run that stopped
+ * right after recording the posted invoice still has the Bill.com step to do.
+ */
+export const RESUMABLE_INVOICE_STATES: readonly InvoiceState[] = ['posting', 'posted', 'billcom_sending']
+
+export function isInvoiceResumable(state: InvoiceState | string): boolean {
+  return (RESUMABLE_INVOICE_STATES as readonly string[]).includes(state)
+}
+
 /** True once BC holds the posted invoice (so the order can no longer be restarted). */
 export function isPastPosting(state: InvoiceState): boolean {
   return state === 'posted' || state === 'billcom_sending' || state === 'billcom_failed' || state === 'done'

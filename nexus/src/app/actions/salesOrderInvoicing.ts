@@ -6,8 +6,8 @@ import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import { editScope, NO_PERMISSION, type Fail, type Scope } from '@/lib/salesOrders/editScope';
 import { buildInvoiceDeps } from '@/lib/salesOrders/invoiceDeps';
-import { NOT_IN_SYNC, retryInvoiceProcess, runInvoiceProcess, startInvoiceProcess } from '@/lib/salesOrders/invoiceProcess';
-import { invoiceBlockReason } from '@/lib/salesOrders/orderRules';
+import { retryInvoiceProcess, runInvoiceProcess, startInvoiceProcess } from '@/lib/salesOrders/invoiceProcess';
+import { invoiceBlockReason, isInvoiceResumable } from '@/lib/salesOrders/orderRules';
 import { createServiceClient } from '@/lib/supabase/server';
 
 const ORDERS = 'sales_orders';
@@ -79,9 +79,8 @@ export async function retryInvoice(orderId: string): Promise<{ ok: true } | Fail
     if (order.invoice_state !== 'post_failed' && order.invoice_state !== 'billcom_failed') {
       return { ok: false, error: NOTHING_TO_RETRY };
     }
-    // retryInvoiceProcess refuses this without writing anything, so say it now.
-    const inSync = order.sync_state === 'synced' && (order.status === 'final' || order.status === 'pulled');
-    if (order.invoice_state === 'post_failed' && !inSync) return { ok: false, error: NOT_IN_SYNC };
+    // No in-sync check here: BC may already hold the posted invoice, which the
+    // posting step records first; it saves NOT_IN_SYNC on the order otherwise.
     inBackground(scope, orderId, scope.user.id, (d) => retryInvoiceProcess(d, orderId));
     return { ok: true };
   } catch (e) {
@@ -96,7 +95,7 @@ export async function resumeInvoiceIfStuck(orderId: string): Promise<void> {
     if (!scope) return;
     const order = await loadInvoiceFields(scope, orderId);
     if (!order) return;
-    if (order.invoice_state !== 'posting' && order.invoice_state !== 'billcom_sending') return;
+    if (!isInvoiceResumable(order.invoice_state)) return;
     if (order.claimed_until && order.claimed_until >= new Date().toISOString()) return;
     inBackground(scope, orderId, undefined, (d) => runInvoiceProcess(d, orderId));
   } catch (e) {

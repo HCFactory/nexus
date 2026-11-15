@@ -107,15 +107,18 @@ describe('syncWithClaim', () => {
 });
 
 describe('sweepPendingOrders', () => {
-  it('skips orders whose invoice_state is not none', async () => {
+  it('takes orders in none and post_failed, and skips posting and past posting', async () => {
     const d = deps([
       order('posting', { invoice_state: 'posting' }),
+      order('posted', { invoice_state: 'posted' }),
+      order('billcom_failed', { invoice_state: 'billcom_failed' }),
       order('done', { invoice_state: 'done' }),
+      order('post_failed', { invoice_state: 'post_failed' }),
       order('plain'),
     ]);
     mocks.syncSalesOrder.mockResolvedValue('synced');
-    expect(await sweepPendingOrders(d.deps)).toBe(1);
-    expect(mocks.syncSalesOrder.mock.calls.map((c) => c[1])).toEqual(['plain']);
+    expect(await sweepPendingOrders(d.deps)).toBe(2);
+    expect(mocks.syncSalesOrder.mock.calls.map((c) => c[1]).sort()).toEqual(['plain', 'post_failed']);
   });
 
   it('skips conflict and synced orders and handles at most 5, oldest first', async () => {

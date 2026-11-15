@@ -326,6 +326,16 @@ describe('syncSalesOrder: invoiced orders', () => {
     expect(bc.t.create).not.toHaveBeenCalled()
     expect(bc.t.patch).not.toHaveBeenCalled()
   })
+
+  it('makes no BC call for an order being posted (posting) and returns its sync_state', async () => {
+    setup(order({ invoice_state: 'posting', sync_state: 'pending', bc_order_number: 'SO900' }), [line()])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('pending')
+    expect(await syncSalesOrder(deps, ORDER_ID, { overwrite: true })).toBe('pending')
+    expect(bc.t.get).not.toHaveBeenCalled()
+    expect(bc.t.list).not.toHaveBeenCalled()
+    expect(bc.t.create).not.toHaveBeenCalled()
+    expect(bc.t.patch).not.toHaveBeenCalled()
+  })
 })
 
 describe('syncSalesOrder: first sync', () => {

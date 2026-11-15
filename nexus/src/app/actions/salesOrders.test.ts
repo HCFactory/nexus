@@ -580,6 +580,26 @@ describe('invoiced orders are left alone', () => {
     expect(db.tables.sales_orders).toHaveLength(1);
   });
 
+  it('the list sweep also resumes an order stopped in posted', async () => {
+    setup({ sales_orders: [orderRow('o1', { invoice_state: 'posted' })] });
+    await listSalesOrders();
+    expect(mocks.after).toHaveBeenCalledTimes(1);
+    await runAfter();
+    expect(mocks.sweepInvoiceSteps).toHaveBeenCalledWith({ invoiceDeps: true });
+  });
+
+  it('no sweep for orders that are only post_failed, billcom_failed or done (and synced)', async () => {
+    setup({
+      sales_orders: [
+        orderRow('o1', { invoice_state: 'post_failed' }),
+        orderRow('o2', { invoice_state: 'billcom_failed' }),
+        orderRow('o3', { invoice_state: 'done' }),
+      ],
+    });
+    await listSalesOrders();
+    expect(mocks.after).not.toHaveBeenCalled();
+  });
+
   it('the list sweep also resumes stuck invoice steps, after the order sweep', async () => {
     setup({ sales_orders: [orderRow('o1', { invoice_state: 'billcom_sending' })] });
     await listSalesOrders();
@@ -596,6 +616,65 @@ describe('invoiced orders are left alone', () => {
     await expect(runAfter()).resolves.toBeUndefined();
     expect(logged).toHaveBeenCalled();
     logged.mockRestore();
+  });
+});
+
+const IN_PROGRESS = 'This order has an invoice in progress. Use Retry instead.';
+
+describe('post_failed orders', () => {
+  const failedRow = (extra: Row = {}) =>
+    orderRow('o1', { status: 'final', invoice_state: 'post_failed', bc_order_number: 'SO1', ...extra });
+
+  it('refuses delete (BC may already hold the posted invoice), with no BC call', async () => {
+    setup({ sales_orders: [failedRow()] });
+    expect(await deleteSalesOrder('o1')).toEqual({ ok: false, error: IN_PROGRESS });
+    expect(mocks.deleteSalesOrderInBc).not.toHaveBeenCalled();
+    expect(mocks.findBcOrderByMarker).not.toHaveBeenCalled();
+    expect(mocks.createBcClientForOrg).not.toHaveBeenCalled();
+    expect(db.tables.sales_orders).toHaveLength(1);
+  });
+
+  it('refuses delete when the order moved to post_failed after the first check (re-read under the lease)', async () => {
+    setup({ sales_orders: [orderRow('o1', { status: 'final', bc_order_number: 'SO1' })] });
+    let reads = 0;
+    const realFrom = db.client.from.bind(db.client);
+    (db.client as unknown as { from: (t: string) => unknown }).from = (t: string) => {
+      if (t === 'sales_orders' && ++reads === 2) db.tables.sales_orders[0].invoice_state = 'post_failed';
+      return realFrom(t);
+    };
+    expect(await deleteSalesOrder('o1')).toEqual({ ok: false, error: IN_PROGRESS });
+    expect(mocks.deleteSalesOrderInBc).not.toHaveBeenCalled();
+    expect(db.tables.sales_orders).toHaveLength(1);
+  });
+
+  it('can still be saved, retried (Try again) and overwritten', async () => {
+    setup({ sales_orders: [failedRow({ sync_state: 'failed', sync_error: 'BC error' })], sales_order_lines: [lineRow('l1')] });
+    const lines = [line('k1', { id: 'l1' })];
+    expect(await saveSalesOrder({ ...input({ status: 'final', lines }), id: 'o1' })).toEqual({ ok: true, id: 'o1' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ sync_state: 'pending', invoice_state: 'post_failed', local_version: 5 });
+    expect(await retrySalesOrderSync('o1')).toEqual({ ok: true, state: 'synced' });
+    expect(await overwriteBcWithNexus('o1')).toEqual({ ok: true, state: 'synced' });
+    expect(mocks.syncSalesOrder).toHaveBeenCalledTimes(2);
+    expect(mocks.syncSalesOrder.mock.calls[1][2]).toEqual({ overwrite: true });
+  });
+});
+
+describe('save fenced against an invoice that starts meanwhile', () => {
+  it.each(['posting', 'posted'])('refuses as changed meanwhile when the order moved to %s before step 1, without writing', async (state) => {
+    setup({ sales_orders: [orderRow('o1')], sales_order_lines: [lineRow('l1')] });
+    let first = true;
+    db.failOn = (table, op) => {
+      if (table === 'sales_orders' && op === 'update' && first) {
+        first = false;
+        db.tables.sales_orders[0].invoice_state = state; // Create invoice won the race
+      }
+      return null;
+    };
+    const res = await saveSalesOrder({ ...input({ lines: [line('k1', { id: 'l1', quantity: 7 })] }), id: 'o1' });
+    expect(res).toEqual({ ok: false, error: 'This order was changed by someone else. Reload and try again.' });
+    expect(db.tables.sales_orders[0]).toMatchObject({ local_version: 3, sync_state: 'synced', invoice_state: state });
+    expect(db.writes.filter(([t]) => t === 'sales_order_lines')).toEqual([]);
+    expect(mocks.after).not.toHaveBeenCalled();
   });
 });
 

@@ -30,7 +30,7 @@ import {
   type PostedInvoice,
 } from './bcInvoicing'
 import { LEASE_MS, SWEEP_BATCH, withOrderLease, type OrderLease } from './orderClaim'
-import { autoInvoiceNumber, canStartInvoice, invoiceBlockReason, todayIn } from './orderRules'
+import { autoInvoiceNumber, canStartInvoice, invoiceBlockReason, isInvoiceResumable, RESUMABLE_INVOICE_STATES, todayIn } from './orderRules'
 import { loadLines, loadOrder, orderChangedInBc, readBcOrder } from './orderSync'
 
 export interface InvoiceDeps extends BcInvoicingDeps {
@@ -66,9 +66,6 @@ export class InvoiceOwnershipLostError extends Error {
 }
 
 const isOwnershipLost = (e: unknown) => e instanceof InvoiceOwnershipLostError
-
-/** States in which runInvoiceProcess has a step to run. */
-const RUNNING: readonly InvoiceState[] = ['posting', 'posted', 'billcom_sending']
 
 type Link = { status: string; billcom_customer_id: string | null }
 
@@ -286,7 +283,7 @@ async function runSteps(deps: InvoiceDeps, orderId: string, lease: OrderLease): 
   for (let step = 0; ; step++) {
     const order = await loadOrder(deps, orderId)
     const state = order.invoice_state
-    if (!RUNNING.includes(state)) return state
+    if (!isInvoiceResumable(state)) return state
     // Back to the normal lease (from a long post lease, or after a slow step).
     if (step > 0) await renewOrStop(lease, orderId, LEASE_MS)
     if (state === 'posting') {
@@ -353,7 +350,9 @@ export async function retryInvoiceProcess(deps: InvoiceDeps, orderId: string): P
     const from = order.invoice_state
     const next: InvoiceState | null = from === 'post_failed' ? 'posting' : from === 'billcom_failed' ? 'billcom_sending' : null
     if (!next) return { ok: false, error: NOTHING_TO_RETRY }
-    if (from === 'post_failed' && !inSyncForPosting(order)) return { ok: false, error: NOT_IN_SYNC }
+    // No in-sync check here: the posting step asks BC for a posted invoice
+    // first (BC may have posted before the failure), and only then refuses an
+    // order that isn't In BC, with NOT_IN_SYNC saved on the order.
     try {
       await updateInvoice(deps, orderId, from, { invoice_state: next, invoice_error: null })
     } catch (e) {
@@ -370,8 +369,8 @@ export async function retryInvoiceProcess(deps: InvoiceDeps, orderId: string): P
 }
 
 /**
- * Resume invoice steps that stopped midway (a crash, a closed tab): orders in
- * `posting` or `billcom_sending` whose lease is free, oldest first. Each run
+ * Resume invoice steps that stopped midway (a crash, a closed tab, a time
+ * limit): orders in a resumable state (posting, posted, billcom_sending) whose lease is free, oldest first. Each run
  * is safe to repeat (it checks BC / Bill.com before acting). Returns how many
  * runs got the order (non-null result).
  */
@@ -382,7 +381,7 @@ export async function sweepInvoiceSteps(deps: InvoiceDeps, limit = SWEEP_BATCH):
     .select('id')
     .eq('organization_id', deps.orgId)
     .eq('bc_connection_id', deps.connectionId)
-    .in('invoice_state', ['posting', 'billcom_sending'])
+    .in('invoice_state', [...RESUMABLE_INVOICE_STATES])
     .or(`claimed_until.is.null,claimed_until.lt.${nowIso}`)
     .order('updated_at', { ascending: true })
     .order('id', { ascending: true })

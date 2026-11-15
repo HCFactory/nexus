@@ -508,6 +508,15 @@ describe('lease and ownership', () => {
   })
 })
 
+describe('resuming an order stopped in posted', () => {
+  it('runInvoiceProcess moves posted -> billcom_sending -> done without posting', async () => {
+    setup({ invoice_state: 'posted', status: 'invoiced', ...postedColumns() })
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('done')
+    expect(bc.invokeAction).not.toHaveBeenCalled()
+    expect(bill.posts).toHaveLength(1)
+  })
+})
+
 describe('posting needs an order that is In BC', () => {
   it.each([
     [{ sync_state: 'pending' }],
@@ -578,11 +587,29 @@ describe('retryInvoiceProcess', () => {
     [{ status: 'draft' }],
     [{ sync_state: 'pending' }],
     [{ sync_state: 'failed' }],
-  ])('post_failed with %o: refuses up front with the save message', async (extra) => {
+  ])('post_failed with %o and BC already holding the posted invoice: records it and finishes, never NOT_IN_SYNC', async (extra) => {
+    setup({ invoice_state: 'post_failed', invoice_error: NOT_CONFIRMED, ...extra })
+    bc.state.posted.push({ ...INVOICE })
+    expect(await retryInvoiceProcess(makeDeps(), 'o1')).toEqual({ ok: true, state: 'done' })
+    const states = db.writes
+      .filter(([t, op, p]) => t === 'sales_orders' && op === 'update' && 'invoice_state' in (p as Row))
+      .map(([, , p]) => (p as Row).invoice_state)
+    expect(states).toEqual(['posting', 'posted', 'billcom_sending', 'done'])
+    expect(order()).toMatchObject({ invoice_state: 'done', invoice_error: null, status: 'invoiced', bc_posted_invoice_number: 'PSI-100' })
+    expect(bc.invokeAction).not.toHaveBeenCalled()
+    expect(bill.posts).toHaveLength(1)
+  })
+
+  it.each([
+    [{ status: 'draft' }],
+    [{ sync_state: 'pending' }],
+    [{ sync_state: 'failed' }],
+  ])('post_failed with %o and nothing posted in BC: back to post_failed with NOT_IN_SYNC, nothing posted', async (extra) => {
     setup({ invoice_state: 'post_failed', invoice_error: 'Item ITEM-1 is blocked.', ...extra })
-    expect(await retryInvoiceProcess(makeDeps(), 'o1')).toEqual({ ok: false, error: NOT_IN_SYNC })
-    expect(order()).toMatchObject({ invoice_state: 'post_failed', invoice_error: 'Item ITEM-1 is blocked.' })
-    expect(bc.list).not.toHaveBeenCalled()
+    expect(await retryInvoiceProcess(makeDeps(), 'o1')).toEqual({ ok: true, state: 'post_failed' })
+    expect(order()).toMatchObject({ invoice_state: 'post_failed', invoice_error: NOT_IN_SYNC })
+    expect(bc.patch).not.toHaveBeenCalled()
+    expect(bc.invokeAction).not.toHaveBeenCalled()
   })
 
   it('billcom_failed retries even though the order is no longer Final (it is Invoiced)', async () => {
@@ -626,6 +653,15 @@ describe('sweepInvoiceSteps', () => {
     expect(bill.posts).toHaveLength(1)
     expect(db.tables.sales_orders.find((r) => r.id === 'o-none')!.invoice_state).toBe('none')
     expect(db.tables.sales_orders.find((r) => r.id === 'o-failed')!.invoice_state).toBe('billcom_failed')
+  })
+
+  it('resumes an order stopped in posted: Bill.com step runs, BC is never asked to post again', async () => {
+    setup({ invoice_state: 'posted', status: 'invoiced', ...postedColumns() })
+    expect(await sweepInvoiceSteps(makeDeps())).toBe(1)
+    expect(order()).toMatchObject({ invoice_state: 'done', billcom_invoice_id: 'BINV-1' })
+    expect(bc.invokeAction).not.toHaveBeenCalled()
+    expect(bc.list).not.toHaveBeenCalled()
+    expect(bill.posts).toHaveLength(1)
   })
 
   it('logs and continues when one order throws', async () => {

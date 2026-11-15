@@ -21,7 +21,6 @@ vi.mock('@/lib/supabase/server', () => ({ createServiceClient: mocks.createServi
 vi.mock('@/lib/salesOrders/invoiceDeps', () => ({ buildInvoiceDeps: mocks.buildInvoiceDeps }));
 vi.mock('@/lib/billcom/customerSyncHooks', () => ({ resolveBillcomConnection: mocks.resolveConn }));
 vi.mock('@/lib/salesOrders/invoiceProcess', () => ({
-  NOT_IN_SYNC: 'NOT IN SYNC MSG',
   startInvoiceProcess: mocks.start,
   runInvoiceProcess: mocks.run,
   retryInvoiceProcess: mocks.retry,
@@ -104,13 +103,15 @@ describe('retryInvoice', () => {
     expect(mocks.after).not.toHaveBeenCalled();
   });
 
-  it('refuses a post_failed order that is not synced final/pulled, up front', async () => {
-    setup({ sales_orders: [order({ invoice_state: 'post_failed', sync_state: 'pending' })] });
-    expect(await retryInvoice('o1')).toEqual({ ok: false, error: 'NOT IN SYNC MSG' });
-    setup({ sales_orders: [order({ invoice_state: 'post_failed', status: 'draft' })] });
-    expect(await retryInvoice('o1')).toEqual({ ok: false, error: 'NOT IN SYNC MSG' });
-    expect(mocks.after).not.toHaveBeenCalled();
-  });
+  it.each([{ sync_state: 'pending' }, { status: 'draft' }])(
+    'does not refuse a post_failed order with %o up front (BC may already hold the posted invoice)',
+    async (extra) => {
+      setup({ sales_orders: [order({ invoice_state: 'post_failed', ...extra })] });
+      expect(await retryInvoice('o1')).toEqual({ ok: true });
+      await runAfter();
+      expect(mocks.retry).toHaveBeenCalledWith({ deps: true }, 'o1');
+    },
+  );
 
   it.each(['post_failed', 'billcom_failed'])('routes %s to retryInvoiceProcess in after()', async (state) => {
     setup({ sales_orders: [order({ invoice_state: state })] });
@@ -127,7 +128,7 @@ describe('retryInvoice', () => {
 });
 
 describe('resumeInvoiceIfStuck', () => {
-  it.each(['posting', 'billcom_sending'])('runs %s with a free lease', async (state) => {
+  it.each(['posting', 'posted', 'billcom_sending'])('runs %s with a free lease', async (state) => {
     setup({ sales_orders: [order({ invoice_state: state })] });
     await resumeInvoiceIfStuck('o1');
     await runAfter();
@@ -143,8 +144,10 @@ describe('resumeInvoiceIfStuck', () => {
   it('does nothing while the lease is held, or in other states', async () => {
     setup({ sales_orders: [order({ invoice_state: 'posting', claimed_until: '2999-01-01T00:00:00.000Z' })] });
     await resumeInvoiceIfStuck('o1');
-    setup({ sales_orders: [order({ invoice_state: 'done' })] });
-    await resumeInvoiceIfStuck('o1');
+    for (const state of ['none', 'post_failed', 'billcom_failed', 'done']) {
+      setup({ sales_orders: [order({ invoice_state: state })] });
+      await resumeInvoiceIfStuck('o1');
+    }
     expect(mocks.after).not.toHaveBeenCalled();
   });
 
