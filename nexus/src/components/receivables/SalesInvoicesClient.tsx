@@ -10,13 +10,15 @@ import { BusinessCentralSalesInvoice } from "@/types/database";
 
 interface SalesInvoicesClientProps {
   invoices: BusinessCentralSalesInvoice[];
+  /** Pre-fills the search box (e.g. from ?q= when linked from a sales order). */
+  initialSearch?: string;
 }
 
 const SELECT_CLASSNAME =
   "h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
-export function SalesInvoicesClient({ invoices }: SalesInvoicesClientProps) {
-  const [search, setSearch] = useState("");
+export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesClientProps) {
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [status, setStatus] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");

@@ -20,6 +20,7 @@ const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/app/actions/salesOrders', () => orderActions);
 vi.mock('@/app/actions/shipToAddresses', () => shipActions);
 vi.mock('next/navigation', () => ({ useRouter: () => nav }));
+vi.mock('@/app/actions/salesOrderInvoicing', () => ({ createInvoice: vi.fn(), retryInvoice: vi.fn() }));
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 
 const customer = (over: Partial<CustomerRow>): CustomerRow => ({
@@ -677,5 +678,39 @@ describe('SalesOrderForm — layout', () => {
     for (const l of ['Customer PO', 'Invoice # (Ext. Doc No.)', 'Order date', 'Requested delivery date']) {
       expect(screen.getByLabelText(l).className).toContain('dark:bg-field');
     }
+  });
+});
+
+describe('invoicing in the header', () => {
+  const final = (over: Partial<SalesOrderRow> = {}) => order({ status: 'final', ...over });
+  const withLine = (over: Partial<Props> = {}) => renderForm({ order: final(), lines: [lineRow], ...over });
+
+  it('shows Create invoice for a synced final order, disabled with unsaved edits', () => {
+    withLine();
+    expect(screen.getByRole('button', { name: 'Create invoice' })).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Customer PO'), { target: { value: 'PO-2' } });
+    expect(screen.getByRole('button', { name: 'Create invoice' })).toBeDisabled();
+  });
+  it('blocked: disables the button and shows the reason', () => {
+    withLine({ invoiceBlockedReason: 'Bill.com is turned off. Turn it on in Settings before invoicing.' });
+    expect(screen.getByRole('button', { name: 'Create invoice' })).toBeDisabled();
+    expect(screen.getByText('Bill.com is turned off. Turn it on in Settings before invoicing.')).toBeInTheDocument();
+  });
+  it('hides Create invoice for a draft order', () => {
+    renderForm({ order: order(), lines: [lineRow] });
+    expect(screen.queryByRole('button', { name: 'Create invoice' })).toBeNull();
+  });
+  it('past posting hides Save and Delete and shows the status instead of the BC sync state', () => {
+    renderForm({ order: final({ status: 'invoiced', invoice_state: 'done', bc_posted_invoice_number: 'SI-1' }), lines: [lineRow] });
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete order' })).toBeNull();
+    expect(screen.getByRole('status')).toHaveTextContent('Invoiced · In Bill.com');
+    expect(screen.queryByText('In BC')).toBeNull();
+    expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices?q=SI-1');
+  });
+  it('shows BC\'s message in the notice bar when posting failed, and Retry', () => {
+    withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'Posting date not allowed' }) });
+    expect(screen.getByText('Posting date not allowed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 });

@@ -11,7 +11,7 @@ function row(over: Partial<SalesOrderListRow>): SalesOrderListRow {
   return {
     id: 'o1', status: 'draft', customer_id: 'c1', customer_number: 'C1', customer_name: 'Acme',
     order_date: '2026-11-01', requested_delivery_date: null, invoice_number: null, bc_order_number: null,
-    customer_po: 'PO-1', total_incl_tax: null, sync_state: 'synced', sync_error: null, ...over,
+    customer_po: 'PO-1', total_incl_tax: null, sync_state: 'synced', sync_error: null, invoice_state: 'none', invoice_error: null, ...over,
   };
 }
 
@@ -76,5 +76,12 @@ describe('SalesOrdersList', () => {
     expect(screen.queryByRole('link', { name: /new sales order/i })).toBeNull();
     rerender(<SalesOrdersList orders={orders} canEdit />);
     expect(screen.getByRole('link', { name: /new sales order/i })).toHaveAttribute('href', '/sales-orders/new');
+  });
+
+  it('shows Invoiced status and the invoice state instead of the BC sync text', () => {
+    render(<SalesOrdersList orders={[row({ id: 'o7', status: 'invoiced', invoice_state: 'billcom_failed', bc_order_number: 'SO-7' })]} canEdit={false} />);
+    expect(screen.getByText('Invoiced')).toBeInTheDocument();
+    expect(screen.getByText('Invoiced · Not in Bill.com')).toBeInTheDocument();
+    expect(screen.queryByText('In BC')).toBeNull();
   });
 });

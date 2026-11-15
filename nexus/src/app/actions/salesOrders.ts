@@ -27,6 +27,7 @@ import type {
   CustomerRow,
   LineDraft,
   OrderStatus,
+  InvoiceState,
   SalesOrderInput,
   SalesOrderLineRow,
   SalesOrderListRow,
@@ -212,7 +213,7 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
         .from(ORDERS)
         .select(
           'id, status, customer_id, customer_number, bill_name, order_date, requested_delivery_date, invoice_number, ' +
-            'bc_order_number, customer_po, total_incl_tax, sync_state, sync_error, invoice_state, customer:business_central_customers(display_name)',
+            'bc_order_number, customer_po, total_incl_tax, sync_state, sync_error, invoice_state, invoice_error, customer:business_central_customers(display_name)',
         )
         .eq('organization_id', scope.orgId)
         .eq('bc_connection_id', scope.bcConnectionId)
@@ -238,6 +239,8 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
       total_incl_tax: r.total_incl_tax === null || r.total_incl_tax === undefined ? null : Number(r.total_incl_tax),
       sync_state: r.sync_state as SyncState,
       sync_error: (r.sync_error as string | null) ?? null,
+      invoice_state: (r.invoice_state as InvoiceState | undefined) ?? 'none',
+      invoice_error: (r.invoice_error as string | null) ?? null,
     };
   });
 

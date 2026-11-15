@@ -267,6 +267,8 @@ export interface SalesOrderListRow {
   total_incl_tax: number | null
   sync_state: SyncState
   sync_error: string | null
+  invoice_state: InvoiceState
+  invoice_error: string | null
 }
 
 /** A copy of one BC sales price list line (read-only). */

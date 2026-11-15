@@ -42,6 +42,7 @@ import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
+import { InvoiceControls, InvoiceStatus, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
 
 interface Props {
   /** null = a new order. */
@@ -64,6 +65,7 @@ type Option = { code: string; label: string };
 const FORM_ID = 'sales-order-form';
 const POLL_MS = 4000;
 const MAX_POLLS = 15;
+const INVOICE_POLL_MS = 3000;
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
 const INPUT_CLASS = 'border-input bg-field dark:bg-field';
@@ -209,7 +211,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo, notes = [] }: Props) {
+export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo, notes = [], invoiceBlockedReason }: Props) {
   const router = useRouter();
   const { customers, items, selectOptions, companyLocation, today, taxAreaLines, taxDetails } = context;
   const initialCustomer = order ? customers.find((c) => c.id === order.customer_id) ?? null : null;
@@ -255,7 +257,16 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     return () => clearInterval(timer);
   }, [orderId, syncState, router]);
 
-  const locked = !canEdit || (order ? editableFields(order.status) !== 'all' : false);
+  // While an invoice is posting or after it posted, the order is locked and polls for the next step.
+  const invoiceState = order?.invoice_state ?? 'none';
+  useEffect(() => {
+    if (!orderId || !isInvoiceRunning(invoiceState)) return;
+    const timer = setInterval(() => router.refresh(), INVOICE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [orderId, invoiceState, router]);
+
+  const invoiceLocked = isInvoiceLocked(invoiceState);
+  const locked = !canEdit || invoiceLocked || (order ? editableFields(order.status) !== 'all' : false);
   const busy = pending;
   const invoiceShown = invoiceNumber ?? autoInvoiceNumber(order?.bc_order_number ?? null, customerPo);
 
@@ -487,15 +498,21 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
 
   // BC's figures while the order is synced and nothing changed since load; otherwise the live estimate.
   const loadedHeader = order ? headerOf(order) : null;
-  const bcTotals =
-    order &&
-    loadedHeader &&
-    order.sync_state === 'synced' &&
-    num(order.total_incl_tax) !== null &&
+  const formUnchanged =
+    !!order &&
+    !!loadedHeader &&
     customerId === order.customer_id &&
     orderDate === order.order_date &&
     HEADER_KEYS.every((k) => header[k] === loadedHeader[k]) &&
-    linesUnchanged(draftLines, lines)
+    linesUnchanged(draftLines, lines);
+  // Unsaved edits: anything the totals check sees, plus the status, Invoice # and PO the invoice also uses.
+  const dirty =
+    !formUnchanged || status !== order?.status || invoiceNumber !== (order?.invoice_number ?? null) || customerPo !== order?.customer_po;
+  const bcTotals =
+    order &&
+    formUnchanged &&
+    order.sync_state === 'synced' &&
+    num(order.total_incl_tax) !== null
       ? { subtotal: num(order.total_excl_tax) ?? 0, tax: num(order.total_tax) ?? 0, total: num(order.total_incl_tax) ?? 0 }
       : null;
   const totals = bcTotals ?? orderTotals(shownLines.map((l) => lineAmounts(l, taxRate(l))));
@@ -517,7 +534,15 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         </div>
         {/* Sync state sits above the buttons; the column is no taller than the title block. */}
         <div className="flex flex-col items-end gap-1.5">
-          {order && (
+          {order && invoiceState !== 'none' && (
+            <InvoiceStatus
+              className="-mt-2.5 text-xs leading-4"
+              order={order}
+              canEdit={canEdit}
+              onError={setError}
+            />
+          )}
+          {order && invoiceState === 'none' && (
             <SyncBadge
               className="-mt-2.5 text-xs leading-4"
               state={order.sync_state}
@@ -531,11 +556,23 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             />
           )}
           <div className="flex items-center gap-2">
-            <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy} />
-            {canEdit && (
+            <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy || invoiceLocked} />
+            {order && (
+              <InvoiceControls
+                order={order}
+                canEdit={canEdit}
+                dirty={dirty}
+                blockedReason={invoiceBlockedReason}
+                invoiceNumber={invoiceShown}
+                customerLabel={customerName}
+                total={totals.total}
+                today={today}
+              />
+            )}
+            {canEdit && !invoiceLocked && (
               <Button type="submit" variant="blue-glass" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
             )}
-            {canEdit && order && canDelete(order.status) && (
+            {canEdit && !invoiceLocked && order && canDelete(order.status) && (
               <Button
                 type="button"
                 variant="outline"
@@ -558,7 +595,13 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           {error}
         </div>
       )}
-      {order && canEdit && locked && (
+      {order && showsCreateInvoice(order, canEdit) && invoiceBlockedReason && (
+        <div className="border-b border-border bg-surface px-5 py-2 text-sm text-foreground-muted">{invoiceBlockedReason}</div>
+      )}
+      {order && canEdit && (invoiceState === 'post_failed' || invoiceState === 'billcom_failed') && order.invoice_error && (
+        <div className="border-b border-border bg-warning-subtle px-5 py-2 text-sm text-foreground">{order.invoice_error}</div>
+      )}
+      {order && canEdit && locked && !invoiceLocked && (
         <div className="border-b border-border bg-warning-subtle px-5 py-2 text-sm text-foreground">
           This order is locked. Only Status and Notes can change; set it back to Draft and save to edit the rest.
         </div>
