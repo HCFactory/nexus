@@ -1,5 +1,6 @@
 // Pure mapping between Nexus sales orders and BC's published OData pages
 // SalesOrder (42) and SalesOrderSalesLines (46). No I/O.
+import { autoInvoiceNumber } from './orderRules'
 import type { BcRecord, ReferenceSource } from '@/lib/businessCentral/customerReferences/transport'
 import type { SalesOrderRow, SalesOrderLineRow } from '@/types/salesOrders'
 
@@ -65,7 +66,7 @@ export function toSalesDocShipToAddress(order: SalesOrderRow): Record<string, un
 export function toBcHeaderPatch(order: SalesOrderRow, bcNumber: string): Record<string, unknown> {
   const patch: Record<string, unknown> = {
     Order_Date: order.order_date,
-    External_Document_No: order.invoice_number ?? bcNumber,
+    External_Document_No: order.invoice_number ?? autoInvoiceNumber(bcNumber, order.customer_po),
     Sell_to_Address: order.bill_address,
     Sell_to_Address_2: order.bill_address_2,
     Sell_to_City: order.bill_city,

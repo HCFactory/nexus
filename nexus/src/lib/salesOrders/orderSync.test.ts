@@ -329,7 +329,7 @@ describe('syncSalesOrder: first sync', () => {
     expect(docPatches().map((c) => c[3])).toEqual([{ shipToCode: 'WH1' }])
     const hp = headerPatches()
     expect(hp).toHaveLength(1)
-    expect(hp[0][3].External_Document_No).toBe('SO1001')
+    expect(hp[0][3].External_Document_No).toBe('SO1001 / PO-SECRET')
     expect(bc.headers.get('SO1001')!.fields).toMatchObject({ Ship_to_Code: 'WH1', Ship_to_Name: 'WH1 name' })
     expect(lineCreates()).toHaveLength(2)
     expect(lineCreates()[0][1]).toMatchObject({ Document_No: 'SO1001', No: 'ITEM1', Unit_Price: 5 })
@@ -359,8 +359,8 @@ describe('syncSalesOrder: first sync', () => {
     expect(headerPatches()[0][3].External_Document_No).toBe('INV-7')
   })
 
-  it('never sends Customer PO or notes to BC', async () => {
-    setup(order(), [line()])
+  it('never sends Customer PO or notes to BC (the PO only reaches BC inside the auto invoice #)', async () => {
+    setup(order({ invoice_number: 'INV-FIXED' }), [line()])
     await syncSalesOrder(deps, ORDER_ID)
     const all = [...bc.t.create.mock.calls.map((c) => c[1]), ...bc.t.patch.mock.calls.map((c) => c[3])]
     expect(all.length).toBeGreaterThan(0)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { canChangeStatus, editableFields, canDelete, todayIn } from './orderRules'
+import { canChangeStatus, editableFields, canDelete, todayIn, autoInvoiceNumber } from './orderRules'
 
 describe('orderRules', () => {
   it('moves freely between draft, final and pulled', () => {
@@ -26,5 +26,11 @@ describe('orderRules', () => {
     expect(todayIn('Pacific/Honolulu', now)).toBe('2026-11-12')
     expect(todayIn('UTC', now)).toBe('2026-11-13')
     expect(todayIn(null, now)).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+  it('autoInvoiceNumber is the order number, plus the trimmed PO when there is one', () => {
+    expect(autoInvoiceNumber('W-100531', '')).toBe('W-100531')
+    expect(autoInvoiceNumber('W-100531', ' PO-889 ')).toBe('W-100531 / PO-889')
+    expect(autoInvoiceNumber(null, 'X')).toBe('')
+    expect(autoInvoiceNumber('W-100531', 'P'.repeat(40))).toHaveLength(35)
   })
 })

@@ -45,6 +45,11 @@ describe('SalesOrdersList', () => {
     expect(cells[1]).toHaveTextContent('SO-200');
   });
 
+  it('Invoice # falls back to order # / customer PO', () => {
+    render(<SalesOrdersList orders={[row({ id: 'o9', bc_order_number: 'SO-200', invoice_number: null, customer_po: 'PO-5' })]} canEdit={false} />);
+    expect(within(screen.getAllByRole('row')[1]).getAllByRole('cell')[1]).toHaveTextContent('SO-200 / PO-5');
+  });
+
   it('Invoice # shows — when the order is not in BC and has no invoice #', () => {
     render(<SalesOrdersList orders={[row({ id: 'o9' })]} canEdit={false} />);
     expect(within(screen.getAllByRole('row')[1]).getAllByRole('cell')[1]).toHaveTextContent('—');

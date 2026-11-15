@@ -239,7 +239,7 @@ describe('SalesOrderForm — ship-to', () => {
 describe('SalesOrderForm — fields', () => {
   it('Invoice # placeholder and Customer PO helper text', () => {
     renderForm();
-    expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('placeholder', 'Same as order number');
+    expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('placeholder', 'Set when sent to BC');
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('maxlength', '35');
     expect(screen.getByText('Nexus and Bill.com only, not sent to BC')).toBeInTheDocument();
   });
@@ -487,5 +487,45 @@ describe('SalesOrderForm — status and locking', () => {
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(orderActions.retrySalesOrderSync).toHaveBeenCalledWith('so-1'));
+  });
+});
+
+describe('SalesOrderForm — invoice #', () => {
+  const invoice = () => screen.getByLabelText(/Invoice #/) as HTMLInputElement;
+
+  it('shows order # / customer PO while auto, following the PO', () => {
+    renderForm({ order: order(), lines: [lineRow] });
+    expect(invoice().value).toBe('SO-10234 / PO-1');
+    fireEvent.change(screen.getByLabelText('Customer PO'), { target: { value: 'PO-2' } });
+    expect(invoice().value).toBe('SO-10234 / PO-2');
+  });
+
+  it('confirms a manual change on blur, and Undo restores the auto value', async () => {
+    renderForm({ order: order(), lines: [lineRow] });
+    fireEvent.focus(invoice());
+    fireEvent.change(invoice(), { target: { value: 'INV-7' } });
+    fireEvent.blur(invoice());
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('You changed the invoice number from SO-10234 / PO-1 to INV-7. Keep it?');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(invoice().value).toBe('SO-10234 / PO-1');
+  });
+
+  it('Keep leaves the manual value', async () => {
+    renderForm({ order: order(), lines: [lineRow] });
+    fireEvent.focus(invoice());
+    fireEvent.change(invoice(), { target: { value: 'INV-7' } });
+    fireEvent.blur(invoice());
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Keep' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(invoice().value).toBe('INV-7');
+  });
+
+  it('clearing the field shows the auto value again', () => {
+    renderForm({ order: order({ invoice_number: 'INV-1' }), lines: [lineRow] });
+    expect(invoice().value).toBe('INV-1');
+    fireEvent.change(invoice(), { target: { value: '' } });
+    expect(invoice().value).toBe('SO-10234 / PO-1');
   });
 });

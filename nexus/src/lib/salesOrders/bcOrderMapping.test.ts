@@ -89,7 +89,7 @@ describe('toBcCreate / toSalesDocShipToAddress', () => {
 describe('toBcHeaderPatch', () => {
   it('maps every field', () => {
     expect(toBcHeaderPatch(order(), 'SO-1001')).toEqual({
-      Order_Date: '2026-11-01', Requested_Delivery_Date: '2026-11-10', External_Document_No: 'SO-1001',
+      Order_Date: '2026-11-01', Requested_Delivery_Date: '2026-11-10', External_Document_No: 'SO-1001 / PO-SECRET',
       Sell_to_Address: 'a1', Sell_to_Address_2: 'a2', Sell_to_City: 'bc', Sell_to_County: 'bs',
       Sell_to_Post_Code: 'bp', Sell_to_Country_Region_Code: 'US', Sell_to_Contact_No: 'CT1',
       Sell_to_Phone_No: 'ph', SellToMobilePhoneNo: 'mo', Sell_to_E_Mail: 'e@x.com', EMailCCHCABG: 'cc@x.com',
@@ -100,6 +100,9 @@ describe('toBcHeaderPatch', () => {
   it('sends no Ship_to_* field (read-only on page 42; they go through salesDocuments)', () => {
     expect(Object.keys(toBcHeaderPatch(order(), 'SO-1')).filter((k) => k.startsWith('Ship_to_'))).toEqual([])
   })
+  it('sends order number / customer PO when invoice number is null', () => {
+    expect(toBcHeaderPatch(order({ customer_po: 'PO-889' }), 'W-100531').External_Document_No).toBe('W-100531 / PO-889')
+  })
   it('uses invoice number when present', () => {
     expect(toBcHeaderPatch(order({ invoice_number: 'INV-9' }), 'SO-1001').External_Document_No).toBe('INV-9')
   })
@@ -109,7 +112,7 @@ describe('toBcHeaderPatch', () => {
     expect(p).toHaveProperty('Location_Code', '')
   })
   it('never sends customer PO or notes', () => {
-    const outs = [toBcCreate(order(), 'NX-1'), toSalesDocShipToAddress(order()), toBcHeaderPatch(order(), 'SO-1'), toBcLine('SO-1', line(), 'MAIN')]
+    const outs = [toBcCreate(order(), 'NX-1'), toSalesDocShipToAddress(order()), toBcHeaderPatch(order({ invoice_number: 'INV-1' }), 'SO-1'), toBcLine('SO-1', line(), 'MAIN')]
     for (const o of outs) {
       const json = JSON.stringify(o)
       for (const k of ['Customer_PO', 'notes', 'customer_po', 'PO-SECRET', 'NOTE-SECRET']) expect(json).not.toContain(k)

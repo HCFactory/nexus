@@ -21,7 +21,7 @@ import { Switch } from '@/components/ui/switch';
 import { bestPrice } from '@/lib/salesOrders/bestPrice';
 import { lineAmounts, orderTotals, taxRatePercent } from '@/lib/salesOrders/lineAmounts';
 import { applyShipTo, customerDefaults } from '@/lib/salesOrders/orderDefaults';
-import { canDelete, editableFields } from '@/lib/salesOrders/orderRules';
+import { autoInvoiceNumber, canDelete, editableFields } from '@/lib/salesOrders/orderRules';
 import type {
   CustomerRow,
   LineDraft,
@@ -215,7 +215,9 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const [status, setStatus] = useState<OrderStatus>(order?.status ?? 'draft');
   const [orderDate, setOrderDate] = useState(order?.order_date ?? today);
   const [requestedDate, setRequestedDate] = useState(order?.requested_delivery_date ?? '');
-  const [invoiceNumber, setInvoiceNumber] = useState(order?.invoice_number ?? '');
+  const [invoiceNumber, setInvoiceNumber] = useState<string | null>(order?.invoice_number ?? null);
+  const invoiceAtFocus = useRef<{ value: string | null; shown: string }>({ value: null, shown: '' });
+  const [invoiceChange, setInvoiceChange] = useState<{ from: string; to: string } | null>(null);
   const [customerPo, setCustomerPo] = useState(order?.customer_po ?? '');
   const [notes, setNotes] = useState(order?.notes ?? '');
   const [draftLines, setDraftLines] = useState<LineDraft[]>(() => {
@@ -246,6 +248,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
 
   const locked = !canEdit || (order ? editableFields(order.status) !== 'all' : false);
   const busy = pending;
+  const invoiceShown = invoiceNumber ?? autoInvoiceNumber(order?.bc_order_number ?? null, customerPo);
 
   const currentCustomer = (): CustomerRow =>
     customers.find((c) => c.id === customerId) ?? customerFromHeader(customerId, customerNumber, defaultShipCode, header);
@@ -408,7 +411,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         status,
         order_date: orderDate,
         requested_delivery_date: requestedDate || null,
-        invoice_number: invoiceNumber.trim() || null,
+        invoice_number: invoiceNumber?.trim() || null,
         customer_po: customerPo,
         notes,
         lines: draftLines,
@@ -532,11 +535,17 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                 <Label htmlFor="so-invoice" className={LABEL}>Invoice # (Ext. Doc No.)</Label>
                 <Input
                   id="so-invoice"
-                  value={invoiceNumber}
+                  value={invoiceShown}
                   maxLength={35}
-                  placeholder="Same as order number"
+                  placeholder="Set when sent to BC"
                   disabled={locked || busy}
-                  onChange={(e) => setInvoiceNumber(e.target.value)}
+                  onFocus={() => { invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown }; }}
+                  onChange={(e) => setInvoiceNumber(e.target.value === '' ? null : e.target.value)}
+                  onBlur={() => {
+                    if (invoiceNumber !== invoiceAtFocus.current.value) {
+                      setInvoiceChange({ from: invoiceAtFocus.current.shown, to: invoiceShown });
+                    }
+                  }}
                 />
               </div>
               <div className="space-y-1.5">
@@ -701,6 +710,30 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           )}
         </div>
       </form>
+
+      <Dialog open={invoiceChange !== null} onOpenChange={(o) => { if (!o) setInvoiceChange(null); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Change invoice number?</DialogTitle>
+            <DialogDescription>
+              {`You changed the invoice number from ${invoiceChange?.from ?? ''} to ${invoiceChange?.to ?? ''}. Keep it?`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => { setInvoiceNumber(invoiceAtFocus.current.value); setInvoiceChange(null); }}
+            >
+              Undo
+            </Button>
+            <Button type="button" size="sm" onClick={() => setInvoiceChange(null)}>
+              Keep
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmDelete} onOpenChange={(o) => { if (!o && !busy) setConfirmDelete(false); }}>
         <DialogContent showCloseButton={false}>
