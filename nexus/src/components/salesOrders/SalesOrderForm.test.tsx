@@ -626,10 +626,10 @@ describe('SalesOrderForm — layout', () => {
     expect(box.className).not.toMatch(/grid-cols/);
   });
 
-  it('form inputs keep the background in dark mode', () => {
+  it('form inputs use the field colour in dark mode too', () => {
     renderForm();
     for (const l of ['Customer PO', 'Invoice # (Ext. Doc No.)', 'Order date', 'Requested delivery date']) {
-      expect(screen.getByLabelText(l).className).toContain('dark:bg-background');
+      expect(screen.getByLabelText(l).className).toContain('dark:bg-field');
     }
   });
 });

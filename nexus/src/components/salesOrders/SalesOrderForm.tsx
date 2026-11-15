@@ -62,9 +62,9 @@ const POLL_MS = 4000;
 const MAX_POLLS = 15;
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
-const INPUT_CLASS = 'border-input bg-background dark:bg-background';
+const INPUT_CLASS = 'border-input bg-field dark:bg-field';
 const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
+  'h-9 w-full rounded-md border border-input bg-field px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
 
 const HEADER_KEYS: (keyof OrderHeaderDefaults)[] = [
   'bill_name', 'bill_address', 'bill_address_2', 'bill_city', 'bill_state', 'bill_post_code', 'bill_country',

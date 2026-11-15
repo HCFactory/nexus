@@ -55,7 +55,7 @@ export function CustomerPicker({ customers, selectedLabel, disabled, onPick }: P
         placeholder="Pick a customer…"
         autoComplete="off"
         disabled={disabled}
-        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
+        className="h-9 w-full rounded-md border border-input bg-field px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
         onFocus={(e) => {
           e.currentTarget.select();
           setOpen(true);

@@ -15,7 +15,7 @@ interface Props {
 }
 
 const TEXTAREA_CLASS =
-  'w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
+  'w-full rounded-md border border-input bg-field px-3 py-2 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
 
 /** Cmd+Enter (Mac) or Ctrl+Enter (Windows) runs `run`. */
 const onSubmitKey = (run: () => void) => (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

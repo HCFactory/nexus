@@ -9,6 +9,7 @@
 
   /* Core palette — light, cool blue-tinted */
   --background:        oklch(0.985 0.003 240);   /* near-white, slight blue */
+  --field:             oklch(0.985 0.003 240);   /* input/textarea/select fill */
   --surface:           oklch(0.97 0.004 240);    /* panel surface */
   --surface-raised:    oklch(1 0 0);             /* elevated card — pure white */
   --surface-overlay:   oklch(0.995 0.002 240);   /* dropdown/modal */
@@ -100,6 +101,7 @@
   color-scheme: dark;
 
   --background:        oklch(0.18 0.012 240);   /* #1e2130 */
+  --field:             oklch(0.215 0.014 240);  /* inputs a step lighter than the page */
   --surface:           oklch(0.22 0.014 240);
   --surface-raised:    oklch(0.26 0.016 240);
   --surface-overlay:   oklch(0.30 0.018 240);
@@ -179,6 +181,7 @@
   --font-mono: var(--font-geist-mono), 'Geist Mono', monospace;
 
   --color-background: var(--background);
+  --color-field: var(--field);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);

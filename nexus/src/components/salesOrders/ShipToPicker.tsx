@@ -28,7 +28,7 @@ interface Props {
 }
 
 const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
+  'h-9 w-full rounded-md border border-input bg-field px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
 
 const FIELDS: { key: keyof ShipToAddressFields; label: string; maxLength: number }[] = [
   { key: 'ship_to_name', label: 'Name', maxLength: 100 },
@@ -97,7 +97,7 @@ export function ShipToPicker({
                 <Input
                   id={`so-${f.key}`}
                   aria-label={`Ship-to ${f.label.toLowerCase()}`}
-                  className="border-input bg-background dark:bg-background"
+                  className="border-input bg-field dark:bg-field"
                   value={address[f.key]}
                   maxLength={f.maxLength}
                   disabled={disabled}
