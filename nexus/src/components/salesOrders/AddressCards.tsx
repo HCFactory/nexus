@@ -39,7 +39,7 @@ function Card({ title, editing, canEdit, editLabel, onToggle, children }: {
   title: string; editing: boolean; canEdit: boolean; editLabel: string; onToggle: () => void; children: ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">
+    <section className="glass-card rounded-xl p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
         {canEdit &&

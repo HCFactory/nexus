@@ -285,6 +285,25 @@
     -webkit-backdrop-filter: blur(24px) saturate(1.6);
     border: 1px solid var(--glass-border);
   }
+  /* A frosted card: translucent fill, blur, a soft light edge on top and a drop shadow. */
+  .glass-card {
+    background: linear-gradient(150deg, oklch(1 0 0 / 0.08), oklch(1 0 0 / 0.015) 55%), var(--glass-bg);
+    backdrop-filter: blur(18px) saturate(1.5);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    border: 1px solid var(--glass-border);
+    box-shadow: inset 0 1px 0 var(--inset-highlight),
+                0 1px 2px var(--card-shadow-1),
+                0 8px 24px var(--card-shadow-2);
+  }
+  /* Soft blue glows behind glass cards, so the frosting has something to blur. */
+  .glass-backdrop {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(40rem 28rem at 12% 0%, color-mix(in oklch, var(--primary) 16%, transparent), transparent 70%),
+      radial-gradient(36rem 30rem at 95% 45%, color-mix(in oklch, var(--primary) 11%, transparent), transparent 70%),
+      radial-gradient(32rem 24rem at 30% 100%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 70%);
+    background-attachment: local;
+  }
   .blue-glow {
     box-shadow: 0 0 0 1px var(--glow-ring),
                 0 4px 24px var(--glow-shadow);

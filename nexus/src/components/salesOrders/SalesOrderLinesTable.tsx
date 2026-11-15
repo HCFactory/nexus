@@ -150,8 +150,8 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
                   id={optionId(i)}
                   role="option"
                   aria-selected={i === activeIndex}
-                  className={`cursor-pointer px-3 py-1.5 text-sm text-foreground hover:bg-surface-raised ${
-                    i === activeIndex ? 'bg-surface-raised' : ''
+                  className={`cursor-pointer px-3 py-1.5 text-sm ${
+                    i === activeIndex ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-primary/15'
                   }`}
                   onClick={() => pick(item)}
                 >

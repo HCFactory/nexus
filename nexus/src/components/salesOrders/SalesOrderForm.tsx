@@ -198,7 +198,7 @@ function withCurrent(options: Option[], current: string): Option[] {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">
+    <section className="glass-card rounded-xl p-4">
       <h2 className="mb-3 text-sm font-semibold text-foreground">{title}</h2>
       {children}
     </section>
@@ -529,7 +529,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         // `relative` contains absolutely positioned descendants (e.g. the
         // sr-only Notes label); without it they position against the page
         // and stretch the document, adding an extra page scroll.
-        className="relative min-h-0 flex-1 overflow-y-auto p-4"
+        className="glass-backdrop relative min-h-0 flex-1 overflow-y-auto p-4"
         onSubmit={(e) => {
           e.preventDefault();
           save();
@@ -537,7 +537,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
       >
         <div className="mx-auto max-w-6xl space-y-4">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
-            <section className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">
+            <section className="glass-card rounded-xl p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-foreground">
                   {order?.bc_order_number ? `Order ${order.bc_order_number}` : 'Order'}
@@ -572,13 +572,9 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                       className={INPUT_CLASS}
                       value={customerPo}
                       maxLength={100}
-                      aria-describedby="so-customer-po-help"
-                      disabled={locked || busy}
+                        disabled={locked || busy}
                       onChange={(e) => setCustomerPo(e.target.value)}
                     />
-                    <p id="so-customer-po-help" className="text-xs text-foreground-subtle">
-                      Not sent to BC on its own; included in the automatic Invoice #.
-                    </p>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="so-invoice" className={LABEL}>Invoice # (Ext. Doc No.)</Label>

@@ -255,11 +255,11 @@ describe('SalesOrderForm — ship-to', () => {
 });
 
 describe('SalesOrderForm — fields', () => {
-  it('Invoice # placeholder and Customer PO helper text', () => {
+  it('Invoice # placeholder; no Customer PO helper text', () => {
     renderForm();
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('placeholder', 'Set when sent to BC');
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveAttribute('maxlength', '35');
-    expect(screen.getByText('Not sent to BC on its own; included in the automatic Invoice #.')).toBeInTheDocument();
+    expect(screen.queryByText(/Not sent to BC on its own/)).toBeNull();
   });
 
   it('keeps the order date and requested date; document, posting and due dates are gone', () => {
