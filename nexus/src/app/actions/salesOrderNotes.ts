@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import { editScope, NO_PERMISSION, type Fail, type Scope } from '@/lib/salesOrders/editScope';
 import { createServiceClient } from '@/lib/supabase/server';
@@ -101,7 +100,6 @@ export async function addSalesOrderNote(
       .select('*')
       .single();
     if (error || !data) throw new Error(error?.message ?? 'no row returned');
-    revalidatePath('/sales-orders', 'layout');
     const [note] = await withAuthors([data as SalesOrderNoteRow]);
     return { ok: true, note };
   } catch (e) {
@@ -130,7 +128,6 @@ export async function updateSalesOrderNote(
       .select('*')
       .single();
     if (error || !data) throw new Error(error?.message ?? 'no row returned');
-    revalidatePath('/sales-orders', 'layout');
     const [note] = await withAuthors([data as SalesOrderNoteRow]);
     return { ok: true, note };
   } catch (e) {
@@ -152,7 +149,6 @@ export async function deleteSalesOrderNote(noteId: string): Promise<{ ok: true }
       .eq('organization_id', scope.orgId)
       .eq('bc_connection_id', scope.bcConnectionId);
     if (error) throw new Error(error.message);
-    revalidatePath('/sales-orders', 'layout');
     return { ok: true };
   } catch (e) {
     return { ok: false, error: `Could not delete the note: ${errorMessage(e)}` };

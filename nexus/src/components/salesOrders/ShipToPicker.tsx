@@ -42,6 +42,15 @@ const FIELDS: { key: keyof ShipToAddressFields; label: string; maxLength: number
   { key: 'ship_to_phone', label: 'Phone', maxLength: 30 },
 ];
 
+/** The automatic name for a one-off ship-to: "address, city", cut to the name's 100 characters. */
+export function oneOffShipToName(a: Pick<ShipToAddressFields, 'ship_to_address' | 'ship_to_city'>): string {
+  return [a.ship_to_address, a.ship_to_city]
+    .map((s) => (s ?? '').trim())
+    .filter(Boolean)
+    .join(', ')
+    .slice(0, 100);
+}
+
 const valueOf = (c: ShipToChoice) => (c.kind === 'saved' ? `saved:${c.code}` : c.kind);
 const choiceOf = (v: string): ShipToChoice =>
   v.startsWith('saved:') ? { kind: 'saved', code: v.slice('saved:'.length) } : v === 'oneoff' ? { kind: 'oneoff' } : { kind: 'billing' };

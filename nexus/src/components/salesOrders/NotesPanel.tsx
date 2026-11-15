@@ -90,7 +90,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
       )}
 
       {notes.length > 0 && (
-        <ul className="space-y-2">
+        <ul className="max-h-80 space-y-2 overflow-y-auto pr-1">
           {notes.map((n) => (
             <li key={n.id} className="rounded-md border border-border bg-background p-3">
               <div className="flex items-start justify-between gap-2">

@@ -230,6 +230,21 @@ describe('SalesOrderForm — ship-to', () => {
     expect(input.ship_to_address).toBe('5 Pier St');
   });
 
+  it('a one-off name follows the address until the rep types a name', () => {
+    renderForm();
+    pickCustomer('C2 – Beta Bakery');
+    fireEvent.change(shipSelect(), { target: { value: 'oneoff' } });
+    const name = screen.getByLabelText('Ship-to name') as HTMLInputElement;
+    fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '5 Pier St' } });
+    fireEvent.change(screen.getByLabelText('Ship-to city'), { target: { value: 'Hilo' } });
+    expect(name.value).toBe('5 Pier St, Hilo');
+    fireEvent.change(name, { target: { value: 'Pier warehouse' } });
+    fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '7 Pier St' } });
+    expect(name.value).toBe('Pier warehouse');
+    fireEvent.change(name, { target: { value: '' } });
+    expect(name.value).toBe('7 Pier St, Hilo');
+  });
+
   it('does not save the order when saving the ship-to fails', async () => {
     shipActions.saveShipToAction.mockResolvedValue({ ok: false, error: 'BC said no' });
     renderForm();
@@ -323,12 +338,12 @@ describe('SalesOrderForm — fields', () => {
     expect(orderActions.saveSalesOrder.mock.calls[0][0].lines[0].discount_percent).toBeNull();
   });
 
-  it('a synced, unchanged order shows BC’s totals and line amounts', () => {
+  it('a synced, unchanged order shows BC’s totals; line amounts are excl. tax', () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
     expect(totals()).toEqual(['100.00', '8.25', '108.25']);
     expect(screen.getByText('Tax')).toBeInTheDocument();
     expect(screen.queryByText('Tax (estimate)')).toBeNull();
-    expect(screen.getByText('27.00')).toBeInTheDocument();
+    expect(screen.getByText('25.00', { selector: 'td' })).toBeInTheDocument();
   });
 
   it('editing a synced order switches to live totals marked as an estimate', () => {
@@ -376,7 +391,7 @@ describe('SalesOrderForm — fields', () => {
     expect(totals()).toEqual(['0.00', '0.00', '0.00']);
     addItem('P100 – Pesto sauce');
     expect(totals()).toEqual(['12.50', '1.03', '13.53']);
-    expect(screen.getByText('13.53', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.getByText('12.50', { selector: 'td' })).toBeInTheDocument();
   });
 
   it('changing customer (a new estimate) updates the amounts', () => {

@@ -11,10 +11,6 @@ interface Props {
   items: SalesOrderItemOption[];
   locked: boolean;
   onChange: (lines: LineDraft[]) => void;
-  /** The tax % for a line (0 when not given). */
-  taxRate?: (line: LineDraft) => number;
-  /** Show BC's read-back amount incl. tax instead of the live one (the order is synced and unchanged). */
-  showBcAmounts?: boolean;
 }
 
 const cellInput =
@@ -258,11 +254,11 @@ const shownDiscount = (l: LineDraft) => {
   return d === 0 ? '' : String(d);
 };
 
-export function SalesOrderLinesTable({ lines, items, locked, onChange, taxRate, showBcAmounts = false }: Props) {
+export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) {
   const update = (key: string, patch: Partial<LineDraft>) =>
     onChange(lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
-  const amountOf = (l: LineDraft) =>
-    showBcAmounts && l.amount_incl_tax !== null ? l.amount_incl_tax : lineAmounts(l, taxRate?.(l) ?? 0).incl;
+  // Excl. tax: qty × price × (1 − disc), the same figure BC shows as the line amount.
+  const amountOf = (l: LineDraft) => lineAmounts(l, 0).excl;
 
   const addItem = (item: SalesOrderItemOption) =>
     onChange([
@@ -291,8 +287,8 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange, taxRate, 
             <th className="px-3 py-2 font-medium">Item</th>
             <th className="px-3 py-2 text-right font-medium">Qty</th>
             <th className="px-3 py-2 text-right font-medium">Unit price</th>
-            <th className="px-3 py-2 text-right font-medium">Disc %</th>
-            <th className="px-3 py-2 text-right font-medium">Amount incl. tax</th>
+            <th className="py-2 pl-3 pr-1 text-right font-medium">Disc %</th>
+            <th className="whitespace-nowrap py-2 pl-1 pr-3 text-right font-medium">Amount excl. tax</th>
             <th className="w-10 px-3 py-2" />
           </tr>
         </thead>
@@ -325,7 +321,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange, taxRate, 
                   onCommit={(n) => update(line.key, { unit_price: n })}
                 />
               </td>
-              <td className="w-24 px-3 py-2">
+              <td className="w-24 py-2 pl-3 pr-1">
                 <EffectiveCell
                   label="Disc %"
                   step="0.01"
@@ -335,7 +331,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange, taxRate, 
                   onCommit={(n) => update(line.key, { discount_percent: n })}
                 />
               </td>
-              <td className="whitespace-nowrap px-3 py-2 text-right text-foreground-muted">{money(amountOf(line))}</td>
+              <td className="whitespace-nowrap py-2 pl-1 pr-3 text-right text-foreground-muted">{money(amountOf(line))}</td>
               <td className="px-3 py-2 text-right">
                 <button
                   type="button"

@@ -26,16 +26,16 @@ const setup = (lines: LineDraft[], locked = false) => {
 };
 
 /** The table with its lines held in state, as the form does. */
-function Stateful({ initial, taxRate }: { initial: LineDraft[]; taxRate?: (l: LineDraft) => number }) {
+function Stateful({ initial }: { initial: LineDraft[] }) {
   const [lines, setLines] = useState(initial);
-  return <SalesOrderLinesTable lines={lines} items={items} locked={false} onChange={setLines} taxRate={taxRate} />;
+  return <SalesOrderLinesTable lines={lines} items={items} locked={false} onChange={setLines} />;
 }
 const amountCell = () => screen.getAllByRole('row')[1].querySelectorAll('td')[4];
 
 describe('SalesOrderLinesTable', () => {
   it('shows the exact headers', () => {
     setup([]);
-    for (const h of ['Item', 'Qty', 'Unit price', 'Disc %', 'Amount incl. tax']) {
+    for (const h of ['Item', 'Qty', 'Unit price', 'Disc %', 'Amount excl. tax']) {
       expect(screen.getByText(h)).toBeInTheDocument();
     }
   });
@@ -101,22 +101,12 @@ describe('SalesOrderLinesTable', () => {
     expect(price.value).toBe('12.50');
   });
 
-  it('the amount incl. tax is live: qty × effective price less discount, plus tax', () => {
+  it('the amount excl. tax is live: qty × effective price less discount, no tax', () => {
     setup([line({ quantity: 2, unit_price: 10, discount_percent: 5 })]);
     expect(amountCell()).toHaveTextContent('19.00');
     cleanup();
-    render(<SalesOrderLinesTable lines={[line({ quantity: 1, estimate_price: 2.73 })]} items={items} locked={false} onChange={vi.fn()} taxRate={() => 0.5} />);
-    expect(amountCell()).toHaveTextContent('2.74');
-    expect(screen.queryByLabelText('Amount incl. tax')).toBeNull();
-  });
-
-  it('shows BC’s amount only when asked to (synced and unchanged)', () => {
-    const l = line({ quantity: 2, unit_price: 10, amount_incl_tax: 21.5 });
-    render(<SalesOrderLinesTable lines={[l]} items={items} locked={false} onChange={vi.fn()} showBcAmounts />);
-    expect(amountCell()).toHaveTextContent('21.50');
-    cleanup();
-    setup([l]);
-    expect(amountCell()).toHaveTextContent('20.00');
+    setup([line({ quantity: 1, estimate_price: 2.73, amount_incl_tax: 2.74 })]);
+    expect(amountCell()).toHaveTextContent('2.73');
   });
 
   it('changing quantity updates the amount cell without a save and clears BC’s values', () => {

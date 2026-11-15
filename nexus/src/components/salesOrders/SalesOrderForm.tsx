@@ -37,7 +37,7 @@ import { BillingCard, ShipToCard } from './AddressCards';
 import { CustomerPicker, customerLabel } from './CustomerPicker';
 import { NotesPanel } from './NotesPanel';
 import { SalesOrderLinesTable } from './SalesOrderLinesTable';
-import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
+import { oneOffShipToName, type ShipToAddressFields, type ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
 
@@ -236,6 +236,8 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   // Which customer pick is current, and whether the rep chose a ship-to since; read only in async callbacks.
   const pickToken = useRef(0);
   const shipTouched = useRef(false);
+  // A one-off ship-to's name follows its address until the rep types a name.
+  const shipNameTyped = useRef(true);
 
   const syncState = order?.sync_state;
   const orderId = order?.id;
@@ -351,7 +353,8 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     shipTouched.current = true;
     setShipChoice(choice);
     if (choice.kind === 'oneoff') {
-      setHeader((h) => ({ ...h, ship_to_code: '' }));
+      shipNameTyped.current = false;
+      setHeader((h) => ({ ...h, ship_to_code: '', ship_to_name: oneOffShipToName(h) }));
       return;
     }
     setSaveToCustomer(false);
@@ -362,6 +365,14 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     }
     const row = shipTos.find((r) => r.code === choice.code);
     if (row) setHeader((h) => applyShipTo(h, customer, row, companyLocation));
+  }
+
+  function changeShipAddress(patch: Partial<ShipToAddressFields>) {
+    if ('ship_to_name' in patch) shipNameTyped.current = (patch.ship_to_name ?? '') !== '';
+    setHeader((h) => {
+      const next = { ...h, ...patch };
+      return shipNameTyped.current ? next : { ...next, ship_to_name: oneOffShipToName(next) };
+    });
   }
 
   function save() {
@@ -490,11 +501,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             {order ? order.bc_order_number || 'Not yet in BC' : 'New sales order'}
           </h1>
         </div>
-        {canEdit && order && canDelete(order.status) && (
-          <Button type="button" variant="outline" disabled={busy} onClick={() => setConfirmDelete(true)}>
-            Delete
-          </Button>
-        )}
         {canEdit && (
           <Button type="submit" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
         )}
@@ -510,6 +516,11 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             onRetry={() => runSync(false)}
             onOverwrite={() => runSync(true)}
           />
+        )}
+        {canEdit && order && canDelete(order.status) && (
+          <Button type="button" variant="outline" disabled={busy} onClick={() => setConfirmDelete(true)}>
+            Delete
+          </Button>
         )}
       </header>
 
@@ -564,57 +575,61 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                     onPick={pickCustomer}
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="so-customer-po" className={LABEL}>Customer PO</Label>
-                  <Input
-                    id="so-customer-po"
-                    className={INPUT_CLASS}
-                    value={customerPo}
-                    maxLength={100}
-                    aria-describedby="so-customer-po-help"
-                    disabled={locked || busy}
-                    onChange={(e) => setCustomerPo(e.target.value)}
-                  />
-                  <p id="so-customer-po-help" className="text-xs text-foreground-subtle">
-                    Not sent to BC on its own; included in the automatic Invoice #.
-                  </p>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="so-customer-po" className={LABEL}>Customer PO</Label>
+                    <Input
+                      id="so-customer-po"
+                      className={INPUT_CLASS}
+                      value={customerPo}
+                      maxLength={100}
+                      aria-describedby="so-customer-po-help"
+                      disabled={locked || busy}
+                      onChange={(e) => setCustomerPo(e.target.value)}
+                    />
+                    <p id="so-customer-po-help" className="text-xs text-foreground-subtle">
+                      Not sent to BC on its own; included in the automatic Invoice #.
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="so-invoice" className={LABEL}>Invoice # (Ext. Doc No.)</Label>
+                    <Input
+                      id="so-invoice"
+                      className={INPUT_CLASS}
+                      value={invoiceShown}
+                      maxLength={35}
+                      placeholder="Set when sent to BC"
+                      disabled={locked || busy}
+                      onFocus={() => { invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown }; }}
+                      onChange={(e) => setInvoiceNumber(e.target.value === '' ? null : e.target.value)}
+                      onBlur={() => {
+                        if (invoiceNumber !== invoiceAtFocus.current.value && invoiceAtFocus.current.shown !== invoiceShown) {
+                          setInvoiceChange({ from: invoiceAtFocus.current.shown, to: invoiceShown });
+                        }
+                      }}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="so-invoice" className={LABEL}>Invoice # (Ext. Doc No.)</Label>
-                  <Input
-                    id="so-invoice"
-                    className={INPUT_CLASS}
-                    value={invoiceShown}
-                    maxLength={35}
-                    placeholder="Set when sent to BC"
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <SelectField
+                    id="so-shipment_method_code"
+                    label="Delivery method"
+                    value={header.shipment_method_code}
+                    options={selectOptions.shipmentMethods ?? []}
                     disabled={locked || busy}
-                    onFocus={() => { invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown }; }}
-                    onChange={(e) => setInvoiceNumber(e.target.value === '' ? null : e.target.value)}
-                    onBlur={() => {
-                      if (invoiceNumber !== invoiceAtFocus.current.value && invoiceAtFocus.current.shown !== invoiceShown) {
-                        setInvoiceChange({ from: invoiceAtFocus.current.shown, to: invoiceShown });
-                      }
-                    }}
+                    onChange={(v) => setField('shipment_method_code', v)}
                   />
-                </div>
-                <SelectField
-                  id="so-shipment_method_code"
-                  label="Delivery method"
-                  value={header.shipment_method_code}
-                  options={selectOptions.shipmentMethods ?? []}
-                  disabled={locked || busy}
-                  onChange={(v) => setField('shipment_method_code', v)}
-                />
-                <div className="space-y-1.5">
-                  <Label htmlFor="so-requested-date" className={LABEL}>Requested delivery date</Label>
-                  <Input
-                    id="so-requested-date"
-                    type="date"
-                    className={INPUT_CLASS}
-                    value={requestedDate}
-                    disabled={locked || busy}
-                    onChange={(e) => setRequestedDate(e.target.value)}
-                  />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="so-requested-date" className={LABEL}>Requested delivery date</Label>
+                    <Input
+                      id="so-requested-date"
+                      type="date"
+                      className={INPUT_CLASS}
+                      value={requestedDate}
+                      disabled={locked || busy}
+                      onChange={(e) => setRequestedDate(e.target.value)}
+                    />
+                  </div>
                 </div>
               </div>
             </section>
@@ -630,8 +645,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
               items={items}
               locked={locked || busy}
               onChange={setDraftLines}
-              taxRate={taxRate}
-              showBcAmounts={showBc}
             />
             <dl className="ml-auto mt-4 grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 text-sm">
               <dt className="text-foreground-muted">Subtotal</dt>
@@ -659,7 +672,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
               canSaveToCustomer={canSaveShipTo}
               disabled={locked || busy}
               onChoose={chooseShipTo}
-              onAddressChange={(patch) => setHeader((h) => ({ ...h, ...patch }))}
+              onAddressChange={changeShipAddress}
               onSaveToCustomerChange={setSaveToCustomer}
             />
           </div>
