@@ -162,8 +162,8 @@
   --card-shadow-1: oklch(0 0 0 / 0.3);
   --card-shadow-2: oklch(0 0 0 / 0.2);
   --inset-highlight: oklch(1 0 0 / 0.06);
-  --liquid-glow: oklch(1 0 0 / 0.18);
-  --liquid-edge: oklch(1 0 0 / 0.4);
+  --liquid-glow: oklch(1 0 0 / 0.06);
+  --liquid-edge: oklch(1 0 0 / 0.18);
   --liquid-tint: oklch(1 0 0 / 0.045);
 
   --sidebar:           oklch(0.20 0.014 240);
