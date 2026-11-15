@@ -6,24 +6,19 @@ import { StatusSelect } from './StatusSelect';
 afterEach(cleanup);
 
 describe('StatusSelect', () => {
-  it('shows the five labels with their colours', () => {
+  it('shows the five labels', () => {
     render(<StatusSelect value="draft" onChange={() => {}} />);
-    const expected: [string, string][] = [
-      ['Draft', 'gray'],
-      ['Final', 'yellow'],
-      ['Pulled', 'orange'],
-      ['Shipped', 'blue'],
-      ['Invoiced', 'green'],
-    ];
-    for (const [label, colour] of expected) {
-      const option = screen.getByRole('option', { name: label });
-      expect(option.className).toContain(`bg-${colour}-`);
+    for (const label of ['Draft', 'Final', 'Pulled', 'Shipped', 'Invoiced']) {
+      expect(screen.getByRole('option', { name: label })).toBeInTheDocument();
     }
   });
 
-  it('colours the select by the current status', () => {
+  it('is a glass pill whose label is coloured by the current status, with room for the chevron', () => {
     render(<StatusSelect value="final" onChange={() => {}} />);
-    expect(screen.getByRole('combobox', { name: 'Status' }).className).toContain('bg-yellow-');
+    const select = screen.getByRole('combobox', { name: 'Status' });
+    expect(select.className).toContain('text-yellow-');
+    expect(select.className).toContain('rounded-full');
+    expect(select.className).toContain('pr-9');
   });
 
   it('Shipped and Invoiced cannot be chosen by hand', () => {

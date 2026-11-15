@@ -11,6 +11,8 @@ const orderActions = vi.hoisted(() => ({
   deleteSalesOrder: vi.fn(),
   retrySalesOrderSync: vi.fn(),
   overwriteBcWithNexus: vi.fn(),
+  // Never resolves by default: the form keeps the context's lines (each test sets its own when it matters).
+  getSalesOrderPriceLines: vi.fn((): Promise<SalesPriceListLineRow[]> => new Promise(() => {})),
 }));
 vi.mock('@/app/actions/salesOrderNotes', () => ({ addSalesOrderNote: vi.fn(), updateSalesOrderNote: vi.fn(), deleteSalesOrderNote: vi.fn() }));
 const shipActions = vi.hoisted(() => ({ refreshShipTos: vi.fn(), saveShipToAction: vi.fn() }));
@@ -361,6 +363,15 @@ describe('SalesOrderForm — fields', () => {
     expect(priceInputs()).toEqual(['11.25']);
     fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '3' } });
     expect(priceInputs()).toEqual(['12.50']);
+  });
+
+  it('picking a customer loads that customer’s price lines and prices new lines from them', async () => {
+    orderActions.getSalesOrderPriceLines.mockResolvedValueOnce([priceLine({ source_type: 'Customer', source_no: 'C2', unit_price: 7 })]);
+    renderForm();
+    pickCustomer('C2 – Beta Bakery');
+    expect(orderActions.getSalesOrderPriceLines).toHaveBeenCalledWith('C2');
+    addItem('P100 – Pesto sauce');
+    await waitFor(() => expect(priceInputs()).toEqual(['7.00']));
   });
 
   it('switching customer drops BC’s price for the estimate; switching back restores it', () => {

@@ -35,6 +35,7 @@ import {
   deleteSalesOrder,
   getSalesOrder,
   getSalesOrderFormContext,
+  getSalesOrderPriceLines,
   listSalesOrders,
   overwriteBcWithNexus,
   retrySalesOrderSync,
@@ -585,9 +586,13 @@ describe('reads', () => {
         { id: 'i2', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '2000', display_name: 'Old', unit_price: 1, base_unit_of_measure_code: 'EA', blocked: true },
       ],
       business_central_sales_price_list_lines: [
-        { id: 'p1', organization_id: 'org-1', bc_connection_id: 'conn-1', item_number: '1000', source_no: 'WHSL', unit_price: 1.5 },
-        { id: 'p2', organization_id: 'org-2', bc_connection_id: 'conn-1', item_number: '1000', source_no: 'WHSL', unit_price: 1 },
-        { id: 'p3', organization_id: 'org-1', bc_connection_id: 'conn-2', item_number: '1000', source_no: 'WHSL', unit_price: 1 },
+        { id: 'p1', organization_id: 'org-1', bc_connection_id: 'conn-1', item_number: '1000', source_type: 'All Customers', source_no: '', unit_price: 1.5 },
+        { id: 'p2', organization_id: 'org-2', bc_connection_id: 'conn-1', item_number: '1000', source_type: 'All Customers', source_no: '', unit_price: 1 },
+        { id: 'p3', organization_id: 'org-1', bc_connection_id: 'conn-2', item_number: '1000', source_type: 'All Customers', source_no: '', unit_price: 1 },
+        // A price group's and a customer's lines load per customer, not in the context.
+        { id: 'p4', organization_id: 'org-1', bc_connection_id: 'conn-1', item_number: '1000', source_type: 'Customer Price Group', source_no: 'WHSL', unit_price: 1.2 },
+        { id: 'p5', organization_id: 'org-1', bc_connection_id: 'conn-1', item_number: '1000', source_type: 'Customer', source_no: 'C1', unit_price: 1.1 },
+        { id: 'p6', organization_id: 'org-1', bc_connection_id: 'conn-1', item_number: '1000', source_type: 'Customer', source_no: 'C2', unit_price: 1.3 },
       ],
       business_central_tax_area_lines: [
         { id: 'a1', organization_id: 'org-1', bc_connection_id: 'conn-1', tax_area_code: 'HI-HNL-WHSL', tax_jurisdiction_code: 'HI-HN-WHSL' },
@@ -605,6 +610,11 @@ describe('reads', () => {
     expect(ctx.customers.map((c) => c.id)).toEqual(['c1', 'c2', 'c3']);
     expect(ctx.customers[0].customer_price_group).toBe('WHSL');
     expect(ctx.priceListLines.map((l) => l.id)).toEqual(['p1']);
+    // One customer's lines: All Customers + its own + its price group's; never another customer's.
+    expect((await getSalesOrderPriceLines('C1')).map((l) => l.id).sort()).toEqual(['p1', 'p4', 'p5']);
+    expect((await getSalesOrderPriceLines('C2')).map((l) => l.id).sort()).toEqual(['p1', 'p6']);
+    expect((await getSalesOrderPriceLines('')).map((l) => l.id)).toEqual(['p1']);
+    expect((await getSalesOrderPriceLines('C1')).find((l) => l.id === 'p4')?.unit_price).toBe(1.2);
     expect(ctx.items).toEqual([
       { bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', tax_group_code: 'TAXABLE' },
     ]);

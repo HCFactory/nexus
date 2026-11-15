@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { getSalesOrder, getSalesOrderFormContext } from '@/app/actions/salesOrders';
+import { getSalesOrder, getSalesOrderFormContext, getSalesOrderPriceLines } from '@/app/actions/salesOrders';
 import { listSalesOrderNotes } from '@/app/actions/salesOrderNotes';
 import { listShipTos } from '@/app/actions/shipToAddresses';
 import { SalesOrderForm } from '@/components/salesOrders/SalesOrderForm';
@@ -16,9 +16,11 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   if (!found) notFound();
   const { order, lines } = found;
   // Ship-tos need customer view permission; without it the picker just lists none.
-  const [shipTos, notes] = await Promise.all([
+  // Price lines for this order's customer only (the context carries just the All Customers ones).
+  const [shipTos, notes, priceListLines] = await Promise.all([
     listShipTos(order.customer_number).catch(() => []),
     listSalesOrderNotes(order.id).catch(() => []),
+    getSalesOrderPriceLines(order.customer_number).catch(() => context.priceListLines),
   ]);
 
   return (
@@ -28,7 +30,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
       key={`${order.id}:${order.local_version}`}
       order={order}
       lines={lines}
-      context={context}
+      context={{ ...context, priceListLines }}
       shipTos={shipTos}
       notes={notes}
       canEdit={gate.access.canEditSalesOrders}

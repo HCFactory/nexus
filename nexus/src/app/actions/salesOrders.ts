@@ -18,6 +18,7 @@ import { canChangeStatus, canDelete, editableFields, todayIn } from '@/lib/sales
 import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
 import { SAVE_UNFINISHED, isUnfinishedSave } from '@/lib/salesOrders/saveMarker';
 import { fetchAll } from '@/lib/supabase/fetchAll';
+import { SOURCE_ALL_CUSTOMERS, SOURCE_CUSTOMER, SOURCE_PRICE_GROUP } from '@/lib/businessCentral/priceLists/constants';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type { ListKey } from '@/types/customerReferences';
 import type {
@@ -283,6 +284,65 @@ function mostUsedLocation(customers: CustomerRow[]): string {
   return best;
 }
 
+type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * Price-list lines from the All Customers lists, plus the given (source type, source no) pairs
+ * (a customer's own lists, its price group's lists). Numbers come back as numbers.
+ */
+async function priceLinesFor(
+  supabase: Supabase,
+  scope: Scope,
+  sources: { type: string; no: string }[],
+): Promise<SalesPriceListLineRow[]> {
+  const query = (type: string, no?: string) =>
+    fetchAll<SalesPriceListLineRow>(
+      () => {
+        let q = supabase
+          .from('business_central_sales_price_list_lines')
+          .select('*')
+          .eq('organization_id', scope.orgId)
+          .eq('bc_connection_id', scope.bcConnectionId)
+          .eq('source_type', type);
+        if (no !== undefined) q = q.eq('source_no', no);
+        return q.order('price_list_code', { ascending: true }).order('line_no', { ascending: true }).order('id', { ascending: true });
+      },
+      1000,
+      'price list lines',
+    );
+  const groups = await Promise.all([query(SOURCE_ALL_CUSTOMERS), ...sources.map((src) => query(src.type, src.no))]);
+  return groups.flat().map((l) => ({
+    ...l,
+    minimum_quantity: Number(l.minimum_quantity ?? 0),
+    unit_price: Number(l.unit_price ?? 0),
+    line_discount_percent: Number(l.line_discount_percent ?? 0),
+  }));
+}
+
+/**
+ * The price-list lines that can apply to one customer: All Customers lists, the customer's own
+ * lists and its price group's lists. The order form loads these instead of every customer's lines.
+ */
+export async function getSalesOrderPriceLines(customerNumber: string): Promise<SalesPriceListLineRow[]> {
+  const scope = await viewScope();
+  if (!scope) return [];
+  const supabase = await createClient();
+  const number = (customerNumber ?? '').trim();
+  if (!number) return priceLinesFor(supabase, scope, []);
+  const { data, error } = await supabase
+    .from('business_central_customers')
+    .select('customer_price_group')
+    .eq('organization_id', scope.orgId)
+    .eq('bc_connection_id', scope.bcConnectionId)
+    .eq('bc_customer_number', number)
+    .maybeSingle();
+  if (error) throw new Error(`Could not load the customer's price group: ${error.message}`);
+  const group = String((data as { customer_price_group?: string | null } | null)?.customer_price_group ?? '').trim();
+  const sources = [{ type: SOURCE_CUSTOMER, no: number }];
+  if (group) sources.push({ type: SOURCE_PRICE_GROUP, no: group });
+  return priceLinesFor(supabase, scope, sources);
+}
+
 /** Everything the order form needs: customers, sellable items, dropdowns, default location, today. */
 export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext> {
   const scope = await viewScope();
@@ -322,20 +382,9 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
       'items',
     ),
     Promise.all(SELECT_KEYS.map((k) => getSelectOptions(k))),
-    // All customers' lines at once: the lists are small (hundreds of lines).
-    fetchAll<SalesPriceListLineRow>(
-      () =>
-        supabase
-          .from('business_central_sales_price_list_lines')
-          .select('*')
-          .eq('organization_id', scope.orgId)
-          .eq('bc_connection_id', scope.bcConnectionId)
-          .order('price_list_code', { ascending: true })
-          .order('line_no', { ascending: true })
-          .order('id', { ascending: true }),
-      1000,
-      'price list lines',
-    ),
+    // Only the All Customers lists here; a customer's own and price-group lines load with
+    // getSalesOrderPriceLines once the order has a customer.
+    priceLinesFor(supabase, scope, []),
     fetchAll<TaxAreaLine & { id: string }>(
       () =>
         supabase
@@ -372,12 +421,7 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
     selectOptions: Object.fromEntries(SELECT_KEYS.map((k, i) => [k, lists[i]])),
     companyLocation: mostUsedLocation(customers),
     today: todayIn(timeZoneOf(scope)),
-    priceListLines: priceListLines.map((l) => ({
-      ...l,
-      minimum_quantity: Number(l.minimum_quantity ?? 0),
-      unit_price: Number(l.unit_price ?? 0),
-      line_discount_percent: Number(l.line_discount_percent ?? 0),
-    })),
+    priceListLines,
     taxAreaLines: taxAreaLines.map((l) => ({ tax_area_code: l.tax_area_code, tax_jurisdiction_code: l.tax_jurisdiction_code })),
     taxDetails: taxDetails.map((d) => ({
       tax_jurisdiction_code: d.tax_jurisdiction_code,

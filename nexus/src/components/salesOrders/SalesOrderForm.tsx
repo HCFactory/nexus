@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 
 import {
   deleteSalesOrder,
+  getSalesOrderPriceLines,
   overwriteBcWithNexus,
   retrySalesOrderSync,
   saveSalesOrder,
@@ -208,7 +209,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo, notes = [] }: Props) {
   const router = useRouter();
-  const { customers, items, selectOptions, companyLocation, today, priceListLines, taxAreaLines, taxDetails } = context;
+  const { customers, items, selectOptions, companyLocation, today, taxAreaLines, taxDetails } = context;
   const initialCustomer = order ? customers.find((c) => c.id === order.customer_id) ?? null : null;
 
   const [customerId, setCustomerId] = useState(order?.customer_id ?? '');
@@ -258,6 +259,20 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
 
   const currentCustomer = (): CustomerRow =>
     customers.find((c) => c.id === customerId) ?? customerFromHeader(customerId, customerNumber, defaultShipCode, header);
+
+  // Price-list lines for the chosen customer only; a customer switch fetches the new customer's.
+  // Until they arrive, the other customer's lines simply don't match (bestPrice filters by customer).
+  const [priceListLines, setPriceListLines] = useState(context.priceListLines);
+  const priceLinesFor = useRef(order?.customer_number ?? '');
+  useEffect(() => {
+    if (customerNumber === priceLinesFor.current) return;
+    priceLinesFor.current = customerNumber;
+    let current = true;
+    getSalesOrderPriceLines(customerNumber)
+      .then((rows) => { if (current) setPriceListLines(rows); })
+      .catch((e: unknown) => console.error('[sales-orders] could not load price lines:', e));
+    return () => { current = false; };
+  }, [customerNumber]);
 
   // The price estimate for blank lines: BC's best price from the customer's price lists, else the item price.
   const priceGroup = customers.find((c) => c.id === customerId)?.customer_price_group ?? '';
@@ -519,16 +534,18 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
               <Button type="submit" variant="blue-glass" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
             )}
             {canEdit && order && canDelete(order.status) && (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="icon"
                 aria-label="Delete order"
                 title="Delete order"
                 disabled={busy}
                 onClick={() => setConfirmDelete(true)}
-                className="inline-flex size-9 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
+                className="text-foreground-muted! hover:text-destructive!"
               >
                 <Trash2 className="size-4" />
-              </button>
+              </Button>
             )}
           </div>
         </div>
