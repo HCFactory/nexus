@@ -179,6 +179,8 @@ export interface BcClient {
     etag: string,
   ): Promise<BcItem>;
   deleteItem(itemId: string, etag: string): Promise<void>;
+  /** POST a bound action (no body, 204 expected). `path` is company-relative, e.g. `/salesOrders(<id>)/Microsoft.NAV.shipAndInvoice`. */
+  invokeAction(path: string): Promise<void>;
   listItemCategories(options?: {
     top?: number;
   }): Promise<BcListResponse<BcItemCategory>>;
@@ -407,6 +409,7 @@ export function createBcClient(config: BcClientConfig): BcClient {
         method: "DELETE",
         headers: { "If-Match": etag },
       }),
+    invokeAction: (path) => request<void>(companyPath(path), { method: "POST" }),
     listItemCategories: (options = {}) =>
       request<BcListResponse<BcItemCategory>>(
         withQuery(companyPath("/itemCategories"), options),

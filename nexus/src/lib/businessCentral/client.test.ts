@@ -229,6 +229,40 @@ describe('Business Central client', () => {
 
     expect(result).toEqual([]);
   });
+
+  it('invokes a company-scoped action with POST and no body', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = createBcClient({ ...config, fetchImpl });
+
+    await expect(client.invokeAction('/salesOrders(abc-123)/Microsoft.NAV.shipAndInvoice')).resolves.toBeUndefined();
+
+    const [url, init] = fetchImpl.mock.calls[1];
+    expect(String(url)).toBe(
+      'https://api.businesscentral.dynamics.com/v2.0/sandbox/api/v2.0/companies(company-id)/salesOrders(abc-123)/Microsoft.NAV.shipAndInvoice'
+    );
+    expect(init?.method).toBe('POST');
+    expect(init?.body).toBeUndefined();
+  });
+
+  it('surfaces a BC 400 refusal message from invokeAction', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { error: { code: 'BadRequest', message: 'Posting Date is not within your range of allowed posting dates.' } },
+          { status: 400 }
+        )
+      );
+    const client = createBcClient({ ...config, fetchImpl });
+
+    await expect(client.invokeAction('/salesOrders(abc)/Microsoft.NAV.shipAndInvoice')).rejects.toThrow(
+      /allowed posting dates/
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
