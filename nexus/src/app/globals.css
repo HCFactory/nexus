@@ -162,7 +162,7 @@
   --inset-highlight: oklch(1 0 0 / 0.06);
   --liquid-glow: oklch(1 0 0 / 0.3);
   --liquid-edge: oklch(1 0 0 / 0.55);
-  --liquid-tint: oklch(1 0 0 / 0.03);
+  --liquid-tint: oklch(1 0 0 / 0.1);
 
   --sidebar:           oklch(0.20 0.014 240);
   --sidebar-foreground: var(--foreground);

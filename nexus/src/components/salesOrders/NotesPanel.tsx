@@ -25,7 +25,11 @@ const onSubmitKey = (run: () => void) => (e: React.KeyboardEvent<HTMLTextAreaEle
   }
 };
 
-const ICON_BUTTON = 'text-foreground-muted! hover:text-foreground!';
+/** Plain icon buttons (no glass): blue on hover for edit, red for delete. */
+const ICON_BUTTON =
+  'inline-flex size-6 items-center justify-center rounded-md text-foreground-muted transition-colors disabled:opacity-50';
+const EDIT_HOVER = 'hover:bg-primary/15 hover:text-primary';
+const DELETE_HOVER = 'hover:bg-destructive/15 hover:text-destructive';
 
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -121,28 +125,24 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
                 </p>
                 {canEdit && editingId !== n.id && (
                   <div className="-mr-1 flex">
-                    <Button
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className={ICON_BUTTON}
+                      className={`${ICON_BUTTON} ${EDIT_HOVER}`}
                       aria-label="Edit note"
                       disabled={busy}
                       onClick={() => { setEditingId(n.id); setEditText(n.body); setError(null); }}
                     >
                       <Pencil className="size-3.5" />
-                    </Button>
-                    <Button
+                    </button>
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon-xs"
-                      className={ICON_BUTTON}
+                      className={`${ICON_BUTTON} ${DELETE_HOVER}`}
                       aria-label="Delete note"
                       disabled={busy}
                       onClick={() => setDeleting(n)}
                     >
                       <Trash2 className="size-3.5" />
-                    </Button>
+                    </button>
                   </div>
                 )}
               </div>
