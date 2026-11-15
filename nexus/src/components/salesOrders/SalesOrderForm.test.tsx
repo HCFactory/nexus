@@ -139,10 +139,8 @@ describe('SalesOrderForm — picking a customer', () => {
     expect(billing().getByLabelText('Contact no.')).toHaveValue('CT1');
     expect(billing().getByLabelText('Email CC')).toHaveValue('cc@acme.test');
     expect(screen.getByLabelText('Payment terms')).toHaveValue('NET30');
-    expect(screen.getByLabelText('Shipment method')).toHaveValue('UPS');
+    expect(screen.getByLabelText('Delivery method')).toHaveValue('UPS');
     expect(screen.getByLabelText('Tax area')).toHaveValue('TX');
-    expect(screen.getByLabelText('Gen. bus. posting group')).toHaveValue('DOM');
-    expect(screen.getByLabelText('Customer posting group')).toHaveValue('DOMESTIC');
     expect(screen.getByRole('switch', { name: 'Tax liable' })).toBeChecked();
 
     expect(shipActions.refreshShipTos).toHaveBeenCalledTimes(1);
@@ -243,16 +241,16 @@ describe('SalesOrderForm — fields', () => {
     expect(screen.getByText('Nexus and Bill.com only, not sent to BC')).toBeInTheDocument();
   });
 
-  it('dates: document and posting are set when invoiced; due date comes from BC', () => {
+  it('keeps the order date and requested date; document, posting and due dates are gone', () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
-    expect(screen.getAllByText('Set when invoiced')).toHaveLength(2);
-    expect(screen.getByTestId('due-date')).toHaveTextContent('2026-12-10');
     expect(screen.getByLabelText('Order date')).toHaveValue('2026-11-10');
+    expect(screen.queryByText(/Due date/)).toBeNull();
+    expect(screen.queryByText(/Posting date/)).toBeNull();
+    expect(screen.queryByText(/Document date/)).toBeNull();
   });
 
-  it('due date shows — before BC has one; a new order defaults its order date to today', () => {
+  it('a new order defaults its order date to today', () => {
     renderForm();
-    expect(screen.getByTestId('due-date')).toHaveTextContent('—');
     expect(screen.getByLabelText('Order date')).toHaveValue('2026-11-13');
   });
 
@@ -509,5 +507,67 @@ describe('SalesOrderForm — invoice #', () => {
     expect(invoice().value).toBe('INV-1');
     fireEvent.change(invoice(), { target: { value: '' } });
     expect(invoice().value).toBe('SO-10234 / PO-1');
+  });
+});
+
+describe('SalesOrderForm — layout', () => {
+  it('the title reads Order W-100531', () => {
+    renderForm({ order: order({ bc_order_number: 'W-100531' }), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getByRole('heading', { name: 'Order W-100531' })).toBeInTheDocument();
+  });
+
+  it('the title is just Order before BC assigns a number', () => {
+    renderForm();
+    expect(screen.getByRole('heading', { name: 'Order' })).toBeInTheDocument();
+  });
+
+  it('the Save button sits in the header, submits the form and saves', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'new-1' });
+    renderForm();
+    pickCustomer('C1 – Acme Foods');
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save.closest('header')).not.toBeNull();
+    expect(save).toHaveAttribute('form');
+    expect(screen.getAllByRole('button', { name: 'Save' })).toHaveLength(1);
+    fireEvent.click(save);
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalledTimes(1));
+  });
+
+  it('Delete sits in the header', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    expect(screen.getByRole('button', { name: 'Delete' }).closest('header')).not.toBeNull();
+  });
+
+  it('hides the posting groups and the removed dates', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    for (const t of ['Due date', 'Posting date', 'Gen. bus. posting group', 'Customer posting group']) {
+      expect(screen.queryByText(t)).toBeNull();
+    }
+  });
+
+  it('still saves the hidden posting groups', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'o1' });
+    renderForm();
+    pickCustomer('C1 – Acme Foods');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
+    expect(orderActions.saveSalesOrder.mock.calls[0][0]).toMatchObject({ gen_bus_posting_group: 'DOM', customer_posting_group: 'DOMESTIC' });
+  });
+
+  it('has Delivery method, Order Items and Invoicing', () => {
+    renderForm();
+    expect(screen.getByLabelText('Delivery method')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Order Items' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Invoicing' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Payment terms')).toBeInTheDocument();
+    expect(screen.getByLabelText('Tax area')).toBeInTheDocument();
+  });
+
+  it('orders the Order block fields: Customer PO, Invoice #, Delivery method, Requested delivery date', () => {
+    renderForm();
+    const els = ['Customer PO', 'Invoice # (Ext. Doc No.)', 'Delivery method', 'Requested delivery date'].map((l) => screen.getByLabelText(l));
+    for (let i = 0; i < els.length - 1; i++) {
+      expect(els[i].compareDocumentPosition(els[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
   });
 });

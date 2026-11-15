@@ -18,7 +18,7 @@ interface Props {
 }
 
 const cellInput =
-  'w-full rounded border border-border bg-surface px-2 py-1 text-right text-sm text-foreground disabled:opacity-60';
+  'w-full rounded border border-input bg-background px-2 py-1 text-right text-sm text-foreground disabled:opacity-60';
 const money = (n: number) => n.toFixed(2);
 const LIST_MAX_HEIGHT = 256;
 const LIST_WIDTH = 320;
@@ -103,7 +103,7 @@ function ItemPicker({ items, onPick }: { items: SalesOrderItemOption[]; onPick: 
         placeholder="Add item…"
         aria-label="Add item"
         autoComplete="off"
-        className="w-full rounded border border-dashed border-border bg-surface px-2 py-1 text-sm text-foreground"
+        className="w-full rounded border border-dashed border-input bg-background px-2 py-1 text-sm text-foreground"
         onClick={show}
         onFocus={show}
         onBlur={() => setOpen(false)}

@@ -35,7 +35,7 @@ export function StatusSelect({ value, onChange, disabled = false }: Props) {
       value={value}
       disabled={disabled || fixed}
       onChange={(e) => onChange(e.target.value as OrderStatus)}
-      className={`h-9 rounded-full border px-3 text-sm font-medium disabled:opacity-70 ${STATUS_CLASSES[value]}`}
+      className={`h-8 rounded-full border px-2 py-0.5 text-sm font-medium disabled:opacity-70 ${STATUS_CLASSES[value]}`}
     >
       {ORDER_STATUSES.map((s) => (
         <option key={s} value={s} disabled={!canChangeStatus('draft', s)} className={STATUS_CLASSES[s]}>

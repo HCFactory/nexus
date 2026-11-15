@@ -97,6 +97,7 @@ export function ShipToPicker({
                 <Input
                   id={`so-${f.key}`}
                   aria-label={`Ship-to ${f.label.toLowerCase()}`}
+                  className="border-input bg-background"
                   value={address[f.key]}
                   maxLength={f.maxLength}
                   disabled={disabled}

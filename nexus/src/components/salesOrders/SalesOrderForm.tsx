@@ -56,10 +56,12 @@ interface Props {
 
 type Option = { code: string; label: string };
 
+const FORM_ID = 'sales-order-form';
 const POLL_MS = 4000;
 const MAX_POLLS = 15;
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
+const INPUT_CLASS = 'border-input bg-background';
 const SELECT_CLASS =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
 
@@ -89,14 +91,27 @@ const BILLING_FIELDS: { key: keyof OrderHeaderDefaults; label: string; maxLength
   { key: 'bill_email_cc', label: 'Email CC', maxLength: 80 },
 ];
 
-type TermKey = 'payment_terms_code' | 'shipment_method_code' | 'tax_area_code' | 'gen_bus_posting_group' | 'customer_posting_group';
-const TERM_FIELDS: { key: TermKey; label: string; list: string }[] = [
+type TermKey = 'payment_terms_code' | 'shipment_method_code' | 'tax_area_code';
+const INVOICING_FIELDS: { key: TermKey; label: string; list: string }[] = [
   { key: 'payment_terms_code', label: 'Payment terms', list: 'paymentTerms' },
-  { key: 'shipment_method_code', label: 'Shipment method', list: 'shipmentMethods' },
   { key: 'tax_area_code', label: 'Tax area', list: 'taxAreas' },
-  { key: 'gen_bus_posting_group', label: 'Gen. bus. posting group', list: 'generalBusinessPostingGroups' },
-  { key: 'customer_posting_group', label: 'Customer posting group', list: 'customerPostingGroups' },
 ];
+
+function SelectField({ id, label, value, options, disabled, onChange }: {
+  id: string; label: string; value: string; options: Option[]; disabled: boolean; onChange: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id} className={LABEL}>{label}</Label>
+      <select id={id} className={SELECT_CLASS} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+        <option value="">—</option>
+        {withCurrent(options, value).map((o) => (
+          <option key={o.code} value={o.code}>{o.label}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 const SHIP_ADDRESS_KEYS: (keyof ShipToAddressFields)[] = [
   'ship_to_name', 'ship_to_address', 'ship_to_address_2', 'ship_to_city', 'ship_to_state', 'ship_to_post_code',
@@ -485,6 +500,14 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             {order ? order.bc_order_number || 'Not yet in BC' : 'New sales order'}
           </h1>
         </div>
+        {canEdit && order && canDelete(order.status) && (
+          <Button type="button" variant="outline" disabled={busy} onClick={() => setConfirmDelete(true)}>
+            Delete
+          </Button>
+        )}
+        {canEdit && (
+          <Button type="submit" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+        )}
         <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy} />
         {order && (
           <SyncBadge
@@ -512,6 +535,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
       )}
 
       <form
+        id={FORM_ID}
         // `relative` contains absolutely positioned descendants (e.g. the
         // sr-only Notes label); without it they position against the page
         // and stretch the document, adding an extra page scroll.
@@ -522,154 +546,95 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         }}
       >
         <div className="mx-auto max-w-6xl space-y-4">
-          <Section title="Order">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="so-customer" className={LABEL}>Customer</Label>
-                <CustomerPicker
-                  customers={customers}
-                  selectedLabel={customerLabel(customerNumber, customerName)}
-                  disabled={locked || busy}
-                  onPick={pickCustomer}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="so-invoice" className={LABEL}>Invoice # (Ext. Doc No.)</Label>
-                <Input
-                  id="so-invoice"
-                  value={invoiceShown}
-                  maxLength={35}
-                  placeholder="Set when sent to BC"
-                  disabled={locked || busy}
-                  onFocus={() => { invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown }; }}
-                  onChange={(e) => setInvoiceNumber(e.target.value === '' ? null : e.target.value)}
-                  onBlur={() => {
-                    if (invoiceNumber !== invoiceAtFocus.current.value) {
-                      setInvoiceChange({ from: invoiceAtFocus.current.shown, to: invoiceShown });
-                    }
-                  }}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="so-customer-po" className={LABEL}>Customer PO</Label>
-                <Input
-                  id="so-customer-po"
-                  value={customerPo}
-                  maxLength={100}
-                  aria-describedby="so-customer-po-help"
-                  disabled={locked || busy}
-                  onChange={(e) => setCustomerPo(e.target.value)}
-                />
-                <p id="so-customer-po-help" className="text-xs text-foreground-subtle">
-                  Nexus and Bill.com only, not sent to BC
-                </p>
-              </div>
-            </div>
-          </Section>
-
-          <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
             <section className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">
-              <fieldset disabled={locked || busy} className="min-w-0">
-                <legend className="mb-3 text-sm font-semibold text-foreground">Billing address</legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {BILLING_FIELDS.map((f) => (
-                    <div key={f.key} className={`space-y-1.5 ${f.key === 'bill_address' || f.key === 'bill_address_2' ? 'sm:col-span-2' : ''}`}>
-                      <Label htmlFor={`so-${f.key}`} className={LABEL}>{f.label}</Label>
-                      <Input
-                        id={`so-${f.key}`}
-                        type={f.type ?? 'text'}
-                        value={String(header[f.key] ?? '')}
-                        maxLength={f.maxLength}
-                        onChange={(e) => setField(f.key, e.target.value as never)}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </fieldset>
-            </section>
-
-            <Section title="Dates">
-              <dl className="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-3 text-sm">
-                <dt><Label htmlFor="so-order-date" className={LABEL}>Order date</Label></dt>
-                <dd>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-foreground">
+                  {order?.bc_order_number ? `Order ${order.bc_order_number}` : 'Order'}
+                </h2>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="so-order-date" className={LABEL}>Order date</Label>
                   <Input
                     id="so-order-date"
                     type="date"
+                    className={`${INPUT_CLASS} w-auto`}
                     value={orderDate}
                     disabled={locked || busy}
                     onChange={(e) => setOrderDate(e.target.value)}
                   />
-                </dd>
-                <dt><Label htmlFor="so-requested-date" className={LABEL}>Requested delivery date</Label></dt>
-                <dd>
+                </div>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label htmlFor="so-customer" className={LABEL}>Customer</Label>
+                  <CustomerPicker
+                    customers={customers}
+                    selectedLabel={customerLabel(customerNumber, customerName)}
+                    disabled={locked || busy}
+                    onPick={pickCustomer}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="so-customer-po" className={LABEL}>Customer PO</Label>
+                  <Input
+                    id="so-customer-po"
+                    className={INPUT_CLASS}
+                    value={customerPo}
+                    maxLength={100}
+                    aria-describedby="so-customer-po-help"
+                    disabled={locked || busy}
+                    onChange={(e) => setCustomerPo(e.target.value)}
+                  />
+                  <p id="so-customer-po-help" className="text-xs text-foreground-subtle">
+                    Nexus and Bill.com only, not sent to BC
+                  </p>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="so-invoice" className={LABEL}>Invoice # (Ext. Doc No.)</Label>
+                  <Input
+                    id="so-invoice"
+                    className={INPUT_CLASS}
+                    value={invoiceShown}
+                    maxLength={35}
+                    placeholder="Set when sent to BC"
+                    disabled={locked || busy}
+                    onFocus={() => { invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown }; }}
+                    onChange={(e) => setInvoiceNumber(e.target.value === '' ? null : e.target.value)}
+                    onBlur={() => {
+                      if (invoiceNumber !== invoiceAtFocus.current.value) {
+                        setInvoiceChange({ from: invoiceAtFocus.current.shown, to: invoiceShown });
+                      }
+                    }}
+                  />
+                </div>
+                <SelectField
+                  id="so-shipment_method_code"
+                  label="Delivery method"
+                  value={header.shipment_method_code}
+                  options={selectOptions.shipmentMethods ?? []}
+                  disabled={locked || busy}
+                  onChange={(v) => setField('shipment_method_code', v)}
+                />
+                <div className="space-y-1.5">
+                  <Label htmlFor="so-requested-date" className={LABEL}>Requested delivery date</Label>
                   <Input
                     id="so-requested-date"
                     type="date"
+                    className={INPUT_CLASS}
                     value={requestedDate}
                     disabled={locked || busy}
                     onChange={(e) => setRequestedDate(e.target.value)}
                   />
-                </dd>
-                <dt className={LABEL}>Document date</dt>
-                <dd className="text-foreground-muted">Set when invoiced</dd>
-                <dt className={LABEL}>Posting date</dt>
-                <dd className="text-foreground-muted">Set when invoiced</dd>
-                <dt className={LABEL}>Due date</dt>
-                <dd className="text-foreground">
-                  <span data-testid="due-date">{order?.bc_due_date || '—'}</span>
-                  {order?.bc_due_date && <span className="ml-1 text-xs text-foreground-subtle">(from BC)</span>}
-                </dd>
-              </dl>
+                </div>
+              </div>
+            </section>
+
+            <Section title="Notes">
+              <NotesPanel orderId={order?.id ?? null} canEdit={canEdit} initialNotes={notes} />
             </Section>
           </div>
 
-          <Section title="Ship to">
-            <ShipToPicker
-              rows={shipTos}
-              defaultCode={defaultShipCode}
-              choice={shipChoice}
-              address={shipAddress}
-              saveToCustomer={saveToCustomer}
-              canSaveToCustomer={canSaveShipTo}
-              disabled={locked || busy}
-              onChoose={chooseShipTo}
-              onAddressChange={(patch) => setHeader((h) => ({ ...h, ...patch }))}
-              onSaveToCustomerChange={setSaveToCustomer}
-            />
-          </Section>
-
-          <Section title="Terms & posting">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {TERM_FIELDS.map((f) => (
-                <div key={f.key} className="space-y-1.5">
-                  <Label htmlFor={`so-${f.key}`} className={LABEL}>{f.label}</Label>
-                  <select
-                    id={`so-${f.key}`}
-                    className={SELECT_CLASS}
-                    value={header[f.key]}
-                    disabled={locked || busy}
-                    onChange={(e) => setField(f.key, e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {withCurrent(selectOptions[f.list] ?? [], header[f.key]).map((o) => (
-                      <option key={o.code} value={o.code}>{o.label}</option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-              <div className="flex items-center gap-2 pt-5">
-                <Switch
-                  id="so-tax-liable"
-                  checked={header.tax_liable}
-                  disabled={locked || busy}
-                  onCheckedChange={(v) => setField('tax_liable', v)}
-                />
-                <Label htmlFor="so-tax-liable" className="text-sm">Tax liable</Label>
-              </div>
-            </div>
-          </Section>
-
-          <Section title="Lines">
+          <Section title="Order Items">
             <SalesOrderLinesTable
               lines={shownLines}
               items={items}
@@ -688,20 +653,66 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             </dl>
           </Section>
 
-          <Section title="Notes">
-            <NotesPanel orderId={order?.id ?? null} canEdit={canEdit} initialNotes={notes} />
+          <section className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">
+            <fieldset disabled={locked || busy} className="min-w-0">
+              <legend className="mb-3 text-sm font-semibold text-foreground">Billing address</legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {BILLING_FIELDS.map((f) => (
+                  <div key={f.key} className={`space-y-1.5 ${f.key === 'bill_address' || f.key === 'bill_address_2' ? 'sm:col-span-2' : ''}`}>
+                    <Label htmlFor={`so-${f.key}`} className={LABEL}>{f.label}</Label>
+                    <Input
+                      id={`so-${f.key}`}
+                      className={INPUT_CLASS}
+                      type={f.type ?? 'text'}
+                      value={String(header[f.key] ?? '')}
+                      maxLength={f.maxLength}
+                      onChange={(e) => setField(f.key, e.target.value as never)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+          </section>
+
+          <Section title="Ship to">
+            <ShipToPicker
+              rows={shipTos}
+              defaultCode={defaultShipCode}
+              choice={shipChoice}
+              address={shipAddress}
+              saveToCustomer={saveToCustomer}
+              canSaveToCustomer={canSaveShipTo}
+              disabled={locked || busy}
+              onChoose={chooseShipTo}
+              onAddressChange={(patch) => setHeader((h) => ({ ...h, ...patch }))}
+              onSaveToCustomerChange={setSaveToCustomer}
+            />
           </Section>
 
-          {canEdit && (
-            <div className="flex justify-end gap-2 pb-4">
-              {order && canDelete(order.status) && (
-                <Button type="button" variant="outline" disabled={busy} onClick={() => setConfirmDelete(true)}>
-                  Delete
-                </Button>
-              )}
-              <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+          <Section title="Invoicing">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {INVOICING_FIELDS.map((f) => (
+                <SelectField
+                  key={f.key}
+                  id={`so-${f.key}`}
+                  label={f.label}
+                  value={header[f.key]}
+                  options={selectOptions[f.list] ?? []}
+                  disabled={locked || busy}
+                  onChange={(v) => setField(f.key, v)}
+                />
+              ))}
+              <div className="flex items-center gap-2 pt-5">
+                <Switch
+                  id="so-tax-liable"
+                  checked={header.tax_liable}
+                  disabled={locked || busy}
+                  onCheckedChange={(v) => setField('tax_liable', v)}
+                />
+                <Label htmlFor="so-tax-liable" className="text-sm">Tax liable</Label>
+              </div>
             </div>
-          )}
+          </Section>
         </div>
       </form>
 
