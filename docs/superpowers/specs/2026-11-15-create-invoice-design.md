@@ -113,8 +113,8 @@ On reaching `posted`:
    - **Invoice number:** the BC External Document No. (the order's Invoice #).
    - **Invoice date and due date:** from the posted BC invoice.
    - **Lines:** from **Nexus's order lines** *(decided by the user, 2026-11-15)*. One Bill.com line per order line: item number and description, quantity, and unit price after discount. Price and discount are the line's effective values as Nexus holds them after the last sync (BC's price and discount read back, or the rep's typed values). Because Create invoice only runs on an order that is In BC and unchanged, these match what BC posts. No extra BC read of posted invoice lines is needed.
-   - **Tax:** BC's posted tax amount, as Bill.com's sales tax field if it has one, otherwise a "Sales tax" line.
-   - **Customer PO:** if Bill.com accepts it (O1).
+   - **Tax:** BC's posted tax amount as a non-taxable "Sales tax" line (Bill.com's tax is a rate item and can't take an exact amount; see discovery notes).
+   - **Customer PO:** not sent separately. Bill.com has no PO, notes or custom field on invoices; the Invoice # (automatically `<order #> / <PO>`) carries it. *(User decision, 2026-11-15.)*
    - **Customer email:** not sent. Create with Bill.com's `sendEmail` flag off. O3 confirms in the sandbox that nothing goes to the customer, and that the invoice stays sendable later for project 3.
 3. **Totals must match.** If the Bill.com total that would be created differs from BC's posted total including tax, record the difference as an error (`billcom_failed`) rather than creating a mismatched invoice. Each line's amount is quantity × price after discount, rounded to the cent (the same rule as the order form's amounts). If the lines plus BC's posted tax don't add up to BC's posted total, the step fails with the difference shown, and nobody gets a mismatched invoice.
 4. Record the Bill.com invoice id and go to `done`.
@@ -156,7 +156,8 @@ Sales orders (project 1) and Create invoice go live together.
 1. Apply migrations 060–064 in production.
 2. In production Bill.com, **switch off the BC connector's invoice copying** before the first Nexus invoice. Otherwise invoices appear twice.
 3. Switch Nexus to the production BC connection, then run Customer Sync and the Bill.com customer push so customers are linked.
-4. Invoice one real order end to end and compare BC, Nexus and Bill.com.
+4. Check production's General Ledger Setup (and any User Setup line for the Nexus app user) allows posting today's date.
+5. Invoice one real order end to end and compare BC, Nexus and Bill.com.
 
 ## Open items (resolved during the build)
 
