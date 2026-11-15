@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { BcConflictError, BcReferenceError } from '@/lib/businessCentral/customerReferences/errors'
 import type { BcKey, BcRecord, ReferenceSource } from '@/lib/businessCentral/customerReferences/transport'
 import type { SalesOrderLineRow, SalesOrderRow } from '@/types/salesOrders'
-import { createMarker } from './bcOrderMapping'
+import { HEADER_SNAPSHOT_FIELDS, createMarker, snapshotOf } from './bcOrderMapping'
 import { deleteSalesOrderInBc, syncSalesOrder, type OrderSyncDeps } from './orderSync'
 
 type Row = Record<string, unknown>
@@ -445,8 +445,9 @@ describe('syncSalesOrder: partial failure', () => {
 
 describe('syncSalesOrder: existing order', () => {
   it('marks conflict and sends no patch when BC changed the header', async () => {
-    const { rows } = seedSynced([{ id: 'l1', no: 10000 }])
-    setup(order({ bc_order_number: 'SO900', bc_etag: 'W/"stale"', bc_create_marker: createMarker(ORDER_ID) }), rows)
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    bc.headers.get('SO900')!.fields.Payment_Terms_Code = 'NET60'
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, bc_snapshot: { Payment_Terms_Code: 'NET30' }, bc_create_marker: createMarker(ORDER_ID) }), rows)
 
     const state = await syncSalesOrder(deps, ORDER_ID)
 
@@ -714,7 +715,7 @@ describe('syncSalesOrder: final review fixes', () => {
 
     bc.hooks.before = undefined
     const { rows } = seedSynced([{ id: 'l1', no: 10000 }])
-    setup(order({ bc_order_number: 'SO900', bc_etag: 'W/"stale"' }), rows)
+    setup(order({ bc_order_number: 'SO900', bc_etag: 'W/"stale"', bc_snapshot: { Payment_Terms_Code: 'OLD' } }), rows)
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('conflict')
     expect(orderRow().updated_at).toBe('2026-11-13T10:00:00Z')
 
@@ -761,6 +762,59 @@ describe('syncSalesOrder: final review fixes', () => {
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
     bc.hooks.before = undefined
     expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+  })
+})
+
+describe('syncSalesOrder: conflict check by managed-field values', () => {
+  it('a BC background re-save (header etag changed, values equal) is not a conflict', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    const h = bc.headers.get('SO900')!
+    const snap = snapshotOf(h, HEADER_SNAPSHOT_FIELDS)
+    // BC re-saves the header: new etag, same values
+    bc.headers.set('SO900', { ...h, etag: bc.etag() })
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, bc_snapshot: snap }), rows)
+
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(headerPatches().length).toBeGreaterThan(0)
+  })
+
+  it('a managed header field changed in BC is a conflict, with no BC write', async () => {
+    const { hEtag, rows } = seedSynced([{ id: 'l1', no: 10000 }])
+    const h = bc.headers.get('SO900')!
+    const snap = snapshotOf(h, HEADER_SNAPSHOT_FIELDS)
+    bc.headers.set('SO900', { ...h, etag: bc.etag(), fields: { ...h.fields, Ship_to_Code: 'DOCK' } })
+    setup(order({ bc_order_number: 'SO900', bc_etag: hEtag, bc_snapshot: snap }), rows)
+
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('conflict')
+    expect(orderRow()).toMatchObject({ sync_state: 'conflict', sync_error: 'Changed in BC' })
+    expect(bc.t.patch).not.toHaveBeenCalled()
+    expect(bc.t.create).not.toHaveBeenCalled()
+    expect(bc.t.remove).not.toHaveBeenCalled()
+  })
+
+  it('a retry after the header patch succeeded and a line create failed is not a conflict', async () => {
+    setup(order(), [line({ id: 'l1', position: 1 }), line({ id: 'l2', position: 2, item_number: 'BAD' })])
+    bc.hooks.before = (method, s, arg) => {
+      if (method === 'create' && isLineSource(s) && (arg as Row).No === 'BAD') throw new BcReferenceError(400, 'blocked')
+    }
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('failed')
+    expect(headerPatches()).toHaveLength(1)
+    bc.hooks.before = undefined
+    // and BC re-saves the patched header in the background meanwhile
+    const h = bc.headers.get('SO1001')!
+    bc.headers.set('SO1001', { ...h, etag: bc.etag() })
+
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+  })
+
+  it('stores the BC snapshot on the order and on each line after a sync', async () => {
+    setup(order(), [line({ id: 'l1', position: 1 })])
+    expect(await syncSalesOrder(deps, ORDER_ID)).toBe('synced')
+    expect(orderRow().bc_snapshot).toEqual(snapshotOf(bc.headers.get('SO1001')!, HEADER_SNAPSHOT_FIELDS))
+    expect(orderRow().bc_snapshot).toMatchObject({ Sell_to_Customer_No: 'C100', Ship_to_Code: 'WH1', Payment_Terms_Code: 'NET30', Tax_Liable: true })
+    expect(lineRow('l1')!.bc_snapshot).toEqual({
+      Type: 'Item', No: 'ITEM1', Quantity: 2, Unit_of_Measure_Code: 'PCS', Unit_Price: 5, Line_Discount_Percent: 0, Location_Code: 'MAIN',
+    })
   })
 })
 

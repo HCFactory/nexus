@@ -182,18 +182,69 @@ export function readBack(header: BcRecord, lines: BcRecord[], salesDocument: BcR
   }
 }
 
-/** Stored lines without a bc_line_no were never sent to BC, so they are ignored. */
+/**
+ * The header fields Nexus manages, as page 42 names them: every key
+ * toBcHeaderPatch sends, the customer, and the ship-to (written through
+ * salesDocuments, read back on page 42).
+ */
+export const HEADER_SNAPSHOT_FIELDS: readonly string[] = [
+  'Order_Date', 'External_Document_No',
+  'Sell_to_Address', 'Sell_to_Address_2', 'Sell_to_City', 'Sell_to_County', 'Sell_to_Post_Code',
+  'Sell_to_Country_Region_Code', 'Sell_to_Contact_No', 'Sell_to_Phone_No', 'SellToMobilePhoneNo',
+  'Sell_to_E_Mail', 'EMailCCHCABG',
+  'Payment_Terms_Code', 'Tax_Area_Code', 'Tax_Liable', 'Gen_Bus_Posting_Group', 'Customer_Posting_Group',
+  'Shipment_Method_Code', 'Requested_Delivery_Date', 'Location_Code',
+  'Sell_to_Customer_No',
+  'Ship_to_Code', 'Ship_to_Name', 'Ship_to_Address', 'Ship_to_Address_2', 'Ship_to_City', 'Ship_to_County',
+  'Ship_to_Post_Code', 'Ship_to_Country_Region_Code', 'Ship_to_Contact',
+]
+
+/** The line fields Nexus manages (see toBcLine). */
+export const LINE_SNAPSHOT_FIELDS: readonly string[] = [
+  'Type', 'No', 'Quantity', 'Unit_of_Measure_Code', 'Unit_Price', 'Line_Discount_Percent', 'Location_Code',
+]
+
+/** The listed fields present in `rec`, values copied as-is. */
+export function snapshotOf(rec: BcRecord, fields: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const f of fields) if (f in rec.fields) out[f] = rec.fields[f]
+  return out
+}
+
+function sameValue(stored: unknown, current: unknown): boolean {
+  if (typeof stored === 'number' || typeof current === 'number') return Number(stored) === Number(current)
+  if (typeof stored === 'boolean' || typeof current === 'boolean') return stored === current
+  return String(stored ?? '') === String(current ?? '')
+}
+
+function snapshotDiffers(snapshot: Record<string, unknown>, current: BcRecord): boolean {
+  return Object.entries(snapshot).some(([k, v]) => !sameValue(v, current.fields[k]))
+}
+
+/**
+ * Whether someone changed the order in BC since Nexus last wrote it, judged
+ * by the values of the fields Nexus manages (the snapshot stored after each
+ * write). The header etag is not compared: BC re-saves headers in the
+ * background with no user edit (measured on TEST). A null header snapshot
+ * passes; a line without a snapshot falls back to its etag.
+ * Stored lines without a bc_line_no were never sent to BC, so they are ignored.
+ */
 export function bcChangedOutsideNexus(
-  stored: { bc_etag: string | null; lines: { bc_line_no: number | null; bc_etag: string | null }[] },
+  stored: {
+    bc_snapshot: Record<string, unknown> | null
+    lines: { bc_line_no: number | null; bc_etag: string | null; bc_snapshot: Record<string, unknown> | null }[]
+  },
   current: { header: BcRecord; lines: BcRecord[] },
 ): boolean {
-  if (stored.bc_etag !== current.header.etag) return true
-  const bcByNo = new Map(current.lines.map((l) => [parseLineNo(l), l.etag]))
+  if (stored.bc_snapshot && snapshotDiffers(stored.bc_snapshot, current.header)) return true
+  const bcByNo = new Map(current.lines.map((l) => [parseLineNo(l), l]))
   const known = new Set<number>()
   for (const s of stored.lines) {
     if (s.bc_line_no === null) continue
     known.add(s.bc_line_no)
-    if (bcByNo.get(s.bc_line_no) !== s.bc_etag) return true
+    const rec = bcByNo.get(s.bc_line_no)
+    if (!rec) return true
+    if (s.bc_snapshot ? snapshotDiffers(s.bc_snapshot, rec) : rec.etag !== s.bc_etag) return true
   }
   for (const no of bcByNo.keys()) if (!known.has(no)) return true
   return false

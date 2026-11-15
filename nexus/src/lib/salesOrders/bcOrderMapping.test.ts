@@ -13,6 +13,9 @@ import {
   readBack,
   bcChangedOutsideNexus,
   parseLineNo,
+  snapshotOf,
+  HEADER_SNAPSHOT_FIELDS,
+  LINE_SNAPSHOT_FIELDS,
 } from './bcOrderMapping'
 
 function order(over: Partial<SalesOrderRow> = {}): SalesOrderRow {
@@ -169,21 +172,63 @@ describe('readBack', () => {
 })
 
 describe('bcChangedOutsideNexus', () => {
-  const stored = { bc_etag: 'H', lines: [{ bc_line_no: 1, bc_etag: 'a' }, { bc_line_no: 2, bc_etag: 'b' }] }
+  const stored = {
+    bc_snapshot: null,
+    lines: [{ bc_line_no: 1, bc_etag: 'a', bc_snapshot: null }, { bc_line_no: 2, bc_etag: 'b', bc_snapshot: null }],
+  }
   const cur = (h = 'H', ls: [number, string][] = [[1, 'a'], [2, 'b']]) => ({
     header: rec({}, h), lines: ls.map(([n, e]) => rec({ Line_No: n }, e)),
   })
   it('false when identical', () => expect(bcChangedOutsideNexus(stored, cur())).toBe(false))
-  it('true on header etag change', () => expect(bcChangedOutsideNexus(stored, cur('X'))).toBe(true))
+  it('a null header snapshot with a different header etag passes', () => expect(bcChangedOutsideNexus(stored, cur('X'))).toBe(false))
   it('true on line etag change', () => expect(bcChangedOutsideNexus(stored, cur('H', [[1, 'a'], [2, 'z']]))).toBe(true))
   it('true when stored line missing in BC', () => expect(bcChangedOutsideNexus(stored, cur('H', [[1, 'a']]))).toBe(true))
   it('true when BC has an extra line', () => expect(bcChangedOutsideNexus(stored, cur('H', [[1, 'a'], [2, 'b'], [3, 'c']]))).toBe(true))
-  const withUnsent = { bc_etag: 'H', lines: [...stored.lines, { bc_line_no: null, bc_etag: null }] }
+  const withUnsent = { ...stored, lines: [...stored.lines, { bc_line_no: null, bc_etag: null, bc_snapshot: null }] }
   it('ignores unsent stored lines', () => expect(bcChangedOutsideNexus(withUnsent, cur())).toBe(false))
   it('unsent line present, other etag differs', () =>
     expect(bcChangedOutsideNexus(withUnsent, cur('H', [[1, 'a'], [2, 'z']]))).toBe(true))
   it('unsent line present, BC has unknown line', () =>
     expect(bcChangedOutsideNexus(withUnsent, cur('H', [[1, 'a'], [2, 'b'], [3, 'c']]))).toBe(true))
+
+  describe('by snapshot values', () => {
+    const headerFields = { No: 'SO1', Payment_Terms_Code: 'NET30', Tax_Liable: true, Ship_to_Code: 'WH1' }
+    const lineFields = { Line_No: 1, Type: 'Item', No: 'ITEM1', Quantity: 2, Unit_Price: 5 }
+    const snap = {
+      bc_snapshot: { Payment_Terms_Code: 'NET30', Tax_Liable: true, Ship_to_Code: 'WH1' },
+      lines: [{ bc_line_no: 1, bc_etag: 'a', bc_snapshot: { Type: 'Item', No: 'ITEM1', Quantity: 2, Unit_Price: 5 } }],
+    }
+    const now = (h: Record<string, unknown> = {}, l: Record<string, unknown> = {}, hEtag = 'H', lEtag = 'a') => ({
+      header: rec({ ...headerFields, ...h }, hEtag),
+      lines: [rec({ ...lineFields, ...l }, lEtag)],
+    })
+    it('a header etag change with equal snapshot values is not a change', () =>
+      expect(bcChangedOutsideNexus(snap, now({}, {}, 'X'))).toBe(false))
+    it('true when Payment_Terms_Code changed', () =>
+      expect(bcChangedOutsideNexus(snap, now({ Payment_Terms_Code: 'NET60' }))).toBe(true))
+    it('booleans compare strictly', () =>
+      expect(bcChangedOutsideNexus(snap, now({ Tax_Liable: false }))).toBe(true))
+    it('a line with a snapshot: etag differs but values equal is not a change', () =>
+      expect(bcChangedOutsideNexus(snap, now({}, {}, 'H', 'z'))).toBe(false))
+    it('a line with a snapshot: Quantity changed is a change', () =>
+      expect(bcChangedOutsideNexus(snap, now({}, { Quantity: 3 }))).toBe(true))
+    it('a line with no snapshot and a different etag is a change', () => {
+      const noLineSnap = { ...snap, lines: [{ ...snap.lines[0], bc_snapshot: null }] }
+      expect(bcChangedOutsideNexus(noLineSnap, now({}, {}, 'H', 'z'))).toBe(true)
+    })
+    it('a BC line unknown to Nexus is a change', () => {
+      const c = now()
+      c.lines.push(rec({ ...lineFields, Line_No: 2 }, 'b'))
+      expect(bcChangedOutsideNexus(snap, c)).toBe(true)
+    })
+    it('Quantity 2 vs "2" compares equal', () =>
+      expect(bcChangedOutsideNexus(snap, now({}, { Quantity: '2' }))).toBe(false))
+    it('a missing value equals an empty string snapshot', () => {
+      const s = { ...snap, bc_snapshot: { Ship_to_Code: '' } }
+      expect(bcChangedOutsideNexus(s, now({ Ship_to_Code: undefined }))).toBe(false)
+    })
+  })
+
   it('parseLineNo reads Line_No', () => {
     expect(parseLineNo(rec({ Line_No: 30000 }))).toBe(30000)
     expect(() => parseLineNo(rec({ Line_No: '30000' }))).toThrow('without Line_No')
@@ -191,5 +236,24 @@ describe('bcChangedOutsideNexus', () => {
   it('throws when BC line lacks Line_No', () => {
     expect(() => bcChangedOutsideNexus(stored, { header: rec({}, 'H'), lines: [rec({}, 'a')] })).toThrow('without Line_No')
     expect(() => readBack(rec({ No: 'SO-1' }), [rec({})], rec({ amount: 0, amountIncludingVAT: 0 }))).toThrow('without Line_No')
+  })
+})
+
+describe('snapshotOf', () => {
+  it('keeps only the listed keys present in the record, values as-is', () => {
+    const r = rec({ No: 'SO1', Payment_Terms_Code: 'NET30', Tax_Liable: false, Order_Date: null, Other: 'x' })
+    expect(snapshotOf(r, ['Payment_Terms_Code', 'Tax_Liable', 'Order_Date', 'Location_Code'])).toEqual({
+      Payment_Terms_Code: 'NET30', Tax_Liable: false, Order_Date: null,
+    })
+  })
+  it('HEADER_SNAPSHOT_FIELDS covers every header patch key, the customer and the ship-to', () => {
+    for (const k of Object.keys(toBcHeaderPatch(order(), 'SO1'))) expect(HEADER_SNAPSHOT_FIELDS).toContain(k)
+    expect(HEADER_SNAPSHOT_FIELDS).toEqual(expect.arrayContaining([
+      'Sell_to_Customer_No', 'Ship_to_Code', 'Ship_to_Name', 'Ship_to_Address', 'Ship_to_Address_2', 'Ship_to_City',
+      'Ship_to_County', 'Ship_to_Post_Code', 'Ship_to_Country_Region_Code', 'Ship_to_Contact',
+    ]))
+  })
+  it('LINE_SNAPSHOT_FIELDS', () => {
+    expect(LINE_SNAPSHOT_FIELDS).toEqual(['Type', 'No', 'Quantity', 'Unit_of_Measure_Code', 'Unit_Price', 'Line_Discount_Percent', 'Location_Code'])
   })
 })

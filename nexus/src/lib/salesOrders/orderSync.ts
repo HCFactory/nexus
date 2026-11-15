@@ -8,13 +8,18 @@
 // - Every BC write that succeeds is stored right away (order number, header
 //   etag, each line's number/etag), so a retry after a failure continues
 //   where it stopped.
-// - Before writing to an existing order, BC's etags are compared with the
-//   stored ones; a mismatch stops the sync as a conflict unless overwrite.
+// - Before writing to an existing order, BC's values for the fields Nexus
+//   manages are compared with the snapshot stored after Nexus's last write
+//   (lines without a snapshot: their etag); a difference stops the sync as a
+//   conflict unless overwrite. The header etag is not compared: BC re-saves
+//   headers in the background (measured on TEST).
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { BcReferenceError } from '@/lib/businessCentral/customerReferences/errors'
 import type { BcKey, BcRecord, ReferenceTransport } from '@/lib/businessCentral/customerReferences/transport'
 import type { SalesOrderLineRow, SalesOrderRow, SyncState } from '@/types/salesOrders'
 import {
+  HEADER_SNAPSHOT_FIELDS,
+  LINE_SNAPSHOT_FIELDS,
   SALES_DOCUMENT_SOURCE,
   SALES_LINE_SOURCE,
   SALES_ORDER_SOURCE,
@@ -22,6 +27,7 @@ import {
   createMarker,
   parseLineNo,
   readBack,
+  snapshotOf,
   toBcCreate,
   toBcHeaderPatch,
   toBcLine,
@@ -40,6 +46,9 @@ export interface OrderSyncDeps {
 const ORDERS = 'sales_orders'
 const LINES = 'sales_order_lines'
 const CHANGED_IN_BC = 'Changed in BC'
+
+const headerSnapshot = (r: BcRecord) => snapshotOf(r, HEADER_SNAPSHOT_FIELDS)
+const lineSnapshot = (r: BcRecord) => snapshotOf(r, LINE_SNAPSHOT_FIELDS)
 
 const quote = (v: string) => `'${v.replace(/'/g, "''")}'`
 
@@ -216,14 +225,12 @@ export async function syncSalesOrder(
       if (!opts.overwrite) {
         const inBc = new Set(bcLines.map(parseLineNo))
         // A removed row whose BC line is already gone is finished work, not a
-        // change in BC; removed rows still in BC keep their etag check.
+        // change in BC; removed rows still in BC keep their check.
         const compared = lines.filter((l) => !l.removed || (l.bc_line_no !== null && inBc.has(l.bc_line_no)))
-        // bc_etag is null when the create succeeded but Nexus's first header
-        // patch was never stored: the header has nothing of Nexus's to protect
-        // yet, so only the lines are compared (any BC line unknown to Nexus is
-        // still a conflict).
-        const storedEtag = order.bc_etag ?? header.etag
-        if (bcChangedOutsideNexus({ bc_etag: storedEtag, lines: compared }, { header, lines: bcLines })) {
+        // bc_snapshot is null until Nexus's first header write is stored: the
+        // header has nothing of Nexus's to protect yet, so only the lines are
+        // compared (any BC line unknown to Nexus is still a conflict).
+        if (bcChangedOutsideNexus({ bc_snapshot: order.bc_snapshot, lines: compared }, { header, lines: bcLines })) {
           await updateOrder(deps, order.id, { sync_state: 'conflict', sync_error: CHANGED_IN_BC, updated_at: deps.now() })
           return 'conflict'
         }
@@ -235,7 +242,7 @@ export async function syncSalesOrder(
     // own writes isn't read as a change in BC on the retry.
     const patchHeader = async (fields: Record<string, unknown>) => {
       bcHeader = await deps.transport.patch(SALES_ORDER_SOURCE, orderKey(no), bcHeader.etag, fields)
-      await updateOrder(deps, order.id, { bc_etag: bcHeader.etag })
+      await updateOrder(deps, order.id, { bc_etag: bcHeader.etag, bc_snapshot: headerSnapshot(bcHeader) })
     }
 
     // Step 4: customer first (BC refills its defaults; measured: works on an
@@ -251,20 +258,22 @@ export async function syncSalesOrder(
     // pre-write etag that the retry reads as a change in BC).
     const shipTo = await syncShipTo(deps, order, no, async () => {
       bcHeader = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
-      await updateOrder(deps, order.id, { bc_etag: bcHeader.etag })
+      await updateOrder(deps, order.id, { bc_etag: bcHeader.etag, bc_snapshot: headerSnapshot(bcHeader) })
     })
     await patchHeader(toBcHeaderPatch(order, no))
 
     // A header patch can change the lines' etags (measured: Tax_Area_Code is
     // pushed to the lines), so read them again before any line write and
-    // store the new etags of the lines Nexus knows.
+    // store the new etags (and snapshots) of the lines Nexus knows.
     bcLines = await listBcLines(deps, no)
     for (const rec of bcLines) {
       const n = parseLineNo(rec)
       const known = lines.find((l) => l.bc_line_no === n)
-      if (known && known.bc_etag !== rec.etag) {
-        await updateLine(deps, orderId, known.id, { bc_etag: rec.etag })
+      if (known && (known.bc_etag !== rec.etag || known.bc_snapshot === null)) {
+        const snap = lineSnapshot(rec)
+        await updateLine(deps, orderId, known.id, { bc_etag: rec.etag, bc_snapshot: snap })
         known.bc_etag = rec.etag
+        known.bc_snapshot = snap
       }
     }
 
@@ -273,7 +282,7 @@ export async function syncSalesOrder(
     // loop doesn't leave a stale bc_etag that the retry reads as a conflict.
     const refreshHeaderEtag = async () => {
       const h = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
-      await updateOrder(deps, order.id, { bc_etag: h.etag })
+      await updateOrder(deps, order.id, { bc_etag: h.etag, bc_snapshot: headerSnapshot(h) })
     }
 
     // Step 5: lines.
@@ -314,13 +323,17 @@ export async function syncSalesOrder(
         // Without overwrite the conflict check already stopped on this.
         if (!opts.overwrite) throw new Error(`Line ${line.position} (BC line ${line.bc_line_no}) is missing in BC`)
         // Overwrite: Nexus's version wins, so the line is sent again as new.
-        await updateLine(deps, orderId, line.id, { bc_line_no: null, bc_etag: null })
+        await updateLine(deps, orderId, line.id, { bc_line_no: null, bc_etag: null, bc_snapshot: null })
         rec = undefined
       }
       if (!rec) {
         const created = await deps.transport.create(SALES_LINE_SOURCE, wanted)
         const createdNo = parseLineNo(created)
-        const saved = await updateLine(deps, orderId, line.id, { bc_line_no: createdNo, bc_etag: created.etag })
+        const saved = await updateLine(deps, orderId, line.id, {
+          bc_line_no: createdNo,
+          bc_etag: created.etag,
+          bc_snapshot: lineSnapshot(created),
+        })
         if (saved === 0) {
           // The row was deleted while we were creating its BC line: take the
           // BC line out again (fresh etag) so BC doesn't keep an orphan.
@@ -333,7 +346,7 @@ export async function syncSalesOrder(
       const diff = changedLineFields(wanted, rec.fields)
       if (Object.keys(diff).length === 0) continue
       const patched = await deps.transport.patch(SALES_LINE_SOURCE, lineKey(no, parseLineNo(rec)), rec.etag, diff)
-      await updateLine(deps, orderId, line.id, { bc_etag: patched.etag })
+      await updateLine(deps, orderId, line.id, { bc_etag: patched.etag, bc_snapshot: lineSnapshot(patched) })
     }
 
     // Step 6: read back BC's values.
@@ -343,11 +356,13 @@ export async function syncSalesOrder(
     const salesDocument = await deps.transport.get(SALES_DOCUMENT_SOURCE, { values: { id: shipTo.docId } })
     const rb = readBack(header, finalLines, salesDocument)
     const stored = await loadLines(deps, orderId)
+    const finalByNo = new Map(finalLines.map((r) => [parseLineNo(r), r]))
     for (const l of rb.lines) {
       const row = stored.find((s) => s.bc_line_no === l.bc_line_no)
       if (!row) continue
       await updateLine(deps, orderId, row.id, {
         bc_etag: l.bc_etag,
+        bc_snapshot: lineSnapshot(finalByNo.get(l.bc_line_no)!),
         bc_unit_price: l.bc_unit_price,
         bc_line_discount_percent: l.bc_line_discount_percent,
         amount_incl_tax: l.amount_incl_tax,
@@ -356,6 +371,7 @@ export async function syncSalesOrder(
     const done = {
       bc_order_number: rb.bc_order_number,
       bc_etag: rb.bc_etag,
+      bc_snapshot: headerSnapshot(header),
       bc_due_date: rb.bc_due_date,
       bc_document_date: rb.bc_document_date,
       bc_posting_date: rb.bc_posting_date,
