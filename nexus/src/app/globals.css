@@ -160,8 +160,8 @@
   --card-shadow-1: oklch(0 0 0 / 0.3);
   --card-shadow-2: oklch(0 0 0 / 0.2);
   --inset-highlight: oklch(1 0 0 / 0.06);
-  --liquid-glow: oklch(1 0 0 / 0.3);
-  --liquid-edge: oklch(1 0 0 / 0.55);
+  --liquid-glow: oklch(1 0 0 / 0.18);
+  --liquid-edge: oklch(1 0 0 / 0.4);
   --liquid-tint: oklch(1 0 0 / 0.045);
 
   --sidebar:           oklch(0.20 0.014 240);
@@ -291,8 +291,8 @@
     -webkit-backdrop-filter: blur(24px) saturate(1.6);
     border: 1px solid var(--glass-border);
   }
-  /* Liquid glass card: a blurred, gently warped backdrop (the #glass-distortion
-     SVG filter from <GlassFilter />), a light inner edge and a soft outer glow.
+  /* Liquid glass card: a blurred backdrop, a light inner edge and a soft outer glow.
+     (No SVG warp: on smooth gradients it tore the background into hard-edged patches.)
      The two layers sit behind the card's content (isolation keeps them inside). */
   .glass-card {
     position: relative;
@@ -317,7 +317,6 @@
     z-index: -2;
     border-radius: inherit;
     backdrop-filter: blur(22px);
-    filter: url(#glass-distortion);
     pointer-events: none;
   }
   /* Soft blue glows behind glass cards, so the frosting has something to blur. */

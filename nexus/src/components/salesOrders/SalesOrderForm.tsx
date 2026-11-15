@@ -38,7 +38,6 @@ import { CustomerPicker, customerLabel } from './CustomerPicker';
 import { NotesPanel } from './NotesPanel';
 import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
-import { GlassFilter } from '@/components/ui/GlassFilter';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
 
@@ -536,7 +535,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           save();
         }}
       >
-        <GlassFilter />
         <div className="mx-auto max-w-6xl space-y-4">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
             <section className="glass-card p-4">
