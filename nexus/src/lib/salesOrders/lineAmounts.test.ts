@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LineDraft } from '@/types/salesOrders';
-import { effectiveDiscount, effectivePrice, lineAmounts, orderTotals, taxRatePercent } from './lineAmounts';
+import { effectiveDiscount, effectivePrice, lineAmounts, orderTotals, taxLabel, taxRatePercent } from './lineAmounts';
 
 const areaLines = [
   { tax_area_code: 'HI-HNL-WHSL', tax_jurisdiction_code: 'HI-HN-WHSL' },
@@ -87,5 +87,15 @@ describe('lineAmounts and orderTotals', () => {
   it('tax is rounded once over the order, not per line', () => {
     const a = lineAmounts(line({ estimate_price: 1.01 }), 0.5);
     expect(orderTotals([a, a, a])).toEqual({ subtotal: 3.03, tax: 0.02, total: 3.05 });
+  });
+});
+
+describe('taxLabel', () => {
+  it('shows the rate, joins different rates, and is plain "Tax" with no lines', () => {
+    expect(taxLabel([4.712, 4.712])).toBe('Tax (4.712%)');
+    expect(taxLabel([4.712, 0])).toBe('Tax (4.712% / 0%)');
+    expect(taxLabel([8.25])).toBe('Tax (8.25%)');
+    expect(taxLabel([0.1 + 0.2])).toBe('Tax (0.3%)');
+    expect(taxLabel([])).toBe('Tax');
   });
 });

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { addSalesOrderNote, deleteSalesOrderNote, updateSalesOrderNote } from '@/app/actions/salesOrderNotes';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -16,6 +16,16 @@ interface Props {
 
 const TEXTAREA_CLASS =
   'w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
+
+/** Cmd+Enter (Mac) or Ctrl+Enter (Windows) runs `run`. */
+const onSubmitKey = (run: () => void) => (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault();
+    run();
+  }
+};
+
+const ICON_BUTTON = 'size-6 text-foreground-muted hover:text-foreground';
 
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -34,6 +44,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
   }
 
   const add = () => {
+    if (busy || draft.trim() === '') return;
     setError(null);
     startTransition(async () => {
       const res = await addSalesOrderNote(orderId, draft);
@@ -44,6 +55,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
   };
 
   const save = (id: string) => {
+    if (busy || editText.trim() === '') return;
     setError(null);
     startTransition(async () => {
       const res = await updateSalesOrderNote(id, editText);
@@ -72,54 +84,64 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
       )}
 
       {canEdit && (
-        <div className="space-y-2">
+        <div className="relative">
           <textarea
             aria-label="New note"
             rows={3}
             value={draft}
             disabled={busy}
+            placeholder="Add a note…"
             onChange={(e) => setDraft(e.target.value)}
-            className={TEXTAREA_CLASS}
+            onKeyDown={onSubmitKey(add)}
+            className={`${TEXTAREA_CLASS} block resize-none pr-11`}
           />
-          <div className="flex justify-end">
-            <Button type="button" size="sm" disabled={busy || draft.trim() === ''} onClick={add}>
-              Add
-            </Button>
-          </div>
+          <Button
+            type="button"
+            size="icon"
+            aria-label="Add note"
+            title="Add note (⌘/Ctrl + Enter)"
+            disabled={busy || draft.trim() === ''}
+            onClick={add}
+            className="absolute bottom-2 right-2 size-7 rounded-full"
+          >
+            <Plus className="size-4" />
+          </Button>
         </div>
       )}
 
       {notes.length > 0 && (
         <ul className="max-h-80 space-y-2 overflow-y-auto pr-1">
           {notes.map((n) => (
-            <li key={n.id} className="rounded-md border border-border bg-background p-3">
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-xs text-foreground-muted">
+            <li key={n.id} className="rounded-md border border-border bg-background px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs leading-6 text-foreground-muted">
                   {n.author_name ? `${n.author_name} · ` : ''}
                   {when(n.created_at)}
                   {n.updated_at > n.created_at && <> <span>(edited)</span></>}
                 </p>
                 {canEdit && editingId !== n.id && (
-                  <div className="flex gap-1">
+                  <div className="-mr-1 flex">
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
+                      className={ICON_BUTTON}
                       aria-label="Edit note"
                       disabled={busy}
                       onClick={() => { setEditingId(n.id); setEditText(n.body); setError(null); }}
                     >
-                      <Pencil className="size-4" />
+                      <Pencil className="size-3.5" />
                     </Button>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
+                      className={ICON_BUTTON}
                       aria-label="Delete note"
                       disabled={busy}
                       onClick={() => setDeleting(n)}
                     >
-                      <Trash2 className="size-4" />
+                      <Trash2 className="size-3.5" />
                     </Button>
                   </div>
                 )}
@@ -132,6 +154,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
                     value={editText}
                     disabled={busy}
                     onChange={(e) => setEditText(e.target.value)}
+                    onKeyDown={onSubmitKey(() => save(n.id))}
                     className={TEXTAREA_CLASS}
                   />
                   <div className="flex justify-end gap-2">
@@ -144,7 +167,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
                   </div>
                 </div>
               ) : (
-                <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{n.body}</p>
+                <p className="whitespace-pre-wrap text-sm leading-snug text-foreground">{n.body}</p>
               )}
             </li>
           ))}

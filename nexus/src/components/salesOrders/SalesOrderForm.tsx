@@ -19,7 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { bestPrice } from '@/lib/salesOrders/bestPrice';
-import { lineAmounts, orderTotals, taxRatePercent } from '@/lib/salesOrders/lineAmounts';
+import { lineAmounts, orderTotals, taxLabel, taxRatePercent } from '@/lib/salesOrders/lineAmounts';
 import { applyShipTo, customerDefaults } from '@/lib/salesOrders/orderDefaults';
 import { autoInvoiceNumber, canDelete, editableFields } from '@/lib/salesOrders/orderRules';
 import type {
@@ -483,7 +483,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     linesUnchanged(draftLines, lines)
       ? { subtotal: num(order.total_excl_tax) ?? 0, tax: num(order.total_tax) ?? 0, total: num(order.total_incl_tax) ?? 0 }
       : null;
-  const showBc = bcTotals !== null;
   const totals = bcTotals ?? orderTotals(shownLines.map((l) => lineAmounts(l, taxRate(l))));
   const shipAddress = Object.fromEntries(SHIP_ADDRESS_KEYS.map((k) => [k, header[k]])) as ShipToAddressFields;
 
@@ -649,7 +648,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             <dl className="ml-auto mt-4 grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 text-sm">
               <dt className="text-foreground-muted">Subtotal</dt>
               <dd data-testid="total-subtotal" className="text-right text-foreground">{money(totals.subtotal)}</dd>
-              <dt className="text-foreground-muted">{showBc ? 'Tax' : 'Tax (estimate)'}</dt>
+              <dt className="text-foreground-muted">{taxLabel(shownLines.map(taxRate))}</dt>
               <dd data-testid="total-tax" className="text-right text-foreground">{money(totals.tax)}</dd>
               <dt className="font-semibold text-foreground">Total</dt>
               <dd data-testid="total-total" className="text-right font-semibold text-foreground">{money(totals.total)}</dd>

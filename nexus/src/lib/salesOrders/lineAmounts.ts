@@ -65,3 +65,9 @@ export function orderTotals(rows: { excl: number; taxRaw: number }[]): { subtota
   const tax = round2(rows.reduce((s, r) => s + r.taxRaw, 0));
   return { subtotal, tax, total: round2(subtotal + tax) };
 }
+
+/** "Tax (4.712%)" from the lines' tax rates; different rates are joined ("Tax (4.712% / 0%)"); "Tax" with no lines. */
+export function taxLabel(rates: number[]): string {
+  const distinct = [...new Set(rates.map((r) => Number(r.toFixed(3))))];
+  return distinct.length === 0 ? 'Tax' : `Tax (${distinct.map((r) => `${r}%`).join(' / ')})`;
+}

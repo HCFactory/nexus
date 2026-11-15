@@ -24,7 +24,7 @@ describe('NotesPanel', () => {
   it('shows a hint instead of the add box when the order is not saved', () => {
     render(<NotesPanel orderId={null} canEdit initialNotes={[]} />);
     expect(screen.getByText('Save the order to add notes.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Add' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Add note' })).toBeNull();
   });
 
   it('shows each note with author, time and (edited) only when changed', () => {
@@ -47,18 +47,34 @@ describe('NotesPanel', () => {
     actions.addSalesOrderNote.mockResolvedValue({ ok: true, note: note('n2', 'Brand new') });
     render(<NotesPanel orderId="o1" canEdit initialNotes={[note('n1', 'Old one')]} />);
     fireEvent.change(screen.getByLabelText('New note'), { target: { value: 'Brand new' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
     await waitFor(() => expect(screen.getAllByRole('listitem')[0]).toHaveTextContent('Brand new'));
     expect(actions.addSalesOrderNote).toHaveBeenCalledWith('o1', 'Brand new');
     expect(screen.getByLabelText('New note')).toHaveValue('');
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
   });
 
+  it('Cmd+Enter or Ctrl+Enter adds the note; plain Enter does not', async () => {
+    actions.addSalesOrderNote.mockResolvedValue({ ok: true, note: note('n2', 'Keyed') });
+    render(<NotesPanel orderId="o1" canEdit initialNotes={[]} />);
+    const box = screen.getByLabelText('New note');
+    fireEvent.change(box, { target: { value: 'Keyed' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    expect(actions.addSalesOrderNote).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    await waitFor(() => expect(actions.addSalesOrderNote).toHaveBeenCalledWith('o1', 'Keyed'));
+    await waitFor(() => expect(box).toHaveValue(''));
+    actions.addSalesOrderNote.mockClear();
+    fireEvent.change(box, { target: { value: 'Win' } });
+    fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true });
+    await waitFor(() => expect(actions.addSalesOrderNote).toHaveBeenCalledWith('o1', 'Win'));
+  });
+
   it('shows the server error when adding fails', async () => {
     actions.addSalesOrderNote.mockResolvedValue({ ok: false, error: 'Nope' });
     render(<NotesPanel orderId="o1" canEdit initialNotes={[]} />);
     fireEvent.change(screen.getByLabelText('New note'), { target: { value: 'x' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Nope');
   });
 

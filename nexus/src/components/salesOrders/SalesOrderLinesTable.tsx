@@ -287,8 +287,8 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
             <th className="px-3 py-2 font-medium">Item</th>
             <th className="px-3 py-2 text-right font-medium">Qty</th>
             <th className="px-3 py-2 text-right font-medium">Unit price</th>
-            <th className="py-2 pl-3 pr-1 text-right font-medium">Disc %</th>
-            <th className="whitespace-nowrap py-2 pl-1 pr-3 text-right font-medium">Amount excl. tax</th>
+            <th className="px-3 py-2 text-right font-medium">Disc %</th>
+            <th className="whitespace-nowrap px-3 py-2 text-right font-medium">Amount excl. tax</th>
             <th className="w-10 px-3 py-2" />
           </tr>
         </thead>
@@ -321,7 +321,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   onCommit={(n) => update(line.key, { unit_price: n })}
                 />
               </td>
-              <td className="w-24 py-2 pl-3 pr-1">
+              <td className="w-24 px-3 py-2">
                 <EffectiveCell
                   label="Disc %"
                   step="0.01"
@@ -331,7 +331,12 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                   onCommit={(n) => update(line.key, { discount_percent: n })}
                 />
               </td>
-              <td className="whitespace-nowrap py-2 pl-1 pr-3 text-right text-foreground-muted">{money(amountOf(line))}</td>
+              <td className="w-36 px-3 py-2">
+                {/* A read-only box the size of the input cells, so the column gaps match. */}
+                <div className="whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-right text-sm text-foreground-muted">
+                  {money(amountOf(line))}
+                </div>
+              </td>
               <td className="px-3 py-2 text-right">
                 <button
                   type="button"
