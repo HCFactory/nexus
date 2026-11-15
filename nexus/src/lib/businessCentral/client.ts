@@ -157,6 +157,8 @@ export class BcApiError extends Error {
   }
 }
 
+const INVOKE_ACTION_TIMEOUT_MS = 120_000;
+
 export interface BcClient {
   readonly config: Omit<BcClientConfig, "clientSecret" | "fetchImpl">;
   getAccessToken(): Promise<BcAccessToken>;
@@ -273,7 +275,9 @@ export function createBcClient(config: BcClientConfig): BcClient {
   async function request<T>(
     pathOrUrl: string,
     init: RequestInit = {},
+    options: { retryServerErrors?: boolean; timeoutMs?: number } = {},
   ): Promise<T> {
+    const retryServerErrors = options.retryServerErrors ?? true;
     const token = await getAccessToken();
     const url = pathOrUrl.startsWith("http")
       ? pathOrUrl
@@ -293,7 +297,7 @@ export function createBcClient(config: BcClientConfig): BcClient {
           fetchImpl,
           url,
           { ...init, headers },
-          normalized.timeoutMs,
+          options.timeoutMs ?? normalized.timeoutMs,
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -315,7 +319,10 @@ export function createBcClient(config: BcClientConfig): BcClient {
 
       const error = await buildBcApiError(response, url);
       lastError = error;
-      if (!shouldRetry(response.status) || attempt === RETRY_DELAYS_MS.length) {
+      if (
+        !shouldRetry(response.status) ||
+        (!retryServerErrors && response.status >= 500) ||
+        attempt === RETRY_DELAYS_MS.length) {
         throw error;
       }
 
@@ -409,7 +416,15 @@ export function createBcClient(config: BcClientConfig): BcClient {
         method: "DELETE",
         headers: { "If-Match": etag },
       }),
-    invokeAction: (path) => request<void>(companyPath(path), { method: "POST" }),
+    // Irreversible: a 5xx or timeout does not say whether BC completed the action,
+    // so only 429 (request not processed) is retried; the timeout is longer
+    // because posting can be slow.
+    invokeAction: (path) =>
+      request<void>(
+        companyPath(path),
+        { method: "POST" },
+        { retryServerErrors: false, timeoutMs: INVOKE_ACTION_TIMEOUT_MS },
+      ),
     listItemCategories: (options = {}) =>
       request<BcListResponse<BcItemCategory>>(
         withQuery(companyPath("/itemCategories"), options),

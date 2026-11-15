@@ -263,6 +263,17 @@ describe('Business Central client', () => {
       /allowed posting dates/
     );
   });
+
+  it('does not retry a 5xx on invokeAction', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(tokenResponse())
+      .mockResolvedValue(new Response('bad gateway', { status: 503 }));
+    const client = createBcClient({ ...config, fetchImpl });
+
+    await expect(client.invokeAction('/salesOrders(abc)/Microsoft.NAV.shipAndInvoice')).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // token + exactly one POST
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { BcRecord, ReferenceSource, ReferenceTransport } from '@/lib/businessCentral/customerReferences/transport'
-import { findPostedInvoice, postShipAndInvoice, setInvoiceDates, type BcInvoicingDeps } from './bcInvoicing'
+import { BcApiError } from '@/lib/businessCentral/client'
+import { BcPostOutcomeUnknownError, BcPostRefusedError, findPostedInvoice, postShipAndInvoice, setInvoiceDates, type BcInvoicingDeps } from './bcInvoicing'
 
 const rec = (fields: Record<string, unknown>, etag = 'W/"1"'): BcRecord => ({
   key: { bcId: String(fields.id ?? 'x') },
@@ -75,6 +76,26 @@ describe('findPostedInvoice', () => {
     expect(inv?.dueDate).toBeNull()
   })
 
+  it('skips the fallback when the external document number is blank', async () => {
+    const { deps, list } = makeDeps({ list: () => [] })
+    expect(await findPostedInvoice(deps, { ...q, externalDocumentNumber: '  ' })).toBeNull()
+    expect(list).toHaveBeenCalledTimes(1)
+  })
+
+  it('fallback ignores invoices of a different order', async () => {
+    const { deps } = makeDeps({
+      list: (_s, o) => (o?.filter?.startsWith('orderNumber') ? [] : [rec({ ...INVOICE, orderNumber: 'W-OTHER' })]),
+    })
+    expect(await findPostedInvoice(deps, q)).toBeNull()
+  })
+
+  it('fallback accepts an invoice with a blank order number', async () => {
+    const { deps } = makeDeps({
+      list: (_s, o) => (o?.filter?.startsWith('orderNumber') ? [] : [rec({ ...INVOICE, orderNumber: '' })]),
+    })
+    expect((await findPostedInvoice(deps, q))?.number).toBe('PSI-100')
+  })
+
   it('returns null when neither matches', async () => {
     const { deps } = makeDeps()
     expect(await findPostedInvoice(deps, q)).toBeNull()
@@ -112,13 +133,26 @@ describe('postShipAndInvoice', () => {
     expect(invokeAction).not.toHaveBeenCalled()
   })
 
-  it('propagates BC errors', async () => {
-    const { deps } = makeDeps({
-      list: () => [rec({ id: 'so-guid' })],
-      invokeAction: async () => {
-        throw new Error('Posting Date is not within your range of allowed posting dates.')
-      },
-    })
-    await expect(postShipAndInvoice(deps, 'W-100501')).rejects.toThrow(/allowed posting dates/)
+  const apiError = (status: number, message: string) =>
+    new BcApiError({ status, statusText: 'x', message, url: 'u' })
+  const failWith = (err: Error) =>
+    makeDeps({ list: () => [rec({ id: 'so-guid' })], invokeAction: async () => { throw err } })
+
+  it('a BC 400 becomes BcPostRefusedError with BC\'s message', async () => {
+    const { deps } = failWith(apiError(400, 'Posting Date is not within your range of allowed posting dates.'))
+    const p = postShipAndInvoice(deps, 'W-100501')
+    await expect(p).rejects.toBeInstanceOf(BcPostRefusedError)
+    await expect(p).rejects.toThrow('Posting Date is not within your range of allowed posting dates.')
   })
+
+  it('a 503 becomes BcPostOutcomeUnknownError', async () => {
+    const { deps } = failWith(apiError(503, 'unavailable'))
+    await expect(postShipAndInvoice(deps, 'W-100501')).rejects.toBeInstanceOf(BcPostOutcomeUnknownError)
+  })
+
+  it('a timeout/network failure (status 0) becomes BcPostOutcomeUnknownError', async () => {
+    const { deps } = failWith(apiError(0, 'Business Central request failed before receiving a response (aborted)'))
+    await expect(postShipAndInvoice(deps, 'W-100501')).rejects.toBeInstanceOf(BcPostOutcomeUnknownError)
+  })
+
 })
