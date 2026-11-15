@@ -35,7 +35,7 @@ function order(over: Partial<SalesOrderRow> = {}): SalesOrderRow {
     total_excl_tax: null, total_tax: null, total_incl_tax: null,
     sync_state: 'pending', sync_error: null, sync_attempts: 0, claimed_until: null,
     last_synced_at: null, local_version: 1, synced_version: 0, created_by: null,
-    created_at: '', updated_at: '',
+    bc_snapshot: null, created_at: '', updated_at: '',
     ...over,
   }
 }
@@ -45,7 +45,7 @@ function line(over: Partial<SalesOrderLineRow> = {}): SalesOrderLineRow {
     id: 'l1', organization_id: 'o', bc_connection_id: 'c', sales_order_id: 'x', position: 1,
     item_number: 'ITEM1', description: 'd', unit_of_measure_code: 'PCS', quantity: 3,
     unit_price: 2.5, discount_percent: 10, removed: false, bc_line_no: null, bc_etag: null,
-    bc_unit_price: null, bc_line_discount_percent: null, amount_incl_tax: null, created_at: '', updated_at: '',
+    bc_unit_price: null, bc_line_discount_percent: null, amount_incl_tax: null, bc_snapshot: null, created_at: '', updated_at: '',
     ...over,
   }
 }

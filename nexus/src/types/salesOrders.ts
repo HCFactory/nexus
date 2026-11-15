@@ -120,6 +120,8 @@ export interface SalesOrderRow {
   last_synced_at: string | null
   local_version: number
   synced_version: number
+  /** BC values as last read; used to detect BC-side changes. */
+  bc_snapshot: Record<string, unknown> | null
   created_by: string | null
   created_at: string
   updated_at: string
@@ -144,9 +146,24 @@ export interface SalesOrderLineRow {
   bc_unit_price: number | null
   bc_line_discount_percent: number | null
   amount_incl_tax: number | null
+  bc_snapshot: Record<string, unknown> | null
   created_at: string
   updated_at: string
 }
+
+export interface SalesOrderNoteRow {
+  id: string
+  organization_id: string
+  bc_connection_id: string
+  sales_order_id: string
+  body: string
+  created_by: string | null
+  created_at: string
+  updated_by: string | null
+  updated_at: string
+}
+
+export type SalesOrderNoteView = SalesOrderNoteRow & { author_name: string }
 
 /** Header values copied from the customer when an order is started. */
 export interface OrderHeaderDefaults {
