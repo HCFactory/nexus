@@ -55,6 +55,8 @@ interface Props {
   notes?: SalesOrderNoteView[];
   /** "Save to customer" on a one-off ship-to needs customer edit permission. */
   canSaveShipTo: boolean;
+  /** Why Create invoice is blocked for this customer (Bill.com), or null when ready. */
+  invoiceBlockedReason?: string | null;
 }
 
 type Option = { code: string; label: string };

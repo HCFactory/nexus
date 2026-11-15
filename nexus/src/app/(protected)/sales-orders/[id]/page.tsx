@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { getSalesOrder, getSalesOrderFormContext, getSalesOrderPriceLines } from '@/app/actions/salesOrders';
 import { listSalesOrderNotes } from '@/app/actions/salesOrderNotes';
+import { getInvoiceReadiness, resumeInvoiceIfStuck } from '@/app/actions/salesOrderInvoicing';
 import { listShipTos } from '@/app/actions/shipToAddresses';
 import { SalesOrderForm } from '@/components/salesOrders/SalesOrderForm';
 import { resolveSalesOrderPageAccess, SalesOrderPageNotice } from '../salesOrderPageAccess';
@@ -17,10 +18,12 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   const { order, lines } = found;
   // Ship-tos need customer view permission; without it the picker just lists none.
   // Price lines for this order's customer only (the context carries just the All Customers ones).
-  const [shipTos, notes, priceListLines] = await Promise.all([
+  const [shipTos, notes, priceListLines, readiness] = await Promise.all([
     listShipTos(order.customer_number).catch(() => []),
     listSalesOrderNotes(order.id).catch(() => []),
     getSalesOrderPriceLines(order.customer_number).catch(() => context.priceListLines),
+    getInvoiceReadiness(order.customer_number),
+    resumeInvoiceIfStuck(order.id),
   ]);
 
   return (
@@ -35,6 +38,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
       notes={notes}
       canEdit={gate.access.canEditSalesOrders}
       canSaveShipTo={gate.access.canEditCustomers}
+      invoiceBlockedReason={readiness.blockedReason}
     />
   );
 }
