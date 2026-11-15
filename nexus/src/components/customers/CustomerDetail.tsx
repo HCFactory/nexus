@@ -112,7 +112,7 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billco
     .join(", ");
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden bg-background">
+    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden">
       <header className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <Button asChild variant="ghost" size="icon-sm">
           <Link href="/customers" aria-label="Back to customers">

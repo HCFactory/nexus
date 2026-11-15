@@ -33,7 +33,7 @@ export async function resolveSalesOrderPageAccess(): Promise<SalesOrderPageAcces
 
 export function SalesOrderPageNotice({ title, message }: { title: string; message: string }) {
   return (
-    <main className="flex flex-1 items-center justify-center bg-background p-6">
+    <main className="flex flex-1 items-center justify-center p-6">
       <div className="max-w-sm text-center">
         <h1 className="text-lg font-semibold text-foreground">{title}</h1>
         <p className="mt-2 text-sm text-foreground-muted">{message}</p>

@@ -1,6 +1,6 @@
 export default function ShipmentsPage() {
   return (
-    <main className="flex-1 flex items-center justify-center bg-background">
+    <main className="flex-1 flex items-center justify-center">
       <div className="text-center">
         <svg className="w-16 h-16 mx-auto text-foreground-subtle mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}

@@ -477,7 +477,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const shipAddress = Object.fromEntries(SHIP_ADDRESS_KEYS.map((k) => [k, header[k]])) as ShipToAddressFields;
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden bg-background">
+    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden">
       <header className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <div className="min-w-0 flex-1">
           <nav aria-label="Breadcrumb" className="text-sm text-foreground-muted">
@@ -529,7 +529,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         // `relative` contains absolutely positioned descendants (e.g. the
         // sr-only Notes label); without it they position against the page
         // and stretch the document, adding an extra page scroll.
-        className="glass-backdrop relative min-h-0 flex-1 overflow-y-auto p-4"
+        className="relative min-h-0 flex-1 overflow-y-auto p-4"
         onSubmit={(e) => {
           e.preventDefault();
           save();

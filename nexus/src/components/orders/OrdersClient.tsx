@@ -244,7 +244,7 @@ export function OrdersClient({
 
   if (!user) {
     return (
-      <div className="flex flex-1 items-center justify-center bg-background">
+      <div className="flex flex-1 items-center justify-center">
         <div className="text-foreground-muted">Not authenticated</div>
       </div>
     );
@@ -254,7 +254,7 @@ export function OrdersClient({
 
   if (!user.organization_id) {
     return (
-      <main className="flex-1 flex items-center justify-center bg-background">
+      <main className="flex-1 flex items-center justify-center">
           <div className="text-center max-w-sm">
             <svg className="w-12 h-12 mx-auto text-foreground-subtle mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
@@ -266,7 +266,7 @@ export function OrdersClient({
     );
   }
   return (
-    <main className="flex-1 overflow-y-auto px-2 py-4 lg:p-6 bg-background">
+    <main className="flex-1 overflow-y-auto px-2 py-4 lg:p-6">
         <div>
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-xl lg:text-2xl font-bold text-foreground">Purchase Orders</h1>

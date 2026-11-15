@@ -17,7 +17,7 @@ export default async function AdminPage() {
   const users = await getAllUsers();
 
   return (
-    <div className="flex flex-col flex-1 overflow-y-auto bg-background">
+    <div className="flex flex-col flex-1 overflow-y-auto">
       <main className="max-w-6xl mx-auto p-6 w-full">
         <div className="mb-8">
           <h1 className="text-xl lg:text-2xl font-bold text-foreground">User Management</h1>
