@@ -298,6 +298,16 @@ describe('SalesOrderForm — fields', () => {
     expect(priceInputs()).toEqual(['10.00']);
   });
 
+  it('a typed price is saved when the form is submitted without leaving the field (Enter)', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.change(screen.getByLabelText('Unit price'), { target: { value: '9.5' } });
+    fireEvent.change(screen.getByLabelText('Disc %'), { target: { value: '3' } });
+    fireEvent.submit(screen.getByLabelText('Unit price').closest('form')!);
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
+    expect(orderActions.saveSalesOrder.mock.calls[0][0].lines[0]).toMatchObject({ unit_price: 9.5, discount_percent: 3 });
+  });
+
   it('saves a blank discount as null', async () => {
     orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
     const row = { ...lineRow, discount_percent: null } as SalesOrderLineRow;

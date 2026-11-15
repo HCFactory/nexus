@@ -207,9 +207,9 @@ function NumberCell({
 
 /**
  * Price/discount cell: shows the value the line will use (typed, BC's or the
- * estimate) and holds the raw text while being typed. On blur an empty field
- * commits null (back to BC/estimate), a valid number commits it, anything
- * else reverts.
+ * estimate) and holds the raw text while being typed. A valid number commits
+ * as it is typed (so amounts update live and Enter saves it); on blur an empty
+ * field commits null (back to BC/estimate) and invalid text reverts.
  */
 function EffectiveCell({
   label,
@@ -236,13 +236,13 @@ function EffectiveCell({
       disabled={disabled}
       value={text ?? shown}
       className={cellInput}
-      onChange={(e) => setText(e.target.value)}
+      onChange={(e) => {
+        setText(e.target.value);
+        const n = parseNumber(e.target.value);
+        if (n !== null && valid(n)) onCommit(n);
+      }}
       onBlur={() => {
-        if (text !== null) {
-          const n = parseNumber(text);
-          if (text.trim() === '') onCommit(null);
-          else if (n !== null && valid(n)) onCommit(n);
-        }
+        if (text !== null && text.trim() === '') onCommit(null);
         setText(null);
       }}
     />

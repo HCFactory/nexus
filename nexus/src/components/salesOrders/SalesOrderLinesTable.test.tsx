@@ -71,14 +71,24 @@ describe('SalesOrderLinesTable', () => {
     expect((screen.getByLabelText('Unit price') as HTMLInputElement).value).toBe('11.25');
   });
 
-  it('typing a price then blurring stores it', () => {
+  it('typing a price stores it as typed; blurring keeps it', () => {
     const onChange = setup([line()]);
     const price = screen.getByLabelText('Unit price') as HTMLInputElement;
     fireEvent.change(price, { target: { value: '9.7' } });
     expect(price.value).toBe('9.7');
-    expect(onChange).not.toHaveBeenCalled();
+    expect((onChange.mock.calls.at(-1)![0] as LineDraft[])[0].unit_price).toBe(9.7);
     fireEvent.blur(price);
     expect((onChange.mock.calls.at(-1)![0] as LineDraft[])[0].unit_price).toBe(9.7);
+  });
+
+  it('typing a price updates the amount cell before blur', () => {
+    render(<Stateful initial={[line({ quantity: 2 })]} />);
+    expect(amountCell()).toHaveTextContent('25.00');
+    fireEvent.change(screen.getByLabelText('Unit price'), { target: { value: '10' } });
+    expect(amountCell()).toHaveTextContent('20.00');
+    expect((screen.getByLabelText('Unit price') as HTMLInputElement).value).toBe('10');
+    fireEvent.change(screen.getByLabelText('Disc %'), { target: { value: '5' } });
+    expect(amountCell()).toHaveTextContent('19.00');
   });
 
   it('clearing a typed price stores null and shows the effective value again', () => {
@@ -209,6 +219,7 @@ describe('SalesOrderLinesTable', () => {
     const disc = screen.getByLabelText('Disc %') as HTMLInputElement;
     expect(disc.value).toBe('10');
     fireEvent.change(disc, { target: { value: '150' } });
+    expect(onChange).not.toHaveBeenCalled();
     fireEvent.blur(disc);
     expect(onChange).not.toHaveBeenCalled();
     expect(disc.value).toBe('10');
