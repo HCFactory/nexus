@@ -77,6 +77,9 @@
   --card-shadow-1: oklch(0 0 0 / 0.06);
   --card-shadow-2: oklch(0 0 0 / 0.05);
   --inset-highlight: oklch(1 0 0 / 0.6);
+  --liquid-glow: oklch(0.55 0.05 240 / 0.25);
+  --liquid-edge: oklch(1 0 0 / 0.9);
+  --liquid-tint: oklch(1 0 0 / 0.35);
 
   /* Radius — heavily rounded */
   --radius: 0.875rem;
@@ -157,6 +160,9 @@
   --card-shadow-1: oklch(0 0 0 / 0.3);
   --card-shadow-2: oklch(0 0 0 / 0.2);
   --inset-highlight: oklch(1 0 0 / 0.06);
+  --liquid-glow: oklch(1 0 0 / 0.3);
+  --liquid-edge: oklch(1 0 0 / 0.55);
+  --liquid-tint: oklch(1 0 0 / 0.03);
 
   --sidebar:           oklch(0.20 0.014 240);
   --sidebar-foreground: var(--foreground);
@@ -285,23 +291,42 @@
     -webkit-backdrop-filter: blur(24px) saturate(1.6);
     border: 1px solid var(--glass-border);
   }
-  /* A frosted card: translucent fill, blur, a soft light edge on top and a drop shadow. */
+  /* Liquid glass card: a blurred, gently warped backdrop (the #glass-distortion
+     SVG filter from <GlassFilter />), a light inner edge and a soft outer glow.
+     The two layers sit behind the card's content (isolation keeps them inside). */
   .glass-card {
-    background: linear-gradient(150deg, oklch(1 0 0 / 0.08), oklch(1 0 0 / 0.015) 55%), var(--glass-bg);
-    backdrop-filter: blur(18px) saturate(1.5);
-    -webkit-backdrop-filter: blur(18px) saturate(1.5);
-    border: 1px solid var(--glass-border);
-    box-shadow: inset 0 1px 0 var(--inset-highlight),
-                0 1px 2px var(--card-shadow-1),
-                0 8px 24px var(--card-shadow-2);
+    position: relative;
+    isolation: isolate;
+    border-radius: 24px;
+    box-shadow: 0 0 21px -8px var(--liquid-glow), 0 8px 24px var(--card-shadow-2);
+  }
+  .glass-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    box-shadow: inset 0 0 14px -4px var(--liquid-edge);
+    background-color: var(--liquid-tint);
+    pointer-events: none;
+  }
+  .glass-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    border-radius: inherit;
+    backdrop-filter: blur(22px);
+    filter: url(#glass-distortion);
+    pointer-events: none;
   }
   /* Soft blue glows behind glass cards, so the frosting has something to blur. */
   .glass-backdrop {
     background-color: var(--background);
     background-image:
-      radial-gradient(40rem 28rem at 12% 0%, color-mix(in oklch, var(--primary) 16%, transparent), transparent 70%),
-      radial-gradient(36rem 30rem at 95% 45%, color-mix(in oklch, var(--primary) 11%, transparent), transparent 70%),
-      radial-gradient(32rem 24rem at 30% 100%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 70%);
+      radial-gradient(40rem 28rem at 12% 0%, oklch(0.6 0.21 255 / 0.16), transparent 70%),
+      radial-gradient(36rem 30rem at 95% 45%, oklch(0.6 0.21 255 / 0.11), transparent 70%),
+      radial-gradient(32rem 24rem at 30% 100%, oklch(0.6 0.21 255 / 0.08), transparent 70%);
     background-attachment: local;
   }
   .blue-glow {

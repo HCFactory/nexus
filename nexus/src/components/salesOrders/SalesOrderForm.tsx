@@ -38,6 +38,7 @@ import { CustomerPicker, customerLabel } from './CustomerPicker';
 import { NotesPanel } from './NotesPanel';
 import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
+import { GlassFilter } from '@/components/ui/GlassFilter';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
 
@@ -198,7 +199,7 @@ function withCurrent(options: Option[], current: string): Option[] {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="glass-card rounded-xl p-4">
+    <section className="glass-card p-4">
       <h2 className="mb-3 text-sm font-semibold text-foreground">{title}</h2>
       {children}
     </section>
@@ -535,9 +536,10 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           save();
         }}
       >
+        <GlassFilter />
         <div className="mx-auto max-w-6xl space-y-4">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
-            <section className="glass-card rounded-xl p-4">
+            <section className="glass-card p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-foreground">
                   {order?.bc_order_number ? `Order ${order.bc_order_number}` : 'Order'}
