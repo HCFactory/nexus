@@ -112,11 +112,11 @@ On reaching `posted`:
    - **Customer:** the Bill.com customer id from the customer's link.
    - **Invoice number:** the BC External Document No. (the order's Invoice #).
    - **Invoice date and due date:** from the posted BC invoice.
-   - **Lines:** from the **posted BC invoice's lines** (BC deletes the sales order on posting, and its posted amounts are the source of truth). One Bill.com line per posted line: item number and description, quantity, and unit price after discount. Read them from BC at this step; Nexus already reads posted invoice lines for Receivables (`salesInvoiceLineSync.ts`). *(Builder's call, confirmed in review.)*
+   - **Lines:** from **Nexus's order lines** *(decided by the user, 2026-11-15)*. One Bill.com line per order line: item number and description, quantity, and unit price after discount. Price and discount are the line's effective values as Nexus holds them after the last sync (BC's price and discount read back, or the rep's typed values). Because Create invoice only runs on an order that is In BC and unchanged, these match what BC posts. No extra BC read of posted invoice lines is needed.
    - **Tax:** BC's posted tax amount, as Bill.com's sales tax field if it has one, otherwise a "Sales tax" line.
    - **Customer PO:** if Bill.com accepts it (O1).
    - **Customer email:** not sent. Create with Bill.com's `sendEmail` flag off. O3 confirms in the sandbox that nothing goes to the customer, and that the invoice stays sendable later for project 3.
-3. **Totals must match.** If the Bill.com total that would be created differs from BC's posted total including tax, record the difference as an error (`billcom_failed`) rather than creating a mismatched invoice. Where Bill.com recomputes a line as quantity × price and lands a cent off BC's line amount, send the line as quantity 1 at BC's line amount, keeping the quantity in the description.
+3. **Totals must match.** If the Bill.com total that would be created differs from BC's posted total including tax, record the difference as an error (`billcom_failed`) rather than creating a mismatched invoice. Each line's amount is quantity × price after discount, rounded to the cent (the same rule as the order form's amounts). If the lines plus BC's posted tax don't add up to BC's posted total, the step fails with the difference shown, and nobody gets a mismatched invoice.
 4. Record the Bill.com invoice id and go to `done`.
 
 If Bill.com refuses or is unreachable, record its message and go to `billcom_failed`. The BC invoice stands. The order shows "Not in Bill.com" with Retry. Bill.com's limit of 3 requests at a time applies; the process makes at most one request at a time.
@@ -176,4 +176,5 @@ Sales orders (project 1) and Create invoice go live together.
 - **P1. Permission — decided by the user (2026-11-15).** Create invoice and its Retry use the existing "Edit sales orders" permission. There is no separate "Create invoices" permission.
 - **P2. Statuses.** Create invoice is allowed from **Final or Pulled**, not Draft.
 - **P3. Dates.** Invoice date = posting date = today, with no date picker. This matches the sales-orders design note.
+- **P5. Bill.com lines — decided by the user.** From Nexus's order lines (see Step 2), checked against BC's posted total.
 - **P4. Failure after posting.** The BC invoice always stands, and the order is Invoiced even if Bill.com fails. Bill.com is retried separately.
