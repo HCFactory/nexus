@@ -7,6 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import type { SyncState } from '@/types/salesOrders';
 
 interface Props {
+  /** Text size/line classes for the row; defaults to text-sm. */
+  className?: string;
   state: SyncState;
   error: string | null;
   /** False hides Try again / Overwrite (read-only users). */
@@ -67,6 +69,7 @@ function useStuck(state: SyncState, claimedUntil: string | null | undefined, upd
 
 /** The order's sync state with BC, plus the action that fixes a failed, stuck or conflicting sync. */
 export function SyncBadge({
+  className,
   state,
   error,
   canAct = true,
@@ -80,7 +83,7 @@ export function SyncBadge({
   const stuck = useStuck(state, claimedUntil, updatedAt);
 
   return (
-    <div className="flex flex-wrap items-center gap-2 text-sm">
+    <div className={`flex flex-wrap items-center gap-2 ${className ?? 'text-sm'}`}>
       <span className={`inline-flex items-center gap-1.5 ${TEXT[state]}`} role="status">
         <span aria-hidden className={`size-2 rounded-full ${DOT[state]}`} />
         {label(state, error)}

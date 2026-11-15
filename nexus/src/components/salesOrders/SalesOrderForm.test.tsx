@@ -403,7 +403,7 @@ describe('SalesOrderForm — fields', () => {
   it('a new order shows no sync badge and no Delete', () => {
     renderForm();
     expect(screen.queryByText('In BC')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete order' })).toBeNull();
   });
 });
 
@@ -452,16 +452,16 @@ describe('SalesOrderForm — status and locking', () => {
 
   it('Delete shows for Draft and Final only', () => {
     renderForm({ order: order({ status: 'pulled' }), lines: [lineRow], shipTos: [dock] });
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete order' })).toBeNull();
     cleanup();
     renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
-    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete order' })).toBeInTheDocument();
   });
 
   it('Delete asks for confirmation, then deletes and goes back to the list', async () => {
     orderActions.deleteSalesOrder.mockResolvedValue({ ok: true });
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete order' }));
     expect(orderActions.deleteSalesOrder).not.toHaveBeenCalled();
     const dialog = screen.getByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete order' }));
@@ -473,7 +473,7 @@ describe('SalesOrderForm — status and locking', () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock], canEdit: false });
     expect(screen.getByRole('combobox', { name: 'Status' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete order' })).toBeNull();
   });
 
   it('shows a blocked/missing customer by its stored number and name', () => {
@@ -551,6 +551,31 @@ describe('SalesOrderForm — invoice #', () => {
     expect(invoice().value).toBe('INV-7');
   });
 
+  it('Enter after a manual change asks first; Keep then saves with the new number', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.focus(invoice());
+    fireEvent.change(invoice(), { target: { value: 'INV-7' } });
+    fireEvent.keyDown(invoice(), { key: 'Enter' });
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('to INV-7. Keep it?');
+    expect(orderActions.saveSalesOrder).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep' }));
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalledTimes(1));
+    expect(orderActions.saveSalesOrder.mock.calls[0][0].invoice_number).toBe('INV-7');
+  });
+
+  it('Enter then Undo restores the number and does not save', async () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.focus(invoice());
+    fireEvent.change(invoice(), { target: { value: 'INV-7' } });
+    fireEvent.keyDown(invoice(), { key: 'Enter' });
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(invoice().value).toBe('SO-10234 / PO-1');
+    expect(orderActions.saveSalesOrder).not.toHaveBeenCalled();
+  });
+
   it('clearing the field shows the auto value again', () => {
     renderForm({ order: order({ invoice_number: 'INV-1' }), lines: [lineRow] });
     expect(invoice().value).toBe('INV-1');
@@ -584,7 +609,17 @@ describe('SalesOrderForm — layout', () => {
 
   it('Delete sits in the header', () => {
     renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
-    expect(screen.getByRole('button', { name: 'Delete' }).closest('header')).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Delete order' }).closest('header')).not.toBeNull();
+  });
+
+  it('header order: sync state above Status, Save, then the Delete icon', () => {
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    const header = screen.getByRole('banner');
+    const status = within(header).getByRole('status');
+    const buttons = within(header).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+    expect(buttons.slice(-2)).toEqual(['Save', 'Delete order']);
+    expect(within(header).getByRole('button', { name: 'Delete order' })).toHaveTextContent('');
+    expect(status.compareDocumentPosition(within(header).getByRole('button', { name: 'Save' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('hides the posting groups and the removed dates', () => {

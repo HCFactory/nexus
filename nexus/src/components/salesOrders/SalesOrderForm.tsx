@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import Link from 'next/link';
+import { Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 import {
@@ -223,7 +224,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const [requestedDate, setRequestedDate] = useState(order?.requested_delivery_date ?? '');
   const [invoiceNumber, setInvoiceNumber] = useState<string | null>(order?.invoice_number ?? null);
   const invoiceAtFocus = useRef<{ value: string | null; shown: string }>({ value: null, shown: '' });
-  const [invoiceChange, setInvoiceChange] = useState<{ from: string; to: string } | null>(null);
+  const [invoiceChange, setInvoiceChange] = useState<{ from: string; to: string; saveAfter: boolean } | null>(null);
   const [customerPo, setCustomerPo] = useState(order?.customer_po ?? '');
   const [draftLines, setDraftLines] = useState<LineDraft[]>(() => {
     const estimates = new Map(items.map((i) => [i.bc_item_number, i.unit_price]));
@@ -365,6 +366,13 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     if (row) setHeader((h) => applyShipTo(h, customer, row, companyLocation));
   }
 
+  /** Opens the invoice # confirm if the rep changed it since focusing the field; true when it opened. */
+  function askInvoiceChange(saveAfter: boolean): boolean {
+    if (invoiceNumber === invoiceAtFocus.current.value || invoiceAtFocus.current.shown === invoiceShown) return false;
+    setInvoiceChange((c) => ({ from: invoiceAtFocus.current.shown, to: invoiceShown, saveAfter: saveAfter || (c?.saveAfter ?? false) }));
+    return true;
+  }
+
   function save() {
     setError(null);
     if (!customerId || !customerNumber) {
@@ -490,27 +498,40 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             {order ? order.bc_order_number || 'Not yet in BC' : 'New sales order'}
           </h1>
         </div>
-        {canEdit && (
-          <Button type="submit" variant="blue-glass" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
-        )}
-        <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy} />
-        {order && (
-          <SyncBadge
-            state={order.sync_state}
-            error={order.sync_error}
-            canAct={canEdit}
-            busy={busy}
-            claimedUntil={order.claimed_until}
-            updatedAt={order.updated_at}
-            onRetry={() => runSync(false)}
-            onOverwrite={() => runSync(true)}
-          />
-        )}
-        {canEdit && order && canDelete(order.status) && (
-          <Button type="button" variant="outline" disabled={busy} onClick={() => setConfirmDelete(true)}>
-            Delete
-          </Button>
-        )}
+        {/* Sync state sits above the buttons; the column is no taller than the title block. */}
+        <div className="flex flex-col items-end">
+          {order && (
+            <SyncBadge
+              className="text-xs leading-4"
+              state={order.sync_state}
+              error={order.sync_error}
+              canAct={canEdit}
+              busy={busy}
+              claimedUntil={order.claimed_until}
+              updatedAt={order.updated_at}
+              onRetry={() => runSync(false)}
+              onOverwrite={() => runSync(true)}
+            />
+          )}
+          <div className="flex items-center gap-2">
+            <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy} />
+            {canEdit && (
+              <Button type="submit" variant="blue-glass" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+            )}
+            {canEdit && order && canDelete(order.status) && (
+              <button
+                type="button"
+                aria-label="Delete order"
+                title="Delete order"
+                disabled={busy}
+                onClick={() => setConfirmDelete(true)}
+                className="inline-flex size-9 items-center justify-center rounded-md text-foreground-muted transition-colors hover:bg-destructive/15 hover:text-destructive disabled:opacity-50"
+              >
+                <Trash2 className="size-4" />
+              </button>
+            )}
+          </div>
+        </div>
       </header>
 
       {error && (
@@ -587,10 +608,10 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                       disabled={locked || busy}
                       onFocus={() => { invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown }; }}
                       onChange={(e) => setInvoiceNumber(e.target.value === '' ? null : e.target.value)}
-                      onBlur={() => {
-                        if (invoiceNumber !== invoiceAtFocus.current.value && invoiceAtFocus.current.shown !== invoiceShown) {
-                          setInvoiceChange({ from: invoiceAtFocus.current.shown, to: invoiceShown });
-                        }
+                      onBlur={() => { askInvoiceChange(false); }}
+                      onKeyDown={(e) => {
+                        // Enter would save the form: confirm a changed invoice # first, then save on Keep.
+                        if (e.key === 'Enter' && askInvoiceChange(true)) e.preventDefault();
                       }}
                     />
                   </div>
@@ -708,7 +729,16 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             >
               Undo
             </Button>
-            <Button type="button" size="sm" onClick={() => setInvoiceChange(null)}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const saveAfter = invoiceChange?.saveAfter ?? false;
+                invoiceAtFocus.current = { value: invoiceNumber, shown: invoiceShown };
+                setInvoiceChange(null);
+                if (saveAfter) save();
+              }}
+            >
               Keep
             </Button>
           </DialogFooter>
