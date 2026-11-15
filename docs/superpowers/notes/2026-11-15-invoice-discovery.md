@@ -10,7 +10,8 @@
 - **Posted invoice:** `GET /salesInvoices?$filter=orderNumber eq '<no>'`. Fields: `id`, `number`, `orderNumber`, `externalDocumentNumber`, `invoiceDate`, `postingDate`, `dueDate`, `totalAmountExcludingTax`, `totalTaxAmount`, `totalAmountIncludingTax`, `status`, `customerNumber`. Existing invoices posted from BC have `orderNumber` filled (e.g. INV-100378 ← W-100488, ext "W-100488 / PO# 2282812").
 - **Allowed posting dates (important).** TEST's General Ledger Setup allowed posting only from 2021-01-01 to 2025-12-31, so posting with today's date failed with `Posting Date is not within your range of allowed posting dates.` Nothing was posted. `generalLedgerSetup` is read-only over the API (405 on PATCH), so the user changes it in BC. **Go-live:** check production's General Ledger Setup (and any User Setup line for the Nexus app user) covers today.
 - **W-100528** (test order): its Document/Posting dates were set to 2026-11-15 by the probe. It is the order chosen (with the user's go-ahead) for the posting test.
-- Pending: the posting result (order deleted after posting? invoice found by `orderNumber`?), once the user widens the allowed posting dates.
+- **Posting result (after the user set Allow Posting To = 2026-12-31 in TEST):** `shipAndInvoice` → **204**. Posted invoice **INV-100411** (`id 143fbb46-e8e0-f111-84e4-7ced8d88ddac`), orderNumber W-100528, invoice/posting date 2026-11-15, due 2026-12-15, 24.50 + 0.12 = 24.62, status Open. Found immediately by `salesInvoices?$filter=orderNumber eq 'W-100528'`. **BC deletes the sales order** (GET `salesOrders({id})` → 404).
+- Nexus's row for W-100528 is now stale (its BC order is gone). Task 6's exclusions don't cover it, since its `invoice_state` is `none`. Leave it alone; don't save or sync it.
 
 ## Bill.com (sandbox only: `gateway.stage.bill.com`)
 
