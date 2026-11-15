@@ -491,7 +491,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           </h1>
         </div>
         {canEdit && (
-          <Button type="submit" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+          <Button type="submit" variant="blue-glass" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
         )}
         <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy} />
         {order && (
