@@ -118,7 +118,7 @@ async function shipToCodeToSend(deps: OrderSyncDeps, order: SalesOrderRow): Prom
   return row ? order.ship_to_code : ''
 }
 
-async function loadOrder(deps: OrderSyncDeps, orderId: string): Promise<SalesOrderRow> {
+export async function loadOrder(deps: OrderSyncDeps, orderId: string): Promise<SalesOrderRow> {
   const row = check(
     await ordersQuery(deps)
       .select('*')
@@ -132,7 +132,7 @@ async function loadOrder(deps: OrderSyncDeps, orderId: string): Promise<SalesOrd
   return row
 }
 
-async function loadLines(deps: OrderSyncDeps, orderId: string): Promise<SalesOrderLineRow[]> {
+export async function loadLines(deps: OrderSyncDeps, orderId: string): Promise<SalesOrderLineRow[]> {
   const rows = check(
     await deps.supabase
       .from(LINES)
@@ -146,10 +146,38 @@ async function loadLines(deps: OrderSyncDeps, orderId: string): Promise<SalesOrd
   return rows ?? []
 }
 
-function listBcLines(deps: OrderSyncDeps, no: string): Promise<BcRecord[]> {
+function listBcLines(deps: Pick<OrderSyncDeps, 'transport'>, no: string): Promise<BcRecord[]> {
   return deps.transport.list(SALES_LINE_SOURCE, {
     filter: `Document_Type eq 'Order' and Document_No eq ${quote(no)}`,
   })
+}
+
+/** BC's current header and lines of order `no`. */
+export async function readBcOrder(
+  deps: Pick<OrderSyncDeps, 'transport'>,
+  no: string,
+): Promise<{ header: BcRecord; lines: BcRecord[] }> {
+  const header = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
+  const lines = await listBcLines(deps, no)
+  return { header, lines }
+}
+
+/**
+ * The "Changed in BC" check: BC's order differs from what Nexus last wrote.
+ * A removed row whose BC line is already gone is finished work, not a change
+ * in BC; removed rows still in BC keep their check. bc_snapshot is null until
+ * Nexus's first header write is stored: the header has nothing of Nexus's to
+ * protect yet, so only the lines are compared (any BC line unknown to Nexus
+ * is still a conflict).
+ */
+export function orderChangedInBc(
+  order: Pick<SalesOrderRow, 'bc_snapshot'>,
+  lines: SalesOrderLineRow[],
+  bc: { header: BcRecord; lines: BcRecord[] },
+): boolean {
+  const inBc = new Set(bc.lines.map(parseLineNo))
+  const compared = lines.filter((l) => !l.removed || (l.bc_line_no !== null && inBc.has(l.bc_line_no)))
+  return bcChangedOutsideNexus({ bc_snapshot: order.bc_snapshot, lines: compared }, bc)
 }
 
 /** The fields of `wanted` whose value differs from BC's current value. */
@@ -220,17 +248,11 @@ export async function syncSalesOrder(
       bcLines = []
     } else {
       no = order.bc_order_number
-      const header = await deps.transport.get(SALES_ORDER_SOURCE, orderKey(no))
-      bcLines = await listBcLines(deps, no)
+      const current = await readBcOrder(deps, no)
+      const header = current.header
+      bcLines = current.lines
       if (!opts.overwrite) {
-        const inBc = new Set(bcLines.map(parseLineNo))
-        // A removed row whose BC line is already gone is finished work, not a
-        // change in BC; removed rows still in BC keep their check.
-        const compared = lines.filter((l) => !l.removed || (l.bc_line_no !== null && inBc.has(l.bc_line_no)))
-        // bc_snapshot is null until Nexus's first header write is stored: the
-        // header has nothing of Nexus's to protect yet, so only the lines are
-        // compared (any BC line unknown to Nexus is still a conflict).
-        if (bcChangedOutsideNexus({ bc_snapshot: order.bc_snapshot, lines: compared }, { header, lines: bcLines })) {
+        if (orderChangedInBc(order, lines, current)) {
           await updateOrder(deps, order.id, { sync_state: 'conflict', sync_error: CHANGED_IN_BC, updated_at: deps.now() })
           return 'conflict'
         }
