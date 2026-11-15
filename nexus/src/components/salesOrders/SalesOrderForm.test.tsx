@@ -352,6 +352,17 @@ describe('SalesOrderForm — fields', () => {
     expect(priceInputs()).toEqual(['12.50']);
   });
 
+  it('switching customer drops BC’s price for the estimate; switching back restores it', () => {
+    const ctx = { ...context, priceListLines: [priceLine({ unit_price: 4.5 })] };
+    const synced = { ...lineRow, bc_unit_price: 2.73 } as SalesOrderLineRow;
+    renderForm({ order: order(), lines: [synced], shipTos: [dock], context: ctx });
+    expect(priceInputs()).toEqual(['2.73']);
+    pickCustomer('C2 – Beta Bakery');
+    expect(priceInputs()).toEqual(['12.50']);
+    pickCustomer('C1 – Acme Foods');
+    expect(priceInputs()).toEqual(['2.73']);
+  });
+
   it('a pending order shows live totals', () => {
     renderForm({ order: order({ sync_state: 'pending' }), lines: [lineRow], shipTos: [dock], context: taxed });
     expect(totals()).toEqual(['25.00', '2.06', '27.06']);
@@ -577,6 +588,19 @@ describe('SalesOrderForm — layout', () => {
     const els = ['Customer PO', 'Invoice # (Ext. Doc No.)', 'Delivery method', 'Requested delivery date'].map((l) => screen.getByLabelText(l));
     for (let i = 0; i < els.length - 1; i++) {
       expect(els[i].compareDocumentPosition(els[i + 1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it('stacks the Order block fields in a single column', () => {
+    renderForm();
+    const box = screen.getByTestId('order-fields');
+    expect(box.className).not.toMatch(/grid-cols/);
+  });
+
+  it('form inputs keep the background in dark mode', () => {
+    renderForm();
+    for (const l of ['Customer PO', 'Invoice # (Ext. Doc No.)', 'Order date', 'Requested delivery date']) {
+      expect(screen.getByLabelText(l).className).toContain('dark:bg-background');
     }
   });
 });

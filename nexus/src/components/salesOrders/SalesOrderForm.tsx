@@ -62,7 +62,7 @@ const POLL_MS = 4000;
 const MAX_POLLS = 15;
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
-const INPUT_CLASS = 'border-input bg-background';
+const INPUT_CLASS = 'border-input bg-background dark:bg-background';
 const SELECT_CLASS =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
 
@@ -276,7 +276,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     );
 
   // Read-back amounts and BC prices arrive on refresh; show them without discarding the rep's unsaved edits.
-  // They only apply while the line still has the item and quantity BC priced.
+  // They only apply while the line still has the item and quantity BC priced, for the same customer.
   const readBack = new Map(
     lines.map((l) => [
       l.id,
@@ -289,10 +289,13 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
       },
     ]),
   );
+  // BC re-prices when the customer changes, so its old price, discount and amount no longer apply.
+  const sameCustomer = !order || customerId === order.customer_id;
   const shownLines = draftLines.map((l) => {
     const est = estimateOf(l);
     const withEstimate = { ...l, estimate_price: est.unitPrice, estimate_discount_percent: est.discountPercent };
     const r = l.id ? readBack.get(l.id) : undefined;
+    if (!sameCustomer) return { ...withEstimate, amount_incl_tax: null, bc_unit_price: null, bc_line_discount_percent: null };
     return r && r.item === l.item_number && r.quantity === l.quantity
       ? { ...withEstimate, amount_incl_tax: r.amount, bc_unit_price: r.price, bc_line_discount_percent: r.discount }
       : withEstimate;
@@ -551,8 +554,8 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                   />
                 </div>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-1.5 md:col-span-2">
+              <div className="space-y-4" data-testid="order-fields">
+                <div className="space-y-1.5">
                   <Label htmlFor="so-customer" className={LABEL}>Customer</Label>
                   <CustomerPicker
                     customers={customers}

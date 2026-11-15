@@ -15,7 +15,7 @@ export type BillingValues = Pick<
 >;
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
-const INPUT_CLASS = 'border-input bg-background';
+const INPUT_CLASS = 'border-input bg-background dark:bg-background';
 
 const BILLING_FIELDS: { key: keyof BillingValues; label: string; maxLength: number; type?: string }[] = [
   { key: 'bill_address', label: 'Address', maxLength: 100 },
