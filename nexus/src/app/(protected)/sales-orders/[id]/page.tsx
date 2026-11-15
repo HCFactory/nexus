@@ -29,8 +29,9 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   return (
     <SalesOrderForm
       // A save bumps local_version, which resets the form to the saved order. Sync
-      // refreshes (sync state, totals, amounts) keep the version, so unsaved edits survive them.
-      key={`${order.id}:${order.local_version}`}
+      // refreshes (sync state, totals, amounts) keep the version, so unsaved edits survive them. Each invoice
+      // step change remounts the (locked) form, since the invoice process does not bump local_version.
+      key={`${order.id}:${order.local_version}:${order.invoice_state}`}
       order={order}
       lines={lines}
       context={{ ...context, priceListLines }}

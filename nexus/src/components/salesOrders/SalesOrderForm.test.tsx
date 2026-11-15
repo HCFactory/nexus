@@ -711,6 +711,13 @@ describe('invoicing in the header', () => {
     expect(screen.getByText('Invoice SI-1 ·')).toBeInTheDocument();
     expect(screen.getByText('Appears in Receivables after the next Receivables sync.')).toBeInTheDocument();
   });
+  it('the Status dropdown shows Invoiced for an invoiced order, and a fresh key picks up the new status', () => {
+    const props: Omit<Props, 'order'> = { lines: [lineRow], context, shipTos: [], canEdit: true, canSaveShipTo: true };
+    const { rerender } = render(<SalesOrderForm key="so-1:3:posting" order={final({ invoice_state: 'posting' })} {...props} />);
+    expect(screen.getByLabelText('Status')).toHaveTextContent('Final');
+    rerender(<SalesOrderForm key="so-1:3:done" order={final({ status: 'invoiced', invoice_state: 'done' })} {...props} />);
+    expect(screen.getByLabelText('Status')).toHaveTextContent('Invoiced');
+  });
   describe('polling', () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
