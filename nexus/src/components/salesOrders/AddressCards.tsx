@@ -2,7 +2,7 @@
 
 import { useState, type ComponentProps, type ReactNode } from 'react';
 import { Pencil } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { GlassButton as Button } from './GlassButton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { OrderHeaderDefaults } from '@/types/salesOrders';
@@ -46,14 +46,9 @@ function Card({ title, editing, canEdit, editLabel, onToggle, children }: {
           (editing ? (
             <Button type="button" size="sm" variant="outline" onClick={onToggle}>Done</Button>
           ) : (
-            <button
-              type="button"
-              aria-label={editLabel}
-              className="rounded-md p-1.5 text-foreground-subtle hover:bg-surface-sunken hover:text-foreground"
-              onClick={onToggle}
-            >
+            <Button type="button" variant="ghost" size="icon-sm" aria-label={editLabel} onClick={onToggle}>
               <Pencil className="size-4" />
-            </button>
+            </Button>
           ))}
       </div>
       {children}

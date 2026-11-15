@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 import type { SalesOrderItemOption } from '@/app/actions/salesOrders';
 import { effectiveDiscount, effectivePrice, lineAmounts } from '@/lib/salesOrders/lineAmounts';
 import type { LineDraft } from '@/types/salesOrders';
+import { GlassButton as Button } from './GlassButton';
 
 interface Props {
   lines: LineDraft[];
@@ -338,15 +340,17 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
                 </div>
               </td>
               <td className="px-3 py-2 text-right">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon-xs"
                   aria-label="Remove line"
                   disabled={locked}
                   onClick={() => onChange(lines.filter((l) => l.key !== line.key))}
-                  className="rounded px-2 py-1 text-foreground-muted hover:text-destructive disabled:opacity-40"
+                  className="text-foreground-muted! hover:text-destructive!"
                 >
-                  ×
-                </button>
+                  <X className="size-3.5" />
+                </Button>
               </td>
             </tr>
           ))}

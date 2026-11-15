@@ -17,7 +17,8 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
         <ThemeProvider
-          attribute="class"
+          // data-theme too: Glisse (liquid-glass buttons) reads it for light/dark.
+          attribute={["class", "data-theme"]}
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange

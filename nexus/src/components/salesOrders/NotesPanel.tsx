@@ -3,7 +3,7 @@
 import { useState, useTransition } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { addSalesOrderNote, deleteSalesOrderNote, updateSalesOrderNote } from '@/app/actions/salesOrderNotes';
-import { Button } from '@/components/ui/button';
+import { GlassButton as Button } from './GlassButton';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { SalesOrderNoteView } from '@/types/salesOrders';
 
@@ -25,7 +25,7 @@ const onSubmitKey = (run: () => void) => (e: React.KeyboardEvent<HTMLTextAreaEle
   }
 };
 
-const ICON_BUTTON = 'size-6 text-foreground-muted hover:text-foreground';
+const ICON_BUTTON = 'text-foreground-muted! hover:text-foreground!';
 
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -97,12 +97,12 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
           />
           <Button
             type="button"
-            size="icon"
+            size="icon-sm"
             aria-label="Add note"
             title="Add note (⌘/Ctrl + Enter)"
             disabled={busy || draft.trim() === ''}
             onClick={add}
-            className="absolute bottom-2 right-2 size-7 rounded-full"
+            className="absolute! bottom-2 right-2"
           >
             <Plus className="size-4" />
           </Button>
@@ -124,7 +124,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon"
+                      size="icon-xs"
                       className={ICON_BUTTON}
                       aria-label="Edit note"
                       disabled={busy}
@@ -135,7 +135,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon"
+                      size="icon-xs"
                       className={ICON_BUTTON}
                       aria-label="Delete note"
                       disabled={busy}

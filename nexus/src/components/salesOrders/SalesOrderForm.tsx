@@ -13,7 +13,7 @@ import {
   type SalesOrderFormContext,
 } from '@/app/actions/salesOrders';
 import { refreshShipTos, saveShipToAction } from '@/app/actions/shipToAddresses';
-import { Button } from '@/components/ui/button';
+import { GlassButton as Button } from './GlassButton';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
