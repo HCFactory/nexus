@@ -33,10 +33,11 @@ import type {
   SalesOrderRow,
   ShipToRow,
 } from '@/types/salesOrders';
+import { BillingCard, ShipToCard } from './AddressCards';
 import { CustomerPicker, customerLabel } from './CustomerPicker';
 import { NotesPanel } from './NotesPanel';
 import { SalesOrderLinesTable } from './SalesOrderLinesTable';
-import { ShipToPicker, type ShipToAddressFields, type ShipToChoice } from './ShipToPicker';
+import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
 
@@ -76,20 +77,6 @@ const HEADER_KEYS: (keyof OrderHeaderDefaults)[] = [
 const EMPTY_HEADER = Object.fromEntries(
   HEADER_KEYS.map((k) => [k, k === 'tax_liable' ? false : '']),
 ) as unknown as OrderHeaderDefaults;
-
-const BILLING_FIELDS: { key: keyof OrderHeaderDefaults; label: string; maxLength: number; type?: string }[] = [
-  { key: 'bill_address', label: 'Address', maxLength: 100 },
-  { key: 'bill_address_2', label: 'Address 2', maxLength: 50 },
-  { key: 'bill_city', label: 'City', maxLength: 30 },
-  { key: 'bill_state', label: 'State', maxLength: 30 },
-  { key: 'bill_post_code', label: 'ZIP code', maxLength: 20 },
-  { key: 'bill_country', label: 'Country/Region', maxLength: 10 },
-  { key: 'bill_contact_no', label: 'Contact no.', maxLength: 20 },
-  { key: 'bill_phone', label: 'Phone no.', maxLength: 30, type: 'tel' },
-  { key: 'bill_mobile', label: 'Mobile phone no.', maxLength: 30, type: 'tel' },
-  { key: 'bill_email', label: 'Email', maxLength: 80, type: 'email' },
-  { key: 'bill_email_cc', label: 'Email CC', maxLength: 80 },
-];
 
 type TermKey = 'payment_terms_code' | 'shipment_method_code' | 'tax_area_code';
 const INVOICING_FIELDS: { key: TermKey; label: string; list: string }[] = [
@@ -653,29 +640,14 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             </dl>
           </Section>
 
-          <section className="rounded-xl border border-border bg-surface-raised p-4 card-shadow">
-            <fieldset disabled={locked || busy} className="min-w-0">
-              <legend className="mb-3 text-sm font-semibold text-foreground">Billing address</legend>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {BILLING_FIELDS.map((f) => (
-                  <div key={f.key} className={`space-y-1.5 ${f.key === 'bill_address' || f.key === 'bill_address_2' ? 'sm:col-span-2' : ''}`}>
-                    <Label htmlFor={`so-${f.key}`} className={LABEL}>{f.label}</Label>
-                    <Input
-                      id={`so-${f.key}`}
-                      className={INPUT_CLASS}
-                      type={f.type ?? 'text'}
-                      value={String(header[f.key] ?? '')}
-                      maxLength={f.maxLength}
-                      onChange={(e) => setField(f.key, e.target.value as never)}
-                    />
-                  </div>
-                ))}
-              </div>
-            </fieldset>
-          </section>
-
-          <Section title="Ship to">
-            <ShipToPicker
+          <div className="grid gap-4 md:grid-cols-2">
+            <BillingCard
+              values={header}
+              editable={!(locked || busy)}
+              onChange={(patch) => setHeader((h) => ({ ...h, ...patch }))}
+            />
+            <ShipToCard
+              editable={!(locked || busy)}
               rows={shipTos}
               defaultCode={defaultShipCode}
               choice={shipChoice}
@@ -687,7 +659,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
               onAddressChange={(patch) => setHeader((h) => ({ ...h, ...patch }))}
               onSaveToCustomerChange={setSaveToCustomer}
             />
-          </Section>
+          </div>
 
           <Section title="Invoicing">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

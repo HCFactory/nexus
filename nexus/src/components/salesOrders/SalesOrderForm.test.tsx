@@ -114,7 +114,16 @@ const renderForm = (over: Partial<Props> = {}) =>
     />,
   );
 
-const billing = () => within(screen.getByRole('group', { name: 'Billing address' }));
+const billing = () => {
+  const pencil = screen.queryByRole('button', { name: 'Edit billing address' });
+  if (pencil) fireEvent.click(pencil);
+  return within(screen.getByRole('group', { name: 'Billing address' }));
+};
+const shipSelect = () => {
+  const pencil = screen.queryByRole('button', { name: 'Edit ship-to' });
+  if (pencil) fireEvent.click(pencil);
+  return screen.getByRole('combobox', { name: 'Ship to' });
+};
 const pickCustomer = (label: string) => {
   const input = screen.getByRole('combobox', { name: 'Customer' });
   fireEvent.focus(input);
@@ -145,7 +154,7 @@ describe('SalesOrderForm — picking a customer', () => {
 
     expect(shipActions.refreshShipTos).toHaveBeenCalledTimes(1);
     expect(shipActions.refreshShipTos).toHaveBeenCalledWith('C1');
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Ship to' })).toHaveValue('saved:DOCK'));
+    await waitFor(() => expect(shipSelect()).toHaveValue('saved:DOCK'));
     expect(screen.getByRole('option', { name: '★ DOCK – Loading dock' })).toBeInTheDocument();
   });
 
@@ -155,7 +164,7 @@ describe('SalesOrderForm — picking a customer', () => {
     pickCustomer('C1 – Acme Foods');
     await waitFor(() => expect(shipActions.refreshShipTos).toHaveBeenCalled());
     expect(billing().getByLabelText('Address')).toHaveValue('1 Main St');
-    expect(screen.getByRole('combobox', { name: 'Ship to' })).toHaveValue('billing');
+    expect(shipSelect()).toHaveValue('billing');
   });
 
   it('switching customer silently refills, keeping lines, customer PO and invoice #', async () => {
@@ -186,7 +195,7 @@ describe('SalesOrderForm — ship-to', () => {
     pickCustomer('C2 – Beta Bakery');
     await waitFor(() => expect(shipActions.refreshShipTos).toHaveBeenCalled());
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Ship to' }), { target: { value: 'oneoff' } });
+    fireEvent.change(shipSelect(), { target: { value: 'oneoff' } });
     fireEvent.change(screen.getByLabelText('Ship-to name'), { target: { value: 'New dock' } });
     fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '5 Pier St' } });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Save to customer' }));
@@ -211,7 +220,7 @@ describe('SalesOrderForm — ship-to', () => {
     orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-new' });
     renderForm();
     pickCustomer('C2 – Beta Bakery');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Ship to' }), { target: { value: 'oneoff' } });
+    fireEvent.change(shipSelect(), { target: { value: 'oneoff' } });
     fireEvent.change(screen.getByLabelText('Ship-to address'), { target: { value: '5 Pier St' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
@@ -225,7 +234,7 @@ describe('SalesOrderForm — ship-to', () => {
     shipActions.saveShipToAction.mockResolvedValue({ ok: false, error: 'BC said no' });
     renderForm();
     pickCustomer('C2 – Beta Bakery');
-    fireEvent.change(screen.getByRole('combobox', { name: 'Ship to' }), { target: { value: 'oneoff' } });
+    fireEvent.change(shipSelect(), { target: { value: 'oneoff' } });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Save to customer' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('BC said no')).toBeInTheDocument();
@@ -382,10 +391,10 @@ describe('SalesOrderForm — status and locking', () => {
     expect(screen.getByRole('combobox', { name: 'Customer' })).toBeDisabled();
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toBeDisabled();
     expect(screen.getByLabelText('Customer PO')).toBeDisabled();
-    expect(billing().getByLabelText('Address')).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Edit billing address' })).toBeNull();
     expect(screen.getByLabelText('Order date')).toBeDisabled();
     expect(screen.getByLabelText('Requested delivery date')).toBeDisabled();
-    expect(screen.getByRole('combobox', { name: 'Ship to' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Edit ship-to' })).toBeNull();
     expect(screen.getByLabelText('Payment terms')).toBeDisabled();
     expect(screen.getByRole('switch', { name: 'Tax liable' })).toBeDisabled();
     expect(screen.getByLabelText('Qty')).toBeDisabled();
