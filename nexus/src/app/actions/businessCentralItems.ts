@@ -10,6 +10,8 @@ import { requireOrganizationContext, requirePermission } from '@/lib/auth/curren
 import { canEditBusinessCentralItems, ResolvedUserAccess } from '@/lib/auth/permissions';
 import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnection';
 import { BcApiError, BcClient, createBcClientForOrg } from '@/lib/businessCentral/client';
+import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
+import { refreshItemSalesBlocked } from '@/lib/businessCentral/itemSalesBlocked';
 import { createBcNoSeriesAssigner, type NumberAssigner } from '@/lib/businessCentral/numberAssigner';
 import { createNoSeriesClientForOrg } from '@/lib/businessCentral/noSeriesClient';
 import {
@@ -310,6 +312,19 @@ export async function syncBusinessCentralItems(options: { full?: boolean } = {})
       imported += 1;
     }
 
+    // Best effort: a failure here must not fail the item sync; the next sync retries.
+    try {
+      const company = await client.getCompany(connection.company_id);
+      await refreshItemSalesBlocked({
+        supabase,
+        transport: createReferenceTransport(client, company.name),
+        orgId,
+        connectionId: connection.id,
+      });
+    } catch (e) {
+      console.error('[items] could not refresh Sales Blocked:', e);
+    }
+
     await supabase
       .from('business_central_connections')
       .update({ last_pulled_at: now, last_error: null, sync_in_progress_by: null, sync_in_progress_since: null, sync_in_progress_timeout_at: null, updated_at: now })
@@ -477,6 +492,7 @@ export async function createBusinessCentralItem(input: CreateBusinessCentralItem
     gtin: input.gtin || null,
     inventory: null,
     blocked: false,
+    sales_blocked: false,
     price_includes_tax: input.priceIncludesTax ?? false,
     general_product_posting_group_id: null,
     general_product_posting_group_code: input.generalProductPostingGroupCode || null,

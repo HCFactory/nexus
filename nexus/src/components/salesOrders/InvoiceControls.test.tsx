@@ -68,7 +68,7 @@ describe('confirm box', () => {
     expect(screen.getByText(/Acme Foods/)).toBeInTheDocument();
     expect(screen.getByText(/\$108\.25/)).toBeInTheDocument();
     expect(screen.getByText(/SO-10234 \/ PO-1/)).toBeInTheDocument();
-    expect(screen.getByText('Invoice date today (Nov 15)')).toBeInTheDocument();
+    expect(screen.getByText('Invoice Date: Today (Nov 15)')).toBeInTheDocument();
     expect(screen.getByText("This posts the order in BC. It can't be undone.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(actions.createInvoice).not.toHaveBeenCalled();

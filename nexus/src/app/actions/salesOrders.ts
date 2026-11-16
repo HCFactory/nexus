@@ -400,6 +400,8 @@ export async function getSalesOrderFormContext(): Promise<SalesOrderFormContext>
           .eq('organization_id', scope.orgId)
           .eq('bc_connection_id', scope.bcConnectionId)
           .eq('blocked', false)
+          // BC's separate "Sales Blocked" flag (raw materials, delivery cost…): not sellable.
+          .eq('sales_blocked', false)
           .not('bc_item_number', 'is', null)
           .order('bc_item_number', { ascending: true })
           .order('id', { ascending: true }),

@@ -68,7 +68,7 @@ const MAX_POLLS = 15;
 const INVOICE_POLL_MS = 3000;
 const MAX_INVOICE_POLLS = 40;
 
-const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
+const LABEL = 'text-[11px] uppercase tracking-wide text-black dark:text-white';
 const INPUT_CLASS = 'border-input bg-field dark:bg-field';
 const SELECT_CLASS =
   'h-9 w-full rounded-md border border-input bg-field px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60';
@@ -410,18 +410,21 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     return true;
   }
 
-  function save() {
+  /** `nextStatus`: the status just picked (state may not have updated yet). */
+  function save(nextStatus: OrderStatus = status) {
     setError(null);
     if (!customerId || !customerNumber) {
       setError('Choose a customer.');
       return;
     }
     startTransition(async () => {
-      // Locked order, only the status changed: status is Nexus-only, so skip the save (and its BC sync).
-      if (order && locked && status !== order.status) {
-        const res = await setSalesOrderStatus(order.id, status);
-        if (!res.ok) setError(res.error);
-        else router.refresh();
+      // Only the status changed (or the order is locked): status is Nexus-only, so skip the save (and its BC sync).
+      if (order && nextStatus !== order.status && (locked || !otherEdits)) {
+        const res = await setSalesOrderStatus(order.id, nextStatus);
+        if (!res.ok) {
+          setError(res.error);
+          setStatus(order.status);
+        } else router.refresh();
         return;
       }
       let h = header;
@@ -462,7 +465,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         ...h,
         customer_id: customerId,
         customer_number: customerNumber,
-        status,
+        status: nextStatus,
         order_date: orderDate,
         requested_delivery_date: requestedDate || null,
         invoice_number: invoiceNumber?.trim() || null,
@@ -514,9 +517,16 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     orderDate === order.order_date &&
     HEADER_KEYS.every((k) => header[k] === loadedHeader[k]) &&
     linesUnchanged(draftLines, lines);
-  // Unsaved edits: anything the totals check sees, plus the status, Invoice # and PO the invoice also uses.
-  const dirty =
-    !formUnchanged || status !== order?.status || invoiceNumber !== (order?.invoice_number ?? null) || customerPo !== order?.customer_po;
+  // Unsaved edits other than the status: anything the totals check sees, plus the Invoice # and PO the invoice also uses.
+  const otherEdits = !formUnchanged || invoiceNumber !== (order?.invoice_number ?? null) || customerPo !== order?.customer_po;
+  const dirty = otherEdits || status !== order?.status;
+
+  /** Picking a status saves it at once on a saved order (with any other unsaved edits); a new order just keeps it. */
+  function changeStatus(next: OrderStatus) {
+    setStatus(next);
+    if (!order || next === order.status) return;
+    save(next);
+  }
   const bcTotals =
     order &&
     formUnchanged &&
@@ -569,7 +579,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             </div>
           )}
           <div className="flex items-center gap-2">
-            <StatusSelect value={status} onChange={setStatus} disabled={!canEdit || busy || invoiceLocked} />
+            <StatusSelect value={status} onChange={changeStatus} disabled={!canEdit || busy || invoiceLocked} />
             {order && (
               <InvoiceControls
                 order={order}

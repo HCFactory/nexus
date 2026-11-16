@@ -436,22 +436,47 @@ describe('SalesOrderForm — status and locking', () => {
     expect(screen.queryByPlaceholderText('Add item…')).toBeNull();
   });
 
-  it('a status-only change on a locked order uses setSalesOrderStatus (no BC sync)', async () => {
+  it('picking a status on a locked order saves it at once with setSalesOrderStatus (no Save click, no BC sync)', async () => {
     orderActions.setSalesOrderStatus.mockResolvedValue({ ok: true });
     renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'pulled' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(orderActions.setSalesOrderStatus).toHaveBeenCalledWith('so-1', 'pulled'));
     expect(orderActions.saveSalesOrder).not.toHaveBeenCalled();
     await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
   });
 
-  it('a failed status change shows the error', async () => {
+  it('picking a status on an unchanged draft saves only the status', async () => {
+    orderActions.setSalesOrderStatus.mockResolvedValue({ ok: true });
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'final' } });
+    await waitFor(() => expect(orderActions.setSalesOrderStatus).toHaveBeenCalledWith('so-1', 'final'));
+    expect(orderActions.saveSalesOrder).not.toHaveBeenCalled();
+  });
+
+  it('picking a status on a draft with other unsaved edits saves everything with the new status', async () => {
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'so-1' });
+    renderForm({ order: order(), lines: [lineRow], shipTos: [dock] });
+    fireEvent.change(screen.getByLabelText('Customer PO'), { target: { value: 'PO-NEW' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'final' } });
+    await waitFor(() =>
+      expect(orderActions.saveSalesOrder).toHaveBeenCalledWith(expect.objectContaining({ status: 'final', customer_po: 'PO-NEW' })),
+    );
+    expect(orderActions.setSalesOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it('a new order keeps the picked status without saving', () => {
+    renderForm({ order: null, lines: [] });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'final' } });
+    expect(orderActions.saveSalesOrder).not.toHaveBeenCalled();
+    expect(orderActions.setSalesOrderStatus).not.toHaveBeenCalled();
+  });
+
+  it('a failed status change shows the error and puts the status back', async () => {
     orderActions.setSalesOrderStatus.mockResolvedValue({ ok: false, error: 'Status refused' });
     renderForm({ order: order({ status: 'final' }), lines: [lineRow], shipTos: [dock] });
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'draft' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Status refused');
+    expect(screen.getByRole('combobox', { name: 'Status' })).toHaveValue('final');
   });
 
   it('a failed save shows the error in the alert banner', async () => {

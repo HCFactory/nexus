@@ -171,10 +171,10 @@ export function InvoiceControls({ order, canEdit, dirty, blockedReason, invoiceN
             <DialogTitle>Create invoice for {order.bc_order_number}?</DialogTitle>
             <DialogDescription asChild>
               <div className="space-y-1">
+                <p className="font-semibold text-foreground">Invoice Date: Today ({dateLabel(today)})</p>
                 <p>Customer: {customerLabel}</p>
                 <p>Total: {formatMoney(total, null)}</p>
                 <p>Invoice #: {invoiceNumber}</p>
-                <p>Invoice date today ({dateLabel(today)})</p>
                 <p className="pt-1 font-medium text-foreground">This posts the order in BC. It can&apos;t be undone.</p>
               </div>
             </DialogDescription>

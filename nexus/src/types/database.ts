@@ -269,6 +269,7 @@ export interface BusinessCentralItem {
   item_category_id: string | null;
   item_category_code: string | null;
   blocked: boolean;
+  sales_blocked: boolean;
   gtin: string | null;
   inventory: number | null;
   unit_price: number | null;

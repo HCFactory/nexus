@@ -704,7 +704,7 @@ describe('reads', () => {
     expect(res?.lines.map((l) => l.id)).toEqual(['l1']);
   });
 
-  it('getSalesOrderFormContext returns customers, non-blocked items, selects and the most-used location', async () => {
+  it('getSalesOrderFormContext returns customers, non-blocked and non-sales-blocked items, selects and the most-used location', async () => {
     setup({
       business_central_customers: [
         { id: 'c1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C1', display_name: 'A', location_code: 'MAIN', customer_price_group: 'WHSL' },
@@ -715,8 +715,9 @@ describe('reads', () => {
         { id: 'c6', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'C6', display_name: 'F', location_code: 'EAST', blocked: 'Ship' },
       ],
       business_central_items: [
-        { id: 'i1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', tax_group_code: 'TAXABLE', blocked: false },
-        { id: 'i2', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '2000', display_name: 'Old', unit_price: 1, base_unit_of_measure_code: 'EA', blocked: true },
+        { id: 'i1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '1000', display_name: 'Box', unit_price: 2, base_unit_of_measure_code: 'EA', tax_group_code: 'TAXABLE', blocked: false, sales_blocked: false },
+        { id: 'i2', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: '2000', display_name: 'Old', unit_price: 1, base_unit_of_measure_code: 'EA', blocked: true, sales_blocked: false },
+        { id: 'i3', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_item_number: 'ING-1', display_name: 'Raw gummy', unit_price: 1, base_unit_of_measure_code: 'EA', blocked: false, sales_blocked: true },
       ],
       business_central_sales_price_list_lines: [
         { id: 'p1', organization_id: 'org-1', bc_connection_id: 'conn-1', item_number: '1000', source_type: 'All Customers', source_no: '', unit_price: 1.5 },

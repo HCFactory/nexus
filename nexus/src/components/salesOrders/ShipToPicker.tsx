@@ -65,7 +65,7 @@ export function ShipToPicker({
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <Label htmlFor="so-ship-to" className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+        <Label htmlFor="so-ship-to" className="text-[11px] uppercase tracking-wide text-black dark:text-white">
           Ship to
         </Label>
         <select
@@ -91,7 +91,7 @@ export function ShipToPicker({
           <div className="grid gap-3 sm:grid-cols-3">
             {FIELDS.map((f) => (
               <div key={f.key} className="space-y-1.5">
-                <Label htmlFor={`so-${f.key}`} className="text-[11px] uppercase tracking-wide text-foreground-subtle">
+                <Label htmlFor={`so-${f.key}`} className="text-[11px] uppercase tracking-wide text-black dark:text-white">
                   {f.label}
                 </Label>
                 <Input

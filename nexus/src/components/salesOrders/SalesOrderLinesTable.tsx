@@ -284,7 +284,7 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
   return (
     <div className="overflow-x-auto rounded border border-border">
       <table className="min-w-full divide-y divide-border text-sm">
-        <thead className="bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
+        <thead className="bg-surface-raised text-left text-xs uppercase tracking-wide text-black dark:text-white">
           <tr>
             <th className="px-3 py-2 font-medium">Item</th>
             <th className="px-1.5 py-2 text-right font-medium">Qty</th>
@@ -335,7 +335,9 @@ export function SalesOrderLinesTable({ lines, items, locked, onChange }: Props) 
               </td>
               <td className="w-[8.25rem] px-1.5 py-2">
                 {/* A read-only box the size of the input cells, so the column gaps match. */}
-                <div className="whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-right text-sm text-foreground-muted">
+                <div
+                  className={`whitespace-nowrap rounded border border-border bg-surface-raised px-2 py-1 text-right text-sm text-foreground-muted ${locked ? 'opacity-60' : ''}`}
+                >
                   {money(amountOf(line))}
                 </div>
               </td>

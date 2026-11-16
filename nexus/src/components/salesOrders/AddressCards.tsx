@@ -14,7 +14,7 @@ export type BillingValues = Pick<
   | 'bill_contact_no' | 'bill_phone' | 'bill_mobile' | 'bill_email' | 'bill_email_cc'
 >;
 
-const LABEL = 'text-[11px] uppercase tracking-wide text-foreground-subtle';
+const LABEL = 'text-[11px] uppercase tracking-wide text-black dark:text-white';
 const INPUT_CLASS = 'border-input bg-field dark:bg-field';
 
 const BILLING_FIELDS: { key: keyof BillingValues; label: string; maxLength: number; type?: string }[] = [
