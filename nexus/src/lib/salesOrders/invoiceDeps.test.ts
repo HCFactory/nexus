@@ -70,3 +70,23 @@ describe('buildInvoiceDeps: Bill.com client', () => {
     expect(mocks.createBillcomClient).not.toHaveBeenCalled()
   })
 })
+
+describe('buildInvoiceDeps: mirrorPostedInvoice', () => {
+  it('copies the posted invoice and its lines into Receivables', async () => {
+    const upserts: Array<[string, unknown]> = []
+    mocks.createServiceClient.mockReturnValue({
+      from: (table: string) => ({ upsert: async (rows: unknown) => { upserts.push([table, rows]); return { error: null } } }),
+    })
+    const listResourcePage = vi.fn(async () => [{ id: 'l1', documentId: 'inv-guid' }])
+    mocks.createBcClientForOrg.mockResolvedValue({
+      config: { companyId: 'c1', environment: 'TEST' },
+      getCompany: vi.fn(async () => ({ name: 'CRONUS' })),
+      invokeAction: vi.fn(),
+      listResourcePage,
+    })
+    const deps = await buildInvoiceDeps(scope)
+    await deps.mirrorPostedInvoice!({ id: 'inv-guid', number: 'INV-1', status: 'Open' })
+    expect(upserts.map(([t]) => t)).toEqual(['business_central_sales_invoices', 'business_central_sales_invoice_lines'])
+    expect(listResourcePage).toHaveBeenCalledWith('salesInvoiceLines', { filter: 'documentId eq inv-guid', top: 500 })
+  })
+})
