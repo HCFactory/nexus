@@ -49,7 +49,7 @@ describe('findPostedInvoice', () => {
   it('maps the invoice found by order number', async () => {
     const { deps, list } = makeDeps({ list: () => [rec(INVOICE)] })
     const inv = await findPostedInvoice(deps, q)
-    expect(inv).toEqual({
+    expect(inv).toMatchObject({
       id: 'inv-guid',
       number: 'PSI-100',
       invoiceDate: '2026-11-15',

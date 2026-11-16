@@ -5,6 +5,7 @@ import type { BillcomClient } from '@/lib/billcom/client'
 import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks'
 import { createBcClientForOrg } from '@/lib/businessCentral/client'
 import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport'
+import { mapBcSalesInvoiceToDb, type BcSalesInvoice } from '@/lib/businessCentral/salesInvoiceMapper'
 import { createServiceClient } from '@/lib/supabase/server'
 import type { Scope } from './editScope'
 import type { InvoiceDeps } from './invoiceProcess'
@@ -45,5 +46,20 @@ export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } =
     billcomConnectionId: conn?.id ?? null,
     timeZone: (scope.connection as { time_zone?: string | null } | null)?.time_zone ?? null,
     userId: opts.userId,
+    mirrorPostedInvoice: async (raw) => {
+      const row = mapBcSalesInvoiceToDb({
+        organizationId: scope.orgId,
+        connectionId: scope.bcConnectionId,
+        environment: bc.config.environment,
+        companyId: bc.config.companyId,
+        invoice: raw as BcSalesInvoice,
+        now: new Date().toISOString(),
+      })
+      // Same table and conflict target as the Receivables sync (arSyncAdapters).
+      const { error } = await supabase
+        .from('business_central_sales_invoices')
+        .upsert(row, { onConflict: 'organization_id,bc_connection_id,bc_company_id,bc_invoice_id' })
+      if (error) throw new Error(error.message)
+    },
   }
 }

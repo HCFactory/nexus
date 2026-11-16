@@ -52,13 +52,26 @@ describe('buildBillcomInvoice', () => {
     expect(p.invoiceLineItems[0]).toEqual({ description: 'ITEM1 Widget', quantity: 10, price: 11.25 });
   });
 
-  it('falls back to one line at the amount when qty x rounded unit is off by a cent', () => {
+  it('rounds a fractional-cent unit price up and keeps the real quantity (3 @ $1.0925 -> 3 @ $1.10)', () => {
     const r = build({
       lines: [line({ quantity: 3, unit_price: 1.15, discount_percent: 5 })],
-      posted: posted({ totalExclTax: 3.28, totalTax: 0, totalInclTax: 3.28 }),
+      posted: posted({ totalExclTax: 3.28, totalTax: 0.23, totalInclTax: 3.51 }),
     });
     const p = payloadOf(r);
-    expect(p.invoiceLineItems).toEqual([{ description: 'ITEM1 Widget (Qty 3 @ $1.0925)', quantity: 1, price: 3.28 }]);
+    expect(p.invoiceLineItems).toEqual([
+      { description: 'ITEM1 Widget', quantity: 3, price: 1.1 },
+      { description: 'Sales tax', quantity: 1, price: 0.23 },
+    ]);
+  });
+
+  it('does not round up a whole-cent price because of float noise (10 @ $4.50 stays $4.50)', () => {
+    const p = payloadOf(
+      build({
+        lines: [line({ quantity: 10, unit_price: 4.5, discount_percent: 0 })],
+        posted: posted({ totalExclTax: 45, totalTax: 0.23, totalInclTax: 45.23 }),
+      }),
+    );
+    expect(p.invoiceLineItems[0]).toEqual({ description: 'ITEM1 Widget', quantity: 10, price: 4.5 });
   });
 
   it('adds a non-taxable Sales tax line at the posted tax, with no salesTaxItemId', () => {
@@ -97,7 +110,7 @@ describe('buildBillcomInvoice', () => {
 
   it('returns ok:false with the exact message when totals differ', () => {
     const r = build({ posted: posted({ totalInclTax: 120 }) });
-    expect(r).toEqual({ ok: false, error: "Bill.com total $117.50 doesn't match BC's posted total $120.00." });
+    expect(r).toEqual({ ok: false, error: "The order's lines and tax total $117.50, but BC's posted total is $120.00." });
   });
 
   it('is ok when totals match at the cent level', () => {

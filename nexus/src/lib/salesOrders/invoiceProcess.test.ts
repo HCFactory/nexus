@@ -10,7 +10,11 @@ import { NOT_IN_SYNC, retryInvoiceProcess, runInvoiceProcess, startInvoiceProces
 
 const T0 = '2026-11-15T15:00:00.000Z'
 const NOT_CONFIRMED = "BC didn't confirm the posting. Retry checks BC first, so it won't post twice."
-const MISMATCH = "Bill.com total $108.25 doesn't match BC's posted total $110.00."
+const MISMATCH = "The order's lines and tax total $108.25, but BC's posted total is $110.00."
+const PARTIAL =
+  "Bill.com invoice W-100501 / PO-9 doesn't match: it has $100.00 in 1 line, expected $108.25 in 2 lines. Fix or delete it in Bill.com, then Retry."
+/** A Bill.com invoice matching the expected one (2 x 50 + 8.25 tax). */
+const MATCHING = { totalAmount: 108.25, invoiceLineItems: [{}, {}] }
 const NEEDS_ATTENTION = 'Add a name and email to this customer in Customers before invoicing.'
 const BILLCOM_OFF = 'Bill.com is turned off. Turn it on in Settings before invoicing.'
 const NOT_IN_BILLCOM = "This customer isn't in Bill.com yet. Push it from Customers first."
@@ -118,7 +122,7 @@ function fakeBc() {
 /** Fake Bill.com: GET /v3/invoices lists, POST /v3/invoices creates. */
 function fakeBillcom() {
   const state = {
-    invoices: [] as { id: string; invoiceNumber: string; customerId: string }[],
+    invoices: [] as { id: string; invoiceNumber: string; customerId: string; totalAmount?: number; invoiceLineItems?: unknown[] }[],
     fail: null as null | ((method: string) => Error | null),
   }
   const posts: Record<string, unknown>[] = []
@@ -130,8 +134,16 @@ function fakeBillcom() {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       posts.push(body)
       const id = `BINV-${posts.length}`
-      state.invoices.push({ id, invoiceNumber: String(body.invoiceNumber), customerId: String((body.customer as { id: string }).id) })
-      return { id }
+      const items = body.invoiceLineItems as Array<{ quantity: number; price: number }>
+      const saved = {
+        id,
+        invoiceNumber: String(body.invoiceNumber),
+        customerId: String((body.customer as { id: string }).id),
+        totalAmount: Math.round(items.reduce((s, i) => s + i.quantity * i.price, 0) * 100) / 100,
+        invoiceLineItems: items,
+      }
+      state.invoices.push(saved)
+      return saved
     }
     const customerId = /customerId%3Aeq%3A([^&]+)/.exec(path)?.[1]
     return { results: state.invoices.filter((i) => i.customerId === customerId) }
@@ -366,10 +378,35 @@ describe('runInvoiceProcess', () => {
 
   it('Bill.com invoice already exists: done without create', async () => {
     setup({ invoice_state: 'posting' })
-    bill.state.invoices.push({ id: 'BINV-OLD', invoiceNumber: 'W-100501 / PO-9', customerId: 'BCUST-1' })
+    bill.state.invoices.push({ id: 'BINV-OLD', invoiceNumber: 'W-100501 / PO-9', customerId: 'BCUST-1', ...MATCHING })
     expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('done')
     expect(bill.posts).toHaveLength(0)
     expect(order().billcom_invoice_id).toBe('BINV-OLD')
+  })
+
+  it('Bill.com invoice exists but is incomplete: billcom_failed, not done, nothing created', async () => {
+    setup({ invoice_state: 'posting' })
+    bill.state.invoices.push({ id: 'BINV-PART', invoiceNumber: 'W-100501 / PO-9', customerId: 'BCUST-1', totalAmount: 100, invoiceLineItems: [{}] })
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('billcom_failed')
+    expect(order()).toMatchObject({ invoice_state: 'billcom_failed', billcom_invoice_id: null, invoice_error: PARTIAL })
+    expect(bill.posts).toHaveLength(0)
+  })
+
+  it('Bill.com saved a different invoice than sent: billcom_failed', async () => {
+    setup({ invoice_state: 'billcom_sending', status: 'invoiced', ...postedColumns() })
+    bill.request.mockImplementationOnce(async () => ({ results: [] }))
+    bill.request.mockImplementationOnce(async () => ({ id: 'BINV-1', totalAmount: 100, invoiceLineItems: [{}] }) as never)
+    expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('billcom_failed')
+    expect(order()).toMatchObject({ invoice_state: 'billcom_failed', billcom_invoice_id: null, invoice_error: PARTIAL })
+  })
+
+  it('copies the posted invoice into Receivables, and a copy failure does not stop the process', async () => {
+    setup({ invoice_state: 'posting' })
+    const mirror = vi.fn<(raw: Record<string, unknown>) => Promise<void>>(async () => { throw new Error('db down') })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(await runInvoiceProcess(makeDeps({ mirrorPostedInvoice: mirror }), 'o1')).toBe('done')
+    expect(mirror).toHaveBeenCalledTimes(1)
+    expect(mirror.mock.calls[0][0]).toMatchObject({ id: 'inv-guid', number: 'PSI-100', totalAmountIncludingTax: 108.25 })
   })
 
   it('link now needs_attention: billcom_failed with the exact message, no Bill.com call', async () => {
@@ -391,7 +428,7 @@ describe('runInvoiceProcess', () => {
     setup({ invoice_state: 'billcom_sending', status: 'invoiced', ...postedColumns() })
     bill.state.fail = (method) => {
       if (method !== 'POST') return null
-      bill.state.invoices.push({ id: 'BINV-RACE', invoiceNumber: 'W-100501 / PO-9', customerId: 'BCUST-1' })
+      bill.state.invoices.push({ id: 'BINV-RACE', invoiceNumber: 'W-100501 / PO-9', customerId: 'BCUST-1', ...MATCHING })
       return new BillcomApiError({ status: 422, statusText: 'Unprocessable', code: 'BDC_1171', message: 'Duplicate invoice number', url: 'u' })
     }
     expect(await runInvoiceProcess(makeDeps(), 'o1')).toBe('done')

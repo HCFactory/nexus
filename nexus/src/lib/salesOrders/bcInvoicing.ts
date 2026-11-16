@@ -14,6 +14,8 @@ export interface PostedInvoice {
   totalExclTax: number
   totalTax: number
   totalInclTax: number
+  /** BC's full salesInvoice record, when read from BC (copied into Receivables). */
+  raw?: Record<string, unknown>
 }
 
 export interface BcInvoicingDeps extends OrderSyncDeps {
@@ -54,6 +56,7 @@ function toPostedInvoice(r: BcRecord): PostedInvoice {
     totalExclTax: Number(f.totalAmountExcludingTax),
     totalTax: Number(f.totalTaxAmount),
     totalInclTax: Number(f.totalAmountIncludingTax),
+    raw: { ...f, '@odata.etag': r.etag },
   }
 }
 

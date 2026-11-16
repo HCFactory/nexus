@@ -10,7 +10,8 @@
 //   posted invoice first, and after a post whose outcome is unknown, so a
 //   crash or lost response never leads to a second post.
 // - The Bill.com step always looks for the invoice by number first, and a
-//   "duplicate invoice number" answer is resolved by looking it up.
+//   "duplicate invoice number" answer is resolved by looking it up. A found or
+//   created invoice only counts when its total and line count match.
 // - Every step runs under the order's lease, so two triggers can't overlap.
 //   The lease is extended to cover the post (BC can take minutes) and renewed
 //   at each later step; a lost lease stops the run without writing.
@@ -19,7 +20,7 @@
 import { INVOKE_ACTION_TIMEOUT_MS } from '@/lib/businessCentral/client'
 import type { BillcomClient } from '@/lib/billcom/client'
 import { buildBillcomInvoice } from '@/lib/billcom/invoicePayload'
-import { BillcomDuplicateInvoiceError, createBillcomInvoice, findBillcomInvoice } from '@/lib/billcom/invoicePush'
+import { billcomInvoiceMismatch, BillcomDuplicateInvoiceError, createBillcomInvoice, findBillcomInvoice } from '@/lib/billcom/invoicePush'
 import type { InvoiceState, SalesOrderRow } from '@/types/salesOrders'
 import {
   BcPostRefusedError,
@@ -40,6 +41,11 @@ export interface InvoiceDeps extends BcInvoicingDeps {
   /** The BC connection's time zone; invoice date = today there. */
   timeZone: string | null
   userId?: string
+  /**
+   * Copies a just-posted BC invoice into Receivables' invoice list, so it
+   * shows there without waiting for the next Receivables sync.
+   */
+  mirrorPostedInvoice?: (raw: Record<string, unknown>) => Promise<void>
 }
 
 export type InvoiceResult = { ok: true } | { ok: false; error: string }
@@ -160,6 +166,14 @@ async function recordPosted(deps: InvoiceDeps, orderId: string, inv: PostedInvoi
     posted_total_incl_tax: inv.totalInclTax,
     invoice_error: null,
   })
+  // Best effort: the next Receivables sync copies it anyway.
+  if (inv.raw && deps.mirrorPostedInvoice) {
+    try {
+      await deps.mirrorPostedInvoice(inv.raw)
+    } catch (e) {
+      console.error(`[invoice] could not copy ${inv.number} into Receivables:`, e)
+    }
+  }
   return 'posted'
 }
 
@@ -255,23 +269,25 @@ async function billcomStep(deps: InvoiceDeps, order: SalesOrderRow): Promise<Inv
     const client = deps.billcom!
     const invoiceNumber = invoiceNumberOf(order)
 
-    const existing = await findBillcomInvoice(client, block.customerId, invoiceNumber)
-    if (existing) return recordDone(deps, order.id, existing)
-
+    // Built first: it is what a found invoice is checked against.
     const lines = (await loadLines(deps, order.id)).filter((l) => !l.removed)
     const built = buildBillcomInvoice({ billcomCustomerId: block.customerId, invoiceNumber, posted: storedPosted(order), lines })
     if (!built.ok) return fail(deps, order.id, 'billcom_failed', built.error)
 
-    let id: string
-    try {
-      id = await createBillcomInvoice(client, built.payload)
-    } catch (e) {
-      if (!(e instanceof BillcomDuplicateInvoiceError)) throw e
-      const found = await findBillcomInvoice(client, block.customerId, invoiceNumber)
-      if (!found) return fail(deps, order.id, 'billcom_failed', e.message)
-      id = found
+    let invoice = await findBillcomInvoice(client, block.customerId, invoiceNumber)
+    if (!invoice) {
+      try {
+        invoice = await createBillcomInvoice(client, built.payload)
+      } catch (e) {
+        if (!(e instanceof BillcomDuplicateInvoiceError)) throw e
+        invoice = await findBillcomInvoice(client, block.customerId, invoiceNumber)
+        if (!invoice) return fail(deps, order.id, 'billcom_failed', e.message)
+      }
     }
-    return recordDone(deps, order.id, id)
+    // Only an invoice with the expected total and number of lines counts as done.
+    const mismatch = billcomInvoiceMismatch(invoice, built.payload)
+    if (mismatch) return fail(deps, order.id, 'billcom_failed', mismatch)
+    return recordDone(deps, order.id, invoice.id)
   } catch (e) {
     if (isOwnershipLost(e)) throw e
     return fail(deps, order.id, 'billcom_failed', message(e))
