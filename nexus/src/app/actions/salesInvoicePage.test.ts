@@ -59,8 +59,8 @@ function setup(tables: Record<string, Row[]>) {
 }
 
 beforeEach(() => {
-  mocks.fetchAndMirror.mockReset().mockResolvedValue(false);
-  mocks.mirrorLines.mockReset().mockResolvedValue(0);
+  mocks.fetchAndMirror.mockReset().mockResolvedValue(null);
+  mocks.mirrorLines.mockReset().mockResolvedValue([]);
   mocks.resolveBillcom.mockReset().mockResolvedValue({ id: 'bcom-1', enabled: true });
   mocks.createBillcom.mockReset().mockResolvedValue({ request: vi.fn() });
   mocks.readStatus.mockReset().mockResolvedValue(STATUS);
@@ -96,11 +96,11 @@ describe('getSalesInvoicePage', () => {
     setup({});
     mocks.fetchAndMirror.mockImplementation(async () => {
       db.tables.business_central_sales_invoices.push(invoiceRow());
-      return true;
+      return invoiceRow();
     });
     mocks.mirrorLines.mockImplementation(async () => {
       db.tables.business_central_sales_invoice_lines.push(lineRow('l1', 10000));
-      return 1;
+      return [lineRow('l1', 10000)];
     });
     const page = await getSalesInvoicePage(INV);
     expect(page?.lines.map((l) => l.id)).toEqual(['l1']);
@@ -111,6 +111,16 @@ describe('getSalesInvoicePage', () => {
     await getSalesInvoicePage(INV);
     expect(mocks.fetchAndMirror).toHaveBeenCalledTimes(1);
     expect(mocks.mirrorLines).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the rows the mirror stored, without reading them back (Next.js memoizes identical reads in one render)', async () => {
+    setup({});
+    // The mirror returns what it stored; the fake db is not updated, as a memoized re-read would see it.
+    mocks.fetchAndMirror.mockResolvedValue(invoiceRow());
+    mocks.mirrorLines.mockResolvedValue([lineRow('l2', 20000), lineRow('l1', 10000)]);
+    const page = await getSalesInvoicePage(INV);
+    expect(page?.invoice.bc_invoice_number).toBe('INV-100412');
+    expect(page?.lines.map((l) => l.id)).toEqual(['l1', 'l2']);
   });
 
   it('returns null when BC has no such posted invoice either', async () => {

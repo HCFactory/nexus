@@ -124,11 +124,11 @@ describe('status line', () => {
     status({ invoice_state: 'billcom_failed' }, false);
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
-  it('done shows Invoiced · In Bill.com and View invoice links to the receivables search', () => {
-    status({ invoice_state: 'done', bc_posted_invoice_number: 'SI 1/2' });
+  it('done shows Invoiced · In Bill.com and View invoice opens the invoice page', () => {
+    status({ invoice_state: 'done', bc_posted_invoice_number: 'SI 1/2', bc_posted_invoice_id: 'inv-guid' });
     expect(screen.getByRole('status')).toHaveTextContent('Invoiced · In Bill.com');
-    expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices?q=SI%201%2F2');
+    expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices/inv-guid');
     expect(screen.getByText('Invoice SI 1/2 ·')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('title', 'Appears in Receivables after the next Receivables sync.');
+    expect(screen.getByRole('link', { name: 'View invoice' })).not.toHaveAttribute('title');
   });
 });

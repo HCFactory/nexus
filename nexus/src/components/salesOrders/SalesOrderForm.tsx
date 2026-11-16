@@ -42,7 +42,7 @@ import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
-import { InvoiceControls, InvoiceStatus, RECEIVABLES_NOTE, SAVE_FIRST, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
+import { InvoiceControls, InvoiceStatus, SAVE_FIRST, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
 
 interface Props {
   /** null = a new order. */
@@ -622,9 +622,6 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         <div className="border-b border-border bg-surface px-5 py-2 text-sm text-foreground-muted">
           {invoiceBlockedReason || SAVE_FIRST}
         </div>
-      )}
-      {order?.bc_posted_invoice_number && (invoiceState === 'done' || invoiceState === 'billcom_failed') && (
-        <div className="border-b border-border bg-surface px-5 py-2 text-sm text-foreground-muted">{RECEIVABLES_NOTE}</div>
       )}
       {order && canEdit && (invoiceState === 'post_failed' || invoiceState === 'billcom_failed') && order.invoice_error && (
         <div className="border-b border-border bg-warning-subtle px-5 py-2 text-sm text-foreground">{order.invoice_error}</div>

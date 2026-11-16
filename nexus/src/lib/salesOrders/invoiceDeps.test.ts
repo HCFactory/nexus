@@ -75,7 +75,13 @@ describe('buildInvoiceDeps: mirrorPostedInvoice', () => {
   it('copies the posted invoice and its lines into Receivables', async () => {
     const upserts: Array<[string, unknown]> = []
     mocks.createServiceClient.mockReturnValue({
-      from: (table: string) => ({ upsert: async (rows: unknown) => { upserts.push([table, rows]); return { error: null } } }),
+      from: (table: string) => ({
+        upsert: (rows: unknown) => {
+          upserts.push([table, rows])
+          const res = { data: rows, error: null }
+          return { select: () => ({ single: async () => ({ data: rows, error: null }), then: (r: (v: typeof res) => unknown) => Promise.resolve(res).then(r) }) }
+        },
+      }),
     })
     const listResourcePage = vi.fn(async () => [{ id: 'l1', documentId: 'inv-guid' }])
     mocks.createBcClientForOrg.mockResolvedValue({

@@ -727,14 +727,14 @@ describe('invoicing in the header', () => {
     expect(screen.queryByRole('button', { name: 'Create invoice' })).toBeNull();
   });
   it('past posting hides Save and Delete and shows the status instead of the BC sync state', () => {
-    renderForm({ order: final({ status: 'invoiced', invoice_state: 'done', bc_posted_invoice_number: 'SI-1' }), lines: [lineRow] });
+    renderForm({ order: final({ status: 'invoiced', invoice_state: 'done', bc_posted_invoice_number: 'SI-1', bc_posted_invoice_id: 'inv-guid' }), lines: [lineRow] });
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete order' })).toBeNull();
     expect(screen.getByRole('status')).toHaveTextContent('Invoiced · In Bill.com');
     expect(screen.queryByText('In BC')).toBeNull();
-    expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices?q=SI-1');
+    expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices/inv-guid');
     expect(screen.getByText('Invoice SI-1 ·')).toBeInTheDocument();
-    expect(screen.getByText('Appears in Receivables after the next Receivables sync.')).toBeInTheDocument();
+    expect(screen.queryByText('Appears in Receivables after the next Receivables sync.')).toBeNull();
   });
   it('the Status dropdown shows Invoiced for an invoiced order, and a fresh key picks up the new status', () => {
     const props: Omit<Props, 'order'> = { lines: [lineRow], context, shipTos: [], canEdit: true, canSaveShipTo: true };

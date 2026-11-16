@@ -49,7 +49,6 @@ const TEXT: Partial<Record<InvoiceState, string>> = {
   post_failed: 'text-destructive', billcom_failed: 'text-warning', done: 'text-foreground',
 };
 
-export const RECEIVABLES_NOTE = 'Appears in Receivables after the next Receivables sync.';
 export const SAVE_FIRST = 'Save your changes before invoicing.';
 
 /** The invoice status line, with Retry for a failed step and View invoice once BC has the posted invoice. */
@@ -59,7 +58,7 @@ export function InvoiceStatus({
   className,
   onError,
 }: {
-  order: Pick<SalesOrderRow, 'id' | 'invoice_state' | 'invoice_error' | 'bc_posted_invoice_number'>;
+  order: Pick<SalesOrderRow, 'id' | 'invoice_state' | 'invoice_error' | 'bc_posted_invoice_number' | 'bc_posted_invoice_id'>;
   canEdit: boolean;
   className?: string;
   onError?: (message: string | null) => void;
@@ -101,10 +100,9 @@ export function InvoiceStatus({
         </Button>
       )}
       {number && <span className="text-foreground-muted">Invoice {number} ·</span>}
-      {number && (
+      {number && order.bc_posted_invoice_id && (
         <Link
-          title={RECEIVABLES_NOTE}
-          href={`/receivables/invoices?q=${encodeURIComponent(number)}`}
+          href={`/receivables/invoices/${encodeURIComponent(order.bc_posted_invoice_id)}`}
           className="text-primary underline-offset-2 hover:underline"
         >
           View invoice

@@ -89,18 +89,20 @@ export async function getSalesInvoicePage(bcInvoiceId: string): Promise<{
   if (!ctx) return null;
 
   let mirror: InvoiceMirrorDeps | null = null;
+  // Gaps are filled from BC, and the stored rows the mirror returns are used
+  // as-is: Next.js memoizes identical reads within one render, so reading them
+  // back here would return the pre-write (empty) result.
   let invoice = await readInvoice(ctx, bcInvoiceId);
   if (!invoice) {
     mirror = await mirrorDeps(ctx);
-    if (!(await fetchAndMirrorSalesInvoice(mirror, bcInvoiceId))) return null;
-    invoice = await readInvoice(ctx, bcInvoiceId);
+    invoice = await fetchAndMirrorSalesInvoice(mirror, bcInvoiceId);
     if (!invoice) return null;
   }
 
   let lines = await readLines(ctx, bcInvoiceId);
   if (lines.length === 0) {
     mirror ??= await mirrorDeps(ctx);
-    if ((await mirrorSalesInvoiceLines(mirror, bcInvoiceId)) > 0) lines = await readLines(ctx, bcInvoiceId);
+    lines = (await mirrorSalesInvoiceLines(mirror, bcInvoiceId)).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
   }
 
   const order = await readOrder(ctx, bcInvoiceId);
