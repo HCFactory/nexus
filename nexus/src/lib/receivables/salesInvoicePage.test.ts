@@ -129,13 +129,23 @@ describe('getSalesInvoicePage', () => {
     expect(mocks.fetchAndMirror).toHaveBeenCalledTimes(1);
   });
 
+  it('a BC failure while filling missing lines keeps the page, with linesError', async () => {
+    setup({ business_central_sales_invoices: [invoiceRow()] });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.mirrorLines.mockRejectedValue(new Error('BC is down'));
+    const page = await getSalesInvoicePage(INV);
+    expect(page?.invoice.bc_invoice_number).toBe('INV-100412');
+    expect(page?.lines).toEqual([]);
+    expect(page?.linesError).toBe(true);
+  });
+
   it('links the sales order that posted it', async () => {
     setup({
       business_central_sales_invoices: [invoiceRow()],
       business_central_sales_invoice_lines: [lineRow('l1', 10000)],
       sales_orders: [{ id: 'so-1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_posted_invoice_id: INV, bc_order_number: 'W-100532' }],
     });
-    expect((await getSalesInvoicePage(INV))?.salesOrder).toEqual({ id: 'so-1', bcOrderNumber: 'W-100532' });
+    expect((await getSalesInvoicePage(INV))?.salesOrder).toEqual({ id: 'so-1', bcOrderNumber: 'W-100532', billcomInvoiceId: null });
   });
 });
 
@@ -149,47 +159,63 @@ describe('getSalesInvoiceBillcomPanel', () => {
     billcom_customer_id: '0cu1',
     ...extra,
   });
+  const input = (extra: Partial<Parameters<typeof getSalesInvoiceBillcomPanel>[0]> = {}) => ({
+    customerNumber: 'C1',
+    invoiceNumbers: ['W-100532', 'INV-100412'],
+    billcomInvoiceId: null,
+    ...extra,
+  });
 
   it('off when Bill.com is disabled or its client cannot be created', async () => {
-    setup({ business_central_sales_invoices: [invoiceRow()] });
+    setup({});
     mocks.resolveBillcom.mockResolvedValue({ id: 'bcom-1', enabled: false });
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'off' });
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'off' });
     mocks.resolveBillcom.mockResolvedValue({ id: 'bcom-1', enabled: true });
     mocks.createBillcom.mockRejectedValue(new Error('no creds'));
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'off' });
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'off' });
   });
 
   it('found by the order’s billcom_invoice_id', async () => {
-    setup({
-      business_central_sales_invoices: [invoiceRow()],
-      sales_orders: [{ id: 'so-1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_posted_invoice_id: INV, billcom_invoice_id: '00eX' }],
-    });
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'found', status: STATUS });
+    setup({});
+    expect(await getSalesInvoiceBillcomPanel(input({ billcomInvoiceId: '00eX' }))).toEqual({ kind: 'found', status: STATUS });
     expect(mocks.readStatus.mock.calls[0][1]).toMatchObject({ billcomInvoiceId: '00eX' });
   });
 
+  it('uses the invoice details it is given and never reads the invoice row (first open after a BC fill)', async () => {
+    // No stored invoice row: a memoized re-read in the same render would see none.
+    setup({ billcom_customer_links: [link()] });
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'found', status: STATUS });
+  });
+
   it('not_linked without a ready customer link', async () => {
-    setup({ business_central_sales_invoices: [invoiceRow()], billcom_customer_links: [link({ status: 'needs_attention' })] });
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'not_linked' });
+    setup({ billcom_customer_links: [link({ status: 'needs_attention' })] });
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'not_linked' });
     expect(mocks.readStatus).not.toHaveBeenCalled();
   });
 
   it('looks up by Invoice # then BC Invoice No. for the linked customer; not_found when none', async () => {
-    setup({ business_central_sales_invoices: [invoiceRow()], billcom_customer_links: [link()] });
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'found', status: STATUS });
+    setup({ billcom_customer_links: [link()] });
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'found', status: STATUS });
     expect(mocks.readStatus.mock.calls[0][1]).toEqual({ billcomCustomerId: '0cu1', invoiceNumbers: ['W-100532', 'INV-100412'] });
     mocks.readStatus.mockResolvedValue(null);
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'not_found' });
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'not_found' });
+  });
+
+  it('ambiguous when several Bill.com invoices share the number', async () => {
+    setup({ billcom_customer_links: [link()] });
+    mocks.readStatus.mockResolvedValue('ambiguous');
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'ambiguous' });
   });
 
   it('error keeps the message', async () => {
-    setup({ business_central_sales_invoices: [invoiceRow()], billcom_customer_links: [link()] });
+    setup({ billcom_customer_links: [link()] });
     mocks.readStatus.mockRejectedValue(new Error('Bill.com is unavailable'));
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'error', message: 'Bill.com is unavailable' });
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'error', message: 'Bill.com is unavailable' });
   });
 
-  it('not_found for an unknown invoice', async () => {
+  it('any failure, even before Bill.com is called, is an error panel, never a thrown error', async () => {
     setup({});
-    expect(await getSalesInvoiceBillcomPanel(INV)).toEqual({ kind: 'not_found' });
+    mocks.resolveBillcom.mockRejectedValue(new Error('db down'));
+    expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'error', message: 'db down' });
   });
 });

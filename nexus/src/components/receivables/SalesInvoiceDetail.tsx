@@ -21,13 +21,15 @@ const money = (v: number | null, currency: string | null) => formatMoney(v, curr
 interface Props {
   invoice: BusinessCentralSalesInvoice;
   lines: BusinessCentralSalesInvoiceLine[];
+  /** Lines were missing and BC couldn't be read to fill them. */
+  linesError?: boolean;
   salesOrder: { id: string; bcOrderNumber: string | null } | null;
   /** The Bill.com panel (streamed in by the page). */
   billcom: ReactNode;
 }
 
 /** A posted BC invoice as Nexus holds it: header, Bill.com side, lines and totals. */
-export function SalesInvoiceDetail({ invoice, lines, salesOrder, billcom }: Props) {
+export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom }: Props) {
   const cur = invoice.currency_code;
   const title = invoice.external_document_number || invoice.bc_invoice_number || '—';
   return (
@@ -84,7 +86,9 @@ export function SalesInvoiceDetail({ invoice, lines, salesOrder, billcom }: Prop
           <tbody className="divide-y divide-border">
             {lines.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-2 py-6 text-center text-foreground-muted">No lines</td>
+                <td colSpan={6} className="px-2 py-6 text-center text-foreground-muted">
+                  {linesError ? "Couldn't load lines from Business Central." : 'No lines'}
+                </td>
               </tr>
             ) : (
               lines.map((l) => (

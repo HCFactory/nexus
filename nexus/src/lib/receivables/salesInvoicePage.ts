@@ -1,8 +1,13 @@
-'use server';
+import 'server-only';
 
 // Data for the Receivables invoice page (/receivables/invoices/<bc_invoice_id>):
 // Nexus's copy of the posted BC invoice and its lines (filled from BC when
 // missing), the sales order that posted it, and a live read of its Bill.com side.
+//
+// Server-only (not server actions): the page is the only caller, and the
+// Bill.com panel takes the invoice details the page already loaded. It must
+// not read the invoice row again: Next.js memoizes identical reads within one
+// render, so after a fill from BC a second read returns the pre-write result.
 import { requirePermission } from '@/lib/auth/currentUserAccess';
 import { canViewReceivables } from '@/lib/auth/permissions';
 import { createBillcomClientForConnection } from '@/lib/billcom/connection';
@@ -79,19 +84,23 @@ async function mirrorDeps(ctx: Ctx): Promise<InvoiceMirrorDeps> {
   };
 }
 
-export async function getSalesInvoicePage(bcInvoiceId: string): Promise<{
+export interface SalesInvoicePageData {
   invoice: BusinessCentralSalesInvoice;
   lines: BusinessCentralSalesInvoiceLine[];
-  salesOrder: { id: string; bcOrderNumber: string | null } | null;
-} | null> {
+  /** Lines were missing and BC couldn't be read to fill them. */
+  linesError: boolean;
+  salesOrder: { id: string; bcOrderNumber: string | null; billcomInvoiceId: string | null } | null;
+}
+
+/** null → the page is a 404 (not a GUID, no BC connection, or no such posted invoice). */
+export async function getSalesInvoicePage(bcInvoiceId: string): Promise<SalesInvoicePageData | null> {
   if (!GUID.test(bcInvoiceId)) return null;
   const ctx = await context();
   if (!ctx) return null;
 
-  let mirror: InvoiceMirrorDeps | null = null;
   // Gaps are filled from BC, and the stored rows the mirror returns are used
-  // as-is: Next.js memoizes identical reads within one render, so reading them
-  // back here would return the pre-write (empty) result.
+  // as-is (a read-back in this render would be memoized; see the top).
+  let mirror: InvoiceMirrorDeps | null = null;
   let invoice = await readInvoice(ctx, bcInvoiceId);
   if (!invoice) {
     mirror = await mirrorDeps(ctx);
@@ -99,57 +108,72 @@ export async function getSalesInvoicePage(bcInvoiceId: string): Promise<{
     if (!invoice) return null;
   }
 
+  // The header is enough to show the page: a BC failure here only loses the lines.
   let lines = await readLines(ctx, bcInvoiceId);
+  let linesError = false;
   if (lines.length === 0) {
-    mirror ??= await mirrorDeps(ctx);
-    lines = (await mirrorSalesInvoiceLines(mirror, bcInvoiceId)).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+    try {
+      mirror ??= await mirrorDeps(ctx);
+      lines = (await mirrorSalesInvoiceLines(mirror, bcInvoiceId)).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+    } catch (e) {
+      console.error(`[invoice page] could not load lines of ${bcInvoiceId} from BC:`, e);
+      linesError = true;
+    }
   }
 
   const order = await readOrder(ctx, bcInvoiceId);
-  return { invoice, lines, salesOrder: order ? { id: order.id, bcOrderNumber: order.bc_order_number } : null };
+  return {
+    invoice,
+    lines,
+    linesError,
+    salesOrder: order ? { id: order.id, bcOrderNumber: order.bc_order_number, billcomInvoiceId: order.billcom_invoice_id ?? null } : null,
+  };
 }
 
-export async function getSalesInvoiceBillcomPanel(bcInvoiceId: string): Promise<BillcomPanel> {
-  if (!GUID.test(bcInvoiceId)) return { kind: 'not_found' };
-  const ctx = await context();
-  if (!ctx) return { kind: 'not_found' };
-  const invoice = await readInvoice(ctx, bcInvoiceId);
-  if (!invoice) return { kind: 'not_found' };
+/** What the Bill.com panel needs, taken from the page data (never re-read). */
+export interface BillcomPanelInput {
+  customerNumber: string | null;
+  /** Invoice #, then BC Invoice No. */
+  invoiceNumbers: string[];
+  /** Set when Nexus created the Bill.com invoice. */
+  billcomInvoiceId: string | null;
+}
 
-  const conn = await resolveBillcomConnection(ctx.supabase, ctx.orgId);
-  if (!conn?.enabled) return { kind: 'off' };
-  let client;
+/** The Bill.com side of the invoice. Never throws: any failure is an `error` panel. */
+export async function getSalesInvoiceBillcomPanel(input: BillcomPanelInput): Promise<BillcomPanel> {
   try {
-    client = await createBillcomClientForConnection(conn.id, ctx.orgId, { supabase: ctx.supabase });
-  } catch (e) {
-    console.error('[invoice page] could not create the Bill.com client:', e);
-    return { kind: 'off' };
-  }
+    const ctx = await context();
+    if (!ctx) return { kind: 'not_found' };
 
-  try {
-    const order = await readOrder(ctx, bcInvoiceId);
-    if (order?.billcom_invoice_id) {
-      const status = await readBillcomInvoiceStatus(client, { billcomInvoiceId: order.billcom_invoice_id, invoiceNumbers: [] });
-      return status ? { kind: 'found', status } : { kind: 'not_found' };
+    const conn = await resolveBillcomConnection(ctx.supabase, ctx.orgId);
+    if (!conn?.enabled) return { kind: 'off' };
+    let client;
+    try {
+      client = await createBillcomClientForConnection(conn.id, ctx.orgId, { supabase: ctx.supabase });
+    } catch (e) {
+      console.error('[invoice page] could not create the Bill.com client:', e);
+      return { kind: 'off' };
     }
 
-    const { data: link, error } = await ctx.supabase
-      .from('billcom_customer_links')
-      .select('status, billcom_customer_id')
-      .eq('organization_id', ctx.orgId)
-      .eq('bc_connection_id', ctx.connection.id)
-      .eq('billcom_connection_id', conn.id)
-      .eq('bc_customer_number', invoice.customer_number ?? '')
-      .maybeSingle();
-    if (error) throw new Error(`Could not read the Bill.com customer link: ${error.message}`);
-    const ready = link as { status: string; billcom_customer_id: string | null } | null;
-    if (!ready || ready.status !== 'synced' || !ready.billcom_customer_id) return { kind: 'not_linked' };
-
-    const status = await readBillcomInvoiceStatus(client, {
-      billcomCustomerId: ready.billcom_customer_id,
-      invoiceNumbers: [invoice.external_document_number ?? '', invoice.bc_invoice_number ?? ''],
-    });
-    return status ? { kind: 'found', status } : { kind: 'not_found' };
+    let found;
+    if (input.billcomInvoiceId) {
+      found = await readBillcomInvoiceStatus(client, { billcomInvoiceId: input.billcomInvoiceId, invoiceNumbers: [] });
+    } else {
+      const { data: link, error } = await ctx.supabase
+        .from('billcom_customer_links')
+        .select('status, billcom_customer_id')
+        .eq('organization_id', ctx.orgId)
+        .eq('bc_connection_id', ctx.connection.id)
+        .eq('billcom_connection_id', conn.id)
+        .eq('bc_customer_number', input.customerNumber ?? '')
+        .maybeSingle();
+      if (error) throw new Error(`Could not read the Bill.com customer link: ${error.message}`);
+      const ready = link as { status: string; billcom_customer_id: string | null } | null;
+      if (!ready || ready.status !== 'synced' || !ready.billcom_customer_id) return { kind: 'not_linked' };
+      found = await readBillcomInvoiceStatus(client, { billcomCustomerId: ready.billcom_customer_id, invoiceNumbers: input.invoiceNumbers });
+    }
+    if (found === 'ambiguous') return { kind: 'ambiguous' };
+    return found ? { kind: 'found', status: found } : { kind: 'not_found' };
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }

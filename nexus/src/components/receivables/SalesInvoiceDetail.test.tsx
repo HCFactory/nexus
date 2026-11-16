@@ -65,6 +65,12 @@ describe('SalesInvoiceDetail', () => {
     expect(screen.getByText('No lines')).toBeInTheDocument();
   });
 
+  it("says the lines couldn't be loaded instead of No lines when BC failed", () => {
+    render(<SalesInvoiceDetail invoice={invoice()} lines={[]} linesError salesOrder={null} billcom={null} />);
+    expect(screen.getByText("Couldn't load lines from Business Central.")).toBeInTheDocument();
+    expect(screen.queryByText('No lines')).toBeNull();
+  });
+
   it('links the sales order', () => {
     render(<SalesInvoiceDetail invoice={invoice()} lines={[]} salesOrder={{ id: 'so-1', bcOrderNumber: 'W-100532' }} billcom={null} />);
     expect(screen.getByRole('link', { name: /W-100532/ })).toHaveAttribute('href', '/sales-orders/so-1');
@@ -83,6 +89,7 @@ describe('BillcomInvoicePanel', () => {
     [{ kind: 'off' } as const, 'Bill.com is turned off.'],
     [{ kind: 'not_linked' } as const, "This customer isn't linked to Bill.com."],
     [{ kind: 'not_found' } as const, 'Not found in Bill.com.'],
+    [{ kind: 'ambiguous' } as const, 'Several Bill.com invoices have this number.'],
     [{ kind: 'error', message: 'down' } as const, "Couldn't reach Bill.com: down"],
   ])('%o shows its message', (panel, text) => {
     render(<BillcomInvoicePanel panel={panel} />);

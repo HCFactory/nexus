@@ -53,7 +53,7 @@ describe('readBillcomInvoiceStatus', () => {
       ],
     }));
     const found = await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1', 'INV-9'] });
-    expect(found?.id).toBe('b');
+    expect(found).toMatchObject({ id: 'b' });
     const url = new URL(`http://x${request.mock.calls[0][0]}`);
     expect(url.pathname).toBe('/v3/invoices');
     expect(url.searchParams.get('filters')).toBe('customerId:eq:0cu1');
@@ -66,14 +66,45 @@ describe('readBillcomInvoiceStatus', () => {
         { ...RAW, id: 'by-ext', invoiceNumber: 'W-1' },
       ],
     }));
-    expect((await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1', 'INV-9'] }))?.id).toBe('by-ext');
+    expect(await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1', 'INV-9'] })).toMatchObject({ id: 'by-ext' });
+  });
+
+  it('two invoices share the Invoice #: the BC Invoice No. match wins', async () => {
+    const { client } = fakeClient(() => ({
+      results: [
+        { ...RAW, id: 'ship-1', invoiceNumber: 'W-1' },
+        { ...RAW, id: 'ship-2', invoiceNumber: 'W-1' },
+        { ...RAW, id: 'by-bc', invoiceNumber: 'INV-9' },
+      ],
+    }));
+    expect(await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1', 'INV-9'] })).toMatchObject({ id: 'by-bc' });
+  });
+
+  it("two invoices share the Invoice # and none has the BC Invoice No.: 'ambiguous', never a guess", async () => {
+    const { client } = fakeClient(() => ({
+      results: [
+        { ...RAW, id: 'ship-1', invoiceNumber: 'W-1' },
+        { ...RAW, id: 'ship-2', invoiceNumber: 'W-1' },
+      ],
+    }));
+    expect(await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1', 'INV-9'] })).toBe('ambiguous');
+  });
+
+  it('a unique Invoice # match on page 1 still checks later pages for a duplicate', async () => {
+    const { client, request } = fakeClient((path) =>
+      path.includes('page=p2')
+        ? { results: [{ ...RAW, id: 'ship-2', invoiceNumber: 'W-1' }] }
+        : { results: [{ ...RAW, id: 'ship-1', invoiceNumber: 'W-1' }], nextPage: 'p2' },
+    );
+    expect(await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1'] })).toBe('ambiguous');
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   it('follows nextPage', async () => {
     const { client, request } = fakeClient((path) =>
       path.includes('page=p2') ? { results: [{ ...RAW, id: 'z', invoiceNumber: 'W-1' }] } : { results: [], nextPage: 'p2' },
     );
-    expect((await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1'] }))?.id).toBe('z');
+    expect(await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1'] })).toMatchObject({ id: 'z' });
     expect(request).toHaveBeenCalledTimes(2);
   });
 

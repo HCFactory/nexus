@@ -55,36 +55,44 @@ function toStatus(r: RawInvoice): BillcomInvoiceStatus {
 
 /**
  * The Bill.com invoice for a BC invoice: by Bill.com id when known; else among
- * the customer's invoices, the first exact match of `invoiceNumbers` in order
- * (Invoice #, then BC Invoice No.). null when none matches.
+ * the customer's invoices, by exact number in `invoiceNumbers` order (Invoice #,
+ * then BC Invoice No.). A number shared by several Bill.com invoices (BC copies
+ * the order's Invoice # onto every invoice of a partly invoiced order) is never
+ * guessed: the next number is tried, and 'ambiguous' is returned when no number
+ * matches exactly one invoice. null when nothing matches.
  */
 export async function readBillcomInvoiceStatus(
   client: BillcomClient,
   q: { billcomInvoiceId?: string | null; billcomCustomerId?: string | null; invoiceNumbers: string[] },
-): Promise<BillcomInvoiceStatus | null> {
+): Promise<BillcomInvoiceStatus | 'ambiguous' | null> {
   if (q.billcomInvoiceId) {
     return toStatus(await client.request<RawInvoice>(`/v3/invoices/${encodeURIComponent(q.billcomInvoiceId)}`));
   }
   const numbers = q.invoiceNumbers.map((n) => n.trim()).filter(Boolean);
   if (!q.billcomCustomerId || numbers.length === 0) return null;
 
-  // Best match so far = lowest index in `numbers`; index 0 can't be beaten, so stop there.
-  let best: { rank: number; invoice: RawInvoice } | null = null;
+  // All pages are read: a duplicate can sit on a later page.
+  const matches: RawInvoice[][] = numbers.map(() => []);
   let page: string | undefined;
-  for (let i = 0; i < MAX_PAGES; i++) {
+  for (let i = 0; ; i++) {
+    if (i === MAX_PAGES) throw new Error(`Bill.com invoice list has more than ${MAX_PAGES} pages.`);
     const qs = new URLSearchParams({ filters: `customerId:eq:${q.billcomCustomerId}`, max: String(PAGE) });
     if (page) qs.set('page', page);
     const res = await client.request<{ results?: RawInvoice[]; nextPage?: string }>(`/v3/invoices?${qs.toString()}`);
     for (const r of res.results ?? []) {
       const rank = numbers.indexOf((r.invoiceNumber ?? '').trim());
-      if (rank >= 0 && (!best || rank < best.rank)) best = { rank, invoice: r };
+      if (rank >= 0) matches[rank].push(r);
     }
-    if (best?.rank === 0) break;
     page = res.nextPage || undefined;
     if (!page) break;
-    if (i === MAX_PAGES - 1) throw new Error(`Bill.com invoice list has more than ${MAX_PAGES} pages.`);
   }
-  return best ? toStatus(best.invoice) : null;
+
+  let ambiguous = false;
+  for (const found of matches) {
+    if (found.length === 1) return toStatus(found[0]);
+    if (found.length > 1) ambiguous = true;
+  }
+  return ambiguous ? 'ambiguous' : null;
 }
 
 /** The invoice page's Bill.com panel: what was found, or why nothing is shown. */
@@ -93,4 +101,5 @@ export type BillcomPanel =
   | { kind: 'off' }
   | { kind: 'not_linked' }
   | { kind: 'not_found' }
+  | { kind: 'ambiguous' }
   | { kind: 'error'; message: string };
