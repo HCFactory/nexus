@@ -86,3 +86,11 @@ export async function readBillcomInvoiceStatus(
   }
   return best ? toStatus(best.invoice) : null;
 }
+
+/** The invoice page's Bill.com panel: what was found, or why nothing is shown. */
+export type BillcomPanel =
+  | { kind: 'found'; status: BillcomInvoiceStatus }
+  | { kind: 'off' }
+  | { kind: 'not_linked' }
+  | { kind: 'not_found' }
+  | { kind: 'error'; message: string };
