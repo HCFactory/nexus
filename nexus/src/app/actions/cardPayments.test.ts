@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   charge: vi.fn(),
   retry: vi.fn(),
   manual: vi.fn(),
+  notCharged: vi.fn(),
   check: vi.fn(),
   view: vi.fn(),
   getPage: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('@/lib/stripe/chargeInvoice', () => ({
   chargeInvoice: mocks.charge,
   retryBillcomRecord: mocks.retry,
   markRecordedManually: mocks.manual,
+  markNotCharged: mocks.notCharged,
   checkChargeStatus: mocks.check,
   invoiceChargeView: mocks.view,
 }));
@@ -40,6 +42,7 @@ import {
   chargeInvoiceCard,
   checkCardPaymentStatus,
   getInvoiceChargeView,
+  markCardPaymentNotCharged,
   markCardPaymentRecordedManually,
   retryCardPaymentBillcom,
 } from './cardPayments';
@@ -50,7 +53,7 @@ const ROW = { id: CP, bcInvoiceId: INV, status: 'succeeded' };
 
 beforeEach(() => {
   mocks.access.canChargeSavedCards = true;
-  for (const m of [mocks.charge, mocks.retry, mocks.manual, mocks.check]) m.mockReset().mockResolvedValue(ROW);
+  for (const m of [mocks.charge, mocks.retry, mocks.manual, mocks.check, mocks.notCharged]) m.mockReset().mockResolvedValue(ROW);
   mocks.view.mockReset().mockResolvedValue({ eligibility: { ok: false, reason: 'x' }, card: null, payments: [] });
   mocks.resolveStripe.mockReset().mockResolvedValue({ id: 'sc-1', enabled: true, livemode: false });
   mocks.getPage.mockReset().mockResolvedValue({
@@ -65,6 +68,7 @@ describe('permission enforced on every mutating action', () => {
     ['retryCardPaymentBillcom', () => retryCardPaymentBillcom(CP), mocks.retry],
     ['markCardPaymentRecordedManually', () => markCardPaymentRecordedManually(CP), mocks.manual],
     ['checkCardPaymentStatus', () => checkCardPaymentStatus(CP), mocks.check],
+    ['markCardPaymentNotCharged', () => markCardPaymentNotCharged(CP), mocks.notCharged],
   ];
 
   it.each(actions)('%s refuses without Charge saved cards', async (_n, run, impl) => {
@@ -111,4 +115,9 @@ it('a disabled Stripe connection is passed as off', async () => {
   mocks.resolveStripe.mockResolvedValue({ id: 'sc-1', enabled: false, livemode: false });
   await chargeInvoiceCard(INV);
   expect(mocks.charge.mock.calls[0][0]).toMatchObject({ stripeConnectionId: null });
+});
+
+it('markCardPaymentNotCharged passes the current user', async () => {
+  await markCardPaymentNotCharged(CP);
+  expect(mocks.notCharged.mock.calls[0].slice(1)).toEqual([CP, 'u1']);
 });

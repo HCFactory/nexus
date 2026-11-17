@@ -42,15 +42,26 @@ const REASONS = {
   notPastDue: "This invoice isn't past due yet.",
 } as const;
 
-const NO_STRIPE_RECORD = 'Stripe has no record of this charge, so the card was not charged.';
+export const MARKED_NOT_CHARGED_MESSAGE = 'Marked as not charged by staff after checking Stripe.';
 const BILLCOM_INTERRUPTED = 'Recording in Bill.com was interrupted. Retry, or mark it paid if it is already there.';
 const BILLCOM_OFF = "Bill.com isn't connected.";
 const NOT_RETRYABLE = "This payment isn't waiting for a Bill.com retry.";
 const NOT_MANUAL = 'Only a charged payment that Bill.com failed to record can be marked paid.';
 const NOT_FOUND = 'Card payment not found.';
 
-/** Stripe search can lag; after this long with nothing found, no charge was made. */
-const NO_RECORD_AFTER_MS = 30 * 60 * 1000;
+/** list() looks back this far before charged_at, for clock skew between Nexus and Stripe. */
+const LIST_LOOKBACK_SECONDS = 300;
+const LIST_MAX_PAGES = 20;
+const NOT_PROCESSING = 'Only a charge still being checked with Stripe can be marked as not charged.';
+const INTENT_EXISTS = 'Stripe has a payment for this charge, so it was settled from Stripe instead.';
+/** Stripe errors that mean the request was refused before any money moved. */
+const NO_CHARGE_ERRORS = new Set([
+  'StripeCardError',
+  'StripeInvalidRequestError',
+  'StripeAuthenticationError',
+  'StripePermissionError',
+  'StripeRateLimitError',
+]);
 /** A Bill.com record takes seconds; still `not_started` after this means it was cut off. */
 const BILLCOM_STUCK_AFTER_MS = 10 * 60 * 1000;
 const UNIQUE_VIOLATION = '23505';
@@ -236,14 +247,24 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
   }
   const card = await cardOf(deps, p.card_id);
   const cardText = card.brand || card.last4 ? ` (${[card.brand, card.last4 && `•••• ${card.last4}`].filter(Boolean).join(' ')})` : '';
+  let paymentId: string | null;
   try {
-    const { paymentId } = await recordBillcomCardPayment(client, {
+    ({ paymentId } = await recordBillcomCardPayment(client, {
       billcomInvoiceId: p.billcom_invoice_id,
       customerId: p.billcom_customer_id,
       amount: Number(p.amount),
       paymentDate: businessDate(deps.now()),
       description: `Card payment via Stripe ${intentId}${cardText}`,
+    }));
+  } catch (e) {
+    // Only a Bill.com error means Bill.com was not updated.
+    await transition(deps, p.id, notStarted, {
+      billcom_state: 'failed',
+      billcom_error: e instanceof Error ? e.message : String(e),
     });
+    return;
+  }
+  try {
     await transition(deps, p.id, notStarted, {
       billcom_state: 'recorded',
       billcom_payment_id: paymentId,
@@ -251,10 +272,10 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
       billcom_recorded_at: deps.now().toISOString(),
     });
   } catch (e) {
-    await transition(deps, p.id, notStarted, {
-      billcom_state: 'failed',
-      billcom_error: e instanceof Error ? e.message : String(e),
-    });
+    // Bill.com HAS the payment: never mark it failed (a retry would record it twice).
+    const msg = `Recorded in Bill.com (payment ${paymentId ?? 'id not returned'}) but Nexus could not save that. Use "I marked it paid in Bill.com". ${e instanceof Error ? e.message : String(e)}`;
+    console.error(`[chargeInvoice] card payment ${p.id}: ${msg}`);
+    throw new Error(msg);
   }
 }
 
@@ -299,7 +320,7 @@ type StripeErrorLike = { type?: string; code?: string; message?: string; payment
 /** A definite "no charge" from Stripe, or null when the outcome is unknown. */
 function definiteFailure(e: unknown): { message: string; intentId: string | null } | null {
   const err = (e ?? {}) as StripeErrorLike;
-  if (err.type !== 'StripeCardError' && err.type !== 'StripeInvalidRequestError') return null;
+  if (!err.type || !NO_CHARGE_ERRORS.has(err.type)) return null;
   const message = err.code === 'authentication_required' ? AUTH_REQUIRED_MESSAGE : err.message || 'The card was declined.';
   return { message, intentId: err.payment_intent?.id ?? null };
 }
@@ -427,7 +448,52 @@ export async function chargeInvoice(deps: ChargeDeps, a: { bcInvoiceId: string; 
   return rowById(deps, payment.id);
 }
 
-/** Settles a `processing` row from Stripe (found by metadata card_payment_id). Never charges. */
+/**
+ * The PaymentIntent of a card payment, read with strongly consistent calls
+ * (never Search, which lags): by the stored intent id, else the Stripe
+ * customer's intents created since just before the charge, matched on
+ * metadata card_payment_id. Uses the connection the charge was made in.
+ */
+async function findIntent(deps: ChargeDeps, p: CardPayment): Promise<Stripe.PaymentIntent | null> {
+  const stripe = await deps.stripeClient(p.stripe_connection_id);
+  if (p.stripe_payment_intent_id) return stripe.paymentIntents.retrieve(p.stripe_payment_intent_id);
+
+  const { data: sc, error } = await deps.supabase
+    .from('stripe_customers')
+    .select('stripe_customer_id')
+    .eq('organization_id', deps.orgId)
+    .eq('stripe_connection_id', p.stripe_connection_id)
+    .eq('bc_customer_number', p.bc_customer_number)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the Stripe customer: ${error.message}`);
+  const customer = (sc as { stripe_customer_id: string } | null)?.stripe_customer_id;
+  // chargeInvoice never calls Stripe without a Stripe customer, so none means no charge was sent.
+  if (!customer) return null;
+
+  const gte = Math.floor(new Date(p.charged_at).getTime() / 1000) - LIST_LOOKBACK_SECONDS;
+  const matches: Stripe.PaymentIntent[] = [];
+  let startingAfter: string | undefined;
+  for (let page = 0; ; page++) {
+    if (page === LIST_MAX_PAGES) throw new Error('Too many Stripe payments to check; look this charge up in the Stripe dashboard.');
+    const res = await stripe.paymentIntents.list({
+      customer,
+      created: { gte },
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    const list = res.data ?? [];
+    matches.push(...list.filter((i) => i.metadata?.card_payment_id === p.id));
+    if (!res.has_more || list.length === 0) break;
+    startingAfter = list[list.length - 1].id;
+  }
+  return matches.find((i) => i.status === 'succeeded') ?? matches[0] ?? null;
+}
+
+/**
+ * Settles a `processing` row from Stripe. Never charges and never fails a
+ * charge on its own: when Stripe has no matching payment the row stays
+ * `processing` (stripeLookup 'not_found') until staff use markNotCharged.
+ */
 export async function checkChargeStatus(deps: ChargeDeps, cardPaymentId: string): Promise<CardPaymentRow> {
   const p = await readPayment(deps, cardPaymentId);
   const age = deps.now().getTime() - new Date(p.charged_at).getTime();
@@ -441,12 +507,30 @@ export async function checkChargeStatus(deps: ChargeDeps, cardPaymentId: string)
   }
   if (p.status !== 'processing') return toRow(deps, p);
 
-  const stripe = await deps.stripeClient(p.stripe_connection_id);
-  const res = await stripe.paymentIntents.search({ query: `metadata['card_payment_id']:'${p.id}'` });
-  const intents = res.data ?? [];
-  const pi = intents.find((i) => i.status === 'succeeded') ?? intents[0];
-  if (pi) await applyIntent(deps, p, pi);
-  else if (age > NO_RECORD_AFTER_MS) await settleFailed(deps, p.id, NO_STRIPE_RECORD, null);
+  const pi = await findIntent(deps, p);
+  if (!pi) return { ...(await toRow(deps, p)), stripeLookup: 'not_found' };
+  await applyIntent(deps, p, pi);
+  return rowById(deps, p.id);
+}
+
+/**
+ * Staff confirm a `processing` charge never happened. Checks Stripe first:
+ * if a payment exists the row is settled from it and this refuses.
+ */
+export async function markNotCharged(deps: ChargeDeps, cardPaymentId: string, userId: string): Promise<CardPaymentRow> {
+  const p = await readPayment(deps, cardPaymentId);
+  if (p.status !== 'processing') throw new Error(NOT_PROCESSING);
+  const pi = await findIntent(deps, p);
+  if (pi) {
+    await applyIntent(deps, p, pi);
+    throw new Error(INTENT_EXISTS);
+  }
+  // No column fits "who marked it not charged", so who and when go in the message.
+  const done = await transition(deps, p.id, { status: 'processing' }, {
+    status: 'failed',
+    failure_message: `${MARKED_NOT_CHARGED_MESSAGE} (by ${userId} at ${deps.now().toISOString()})`,
+  });
+  if (!done) throw new Error(NOT_PROCESSING);
   return rowById(deps, p.id);
 }
 

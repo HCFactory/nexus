@@ -14,6 +14,8 @@ import {
   chargeEligibility,
   chargeInvoice,
   checkChargeStatus,
+  MARKED_NOT_CHARGED_MESSAGE,
+  markNotCharged,
   markRecordedManually,
   retryBillcomRecord,
   type ChargeDeps,
@@ -94,7 +96,8 @@ function setup(opts: {
   tables?: Record<string, Row[]>;
   lookup?: BillcomLookup;
   create?: (params: Row, options: Row) => Promise<unknown>;
-  search?: () => Promise<unknown>;
+  list?: (params: Row) => Promise<unknown>;
+  retrieve?: (id: string) => Promise<unknown>;
   canCharge?: boolean;
   stripeConnectionId?: string | null;
   billcom?: boolean;
@@ -124,8 +127,10 @@ function setup(opts: {
     log.push('stripe');
     return opts.create ? opts.create(params, options) : { id: 'pi_1', status: 'succeeded' };
   });
-  const search = vi.fn(async () => (opts.search ? opts.search() : { data: [] }));
-  const stripe = { paymentIntents: { create, search } };
+  const search = vi.fn(async () => ({ data: [] }));
+  const list = vi.fn(async (params: Row) => (opts.list ? opts.list(params) : { data: [], has_more: false }));
+  const retrieve = vi.fn(async (id: string) => (opts.retrieve ? opts.retrieve(id) : { id, status: 'succeeded' }));
+  const stripe = { paymentIntents: { create, search, list, retrieve } };
   mocks.record.mockImplementation(async () => {
     log.push('billcom');
     return { paymentId: '0pay1' };
@@ -146,7 +151,7 @@ function setup(opts: {
     findBillcomInvoice,
     now: () => NOW,
   };
-  return { db, deps, log, create, search, findBillcomInvoice };
+  return { db, deps, log, create, search, list, retrieve, findBillcomInvoice };
 }
 
 const paymentRow = (over: Row = {}): Row => ({
@@ -280,6 +285,43 @@ describe('chargeInvoice', () => {
     expect(s.log).toEqual(['db:insert:processing', 'stripe']);
   });
 
+  it.each(['StripeInvalidRequestError', 'StripeAuthenticationError', 'StripePermissionError', 'StripeRateLimitError'])(
+    '%s is a definite no-charge → failed with Stripe’s message',
+    async (type) => {
+      const s = setup({
+        create: async () => {
+          throw stripeError(type, `${type} message`);
+        },
+      });
+      expect(await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).toMatchObject({ status: 'failed', failureMessage: `${type} message` });
+      expect(mocks.record).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['StripeAPIError', 'StripeIdempotencyError', undefined])('%s is an unknown outcome → stays processing', async (type) => {
+    const s = setup({
+      create: async () => {
+        throw stripeError(type as string, 'boom');
+      },
+    });
+    expect((await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).status).toBe('processing');
+  });
+
+  it('Bill.com recorded but saving that fails → not marked Bill.com failed; the error names the Bill.com payment id', async () => {
+    const s = setup();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const base = s.db.failOn!;
+    s.db.failOn = (table, op, payload) => {
+      base(table, op, payload);
+      return table === 'card_payments' && op === 'update' && (payload as Row).billcom_state === 'recorded' ? 'db down' : null;
+    };
+    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow(/0pay1/);
+    const stored = s.db.tables.card_payments[0];
+    expect(stored.status).toBe('succeeded');
+    expect(stored.billcom_state).toBe('not_started');
+    expect(s.db.writes.some(([, , p]) => (p as Row).billcom_state === 'failed')).toBe(false);
+  });
+
   it('second concurrent charge is rejected by the unique index (23505), no Stripe call', async () => {
     const s = setup();
     s.db.failOn = (table, op) => (table === 'card_payments' && op === 'insert' ? { message: 'duplicate key', code: '23505' } : null);
@@ -331,39 +373,64 @@ describe('chargeInvoice', () => {
   });
 });
 
+const intent = (id: string, status: string, over: Row = {}) => ({ id, status, metadata: { card_payment_id: 'cp-1' }, ...over });
+
 describe('checkChargeStatus', () => {
-  it('settles a processing row from Stripe and records it in Bill.com', async () => {
+  it('lists the Stripe customer’s intents since just before the charge and settles from the one whose metadata matches', async () => {
     const s = setup({
       tables: { card_payments: [paymentRow()] },
-      search: async () => ({ data: [{ id: 'pi_9', status: 'succeeded' }] }),
+      list: async () => ({ data: [intent('pi_other', 'succeeded', { metadata: { card_payment_id: 'cp-x' } }), intent('pi_9', 'succeeded')], has_more: false }),
     });
     const row = await checkChargeStatus(s.deps, 'cp-1');
-    expect(s.search).toHaveBeenCalledWith({ query: "metadata['card_payment_id']:'cp-1'" });
+    // charged_at 19:59:00Z minus 300 seconds.
+    expect(s.list).toHaveBeenCalledWith({ customer: 'cus_1', created: { gte: Date.parse('2026-11-17T19:54:00.000Z') / 1000 }, limit: 100 });
     expect(row).toMatchObject({ status: 'succeeded', stripePaymentIntentId: 'pi_9', billcomState: 'recorded' });
     expect(mocks.record.mock.calls[0][1]).toMatchObject({ amount: 60, description: expect.stringContaining('pi_9') });
     expect(s.create).not.toHaveBeenCalled();
+    expect(s.search).not.toHaveBeenCalled();
+  });
+
+  it('pages through the list', async () => {
+    const s = setup({
+      tables: { card_payments: [paymentRow()] },
+      list: async (params) =>
+        params.starting_after === 'pi_a'
+          ? { data: [intent('pi_9', 'succeeded')], has_more: false }
+          : { data: [intent('pi_a', 'succeeded', { metadata: {} })], has_more: true },
+    });
+    expect(await checkChargeStatus(s.deps, 'cp-1')).toMatchObject({ status: 'succeeded', stripePaymentIntentId: 'pi_9' });
+    expect(s.list).toHaveBeenCalledTimes(2);
+  });
+
+  it('a stored intent id is retrieved directly (no search, no list)', async () => {
+    const s = setup({
+      tables: { card_payments: [paymentRow({ stripe_payment_intent_id: 'pi_3' })] },
+      retrieve: async (id) => intent(id, 'succeeded'),
+    });
+    expect(await checkChargeStatus(s.deps, 'cp-1')).toMatchObject({ status: 'succeeded', stripePaymentIntentId: 'pi_3', billcomState: 'recorded' });
+    expect(s.retrieve).toHaveBeenCalledWith('pi_3');
+    expect(s.list).not.toHaveBeenCalled();
+    expect(s.search).not.toHaveBeenCalled();
   });
 
   it('settles a failed intent as failed', async () => {
     const s = setup({
       tables: { card_payments: [paymentRow()] },
-      search: async () => ({ data: [{ id: 'pi_9', status: 'requires_payment_method', last_payment_error: { message: 'Declined.' } }] }),
+      list: async () => ({ data: [intent('pi_9', 'requires_payment_method', { last_payment_error: { message: 'Declined.' } })], has_more: false }),
     });
     expect(await checkChargeStatus(s.deps, 'cp-1')).toMatchObject({ status: 'failed', failureMessage: 'Declined.' });
     expect(mocks.record).not.toHaveBeenCalled();
   });
 
-  it('nothing in Stripe yet → still processing (search can lag)', async () => {
+  it('nothing in Stripe yet → still processing, flagged not_found', async () => {
     const s = setup({ tables: { card_payments: [paymentRow()] } });
-    expect((await checkChargeStatus(s.deps, 'cp-1')).status).toBe('processing');
+    expect(await checkChargeStatus(s.deps, 'cp-1')).toMatchObject({ status: 'processing', stripeLookup: 'not_found' });
   });
 
-  it('nothing in Stripe long after the attempt → failed (the card was never charged)', async () => {
-    const s = setup({ tables: { card_payments: [paymentRow({ charged_at: '2026-11-17T18:00:00.000Z' })] } });
-    expect(await checkChargeStatus(s.deps, 'cp-1')).toMatchObject({
-      status: 'failed',
-      failureMessage: 'Stripe has no record of this charge, so the card was not charged.',
-    });
+  it('nothing in Stripe long after the attempt → still processing (never auto-failed)', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ charged_at: '2026-11-16T00:00:00.000Z' })] } });
+    expect(await checkChargeStatus(s.deps, 'cp-1')).toMatchObject({ status: 'processing', stripeLookup: 'not_found', failureMessage: null });
+    expect(s.db.tables.card_payments[0].status).toBe('processing');
   });
 
   it('uses the Stripe account the charge was made in', async () => {
@@ -375,7 +442,8 @@ describe('checkChargeStatus', () => {
   it('leaves a settled row alone', async () => {
     const s = setup({ tables: { card_payments: [paymentRow({ status: 'failed' })] } });
     expect((await checkChargeStatus(s.deps, 'cp-1')).status).toBe('failed');
-    expect(s.search).not.toHaveBeenCalled();
+    expect(s.list).not.toHaveBeenCalled();
+    expect(s.retrieve).not.toHaveBeenCalled();
   });
 
   it('an interrupted Bill.com record (succeeded + not_started, long ago) becomes billcom failed so staff can retry', async () => {
@@ -438,5 +506,40 @@ describe('markRecordedManually', () => {
   ])('refuses %s', async (_n, over) => {
     const s = setup({ tables: { card_payments: [paymentRow(over)] } });
     await expect(markRecordedManually(s.deps, 'cp-1', 'u2')).rejects.toThrow('Only a charged payment that Bill.com failed to record can be marked paid.');
+  });
+});
+
+describe('markNotCharged', () => {
+  it('from processing with nothing in Stripe → failed with the message, who and when', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow()] } });
+    const row = await markNotCharged(s.deps, 'cp-1', 'u2');
+    expect(MARKED_NOT_CHARGED_MESSAGE).toBe('Marked as not charged by staff after checking Stripe.');
+    expect(row.status).toBe('failed');
+    expect(row.failureMessage).toBe(`${MARKED_NOT_CHARGED_MESSAGE} (by u2 at ${NOW.toISOString()})`);
+    expect(s.list).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses when Stripe has an intent, and settles the row from it instead', async () => {
+    const s = setup({
+      tables: { card_payments: [paymentRow()] },
+      list: async () => ({ data: [intent('pi_9', 'succeeded')], has_more: false }),
+    });
+    await expect(markNotCharged(s.deps, 'cp-1', 'u2')).rejects.toThrow('Stripe has a payment for this charge');
+    expect(s.db.tables.card_payments[0]).toMatchObject({ status: 'succeeded', stripe_payment_intent_id: 'pi_9' });
+  });
+
+  it('refuses when a stored intent id is retrievable', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ stripe_payment_intent_id: 'pi_3' })] }, retrieve: async (id) => intent(id, 'processing') });
+    await expect(markNotCharged(s.deps, 'cp-1', 'u2')).rejects.toThrow('Stripe has a payment for this charge');
+    expect(s.db.tables.card_payments[0].status).toBe('processing');
+  });
+
+  it.each([
+    ['succeeded', { status: 'succeeded' }],
+    ['failed', { status: 'failed' }],
+  ])('refuses from %s', async (_n, over) => {
+    const s = setup({ tables: { card_payments: [paymentRow(over)] } });
+    await expect(markNotCharged(s.deps, 'cp-1', 'u2')).rejects.toThrow('Only a charge still being checked with Stripe can be marked as not charged.');
+    expect(s.list).not.toHaveBeenCalled();
   });
 });

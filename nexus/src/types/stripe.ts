@@ -174,6 +174,8 @@ export interface CardPaymentRow {
   recordedManuallyBy: string | null;
   cardBrand: string | null;
   cardLast4: string | null;
+  /** Set by Check status when Stripe has no payment for a `processing` row. */
+  stripeLookup?: 'not_found';
 }
 
 /**

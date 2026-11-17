@@ -10,6 +10,7 @@ import {
   chargeInvoice,
   checkChargeStatus,
   invoiceChargeView,
+  markNotCharged,
   markRecordedManually,
   retryBillcomRecord,
   type ChargeDeps,
@@ -104,4 +105,10 @@ export async function checkCardPaymentStatus(cardPaymentId: string): Promise<Car
   const { deps } = await scope(true);
   checkId(cardPaymentId);
   return refresh(await checkChargeStatus(deps, cardPaymentId));
+}
+
+export async function markCardPaymentNotCharged(cardPaymentId: string): Promise<CardPaymentRow> {
+  const { deps, userId } = await scope(true);
+  checkId(cardPaymentId);
+  return refresh(await markNotCharged(deps, cardPaymentId, userId));
 }
