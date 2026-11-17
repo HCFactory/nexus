@@ -98,7 +98,7 @@ describe('startChangeInvoice', () => {
   });
 
   it('a draft line error is returned', async () => {
-    expect(await startChangeInvoice('o1', [draft({ id: undefined, unit_price: null })], 'why')).toEqual({ ok: false, error: 'Enter a unit price for 20000.' });
+    expect(await startChangeInvoice('o1', [draft({ id: undefined, unit_price: null, bc_unit_price: null, estimate_price: null })], 'why')).toEqual({ ok: false, error: 'Enter a unit price for 20000.' });
     expect(mocks.start).not.toHaveBeenCalled();
   });
 

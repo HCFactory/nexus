@@ -57,8 +57,15 @@ describe('changeLinesFromDrafts', () => {
     })
   })
 
-  it('a new line needs a unit price', () => {
+  it('a new line with no price and no estimate needs a unit price', () => {
     expect(changeLinesFromDrafts([draft({})], rows)).toEqual({ ok: false, error: 'Enter a unit price for ING-10.' })
+  })
+
+  it('a new line with no typed price uses the estimate the table shows', () => {
+    expect(changeLinesFromDrafts([draft({ estimate_price: 8.5 })], rows)).toEqual({
+      ok: true,
+      lines: [line({ unit_price: 8.5 })],
+    })
   })
 
   it('quantity must be more than 0', () => {

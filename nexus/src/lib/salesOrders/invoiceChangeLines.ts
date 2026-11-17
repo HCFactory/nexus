@@ -26,7 +26,8 @@ export function toChangeLines(rows: SalesOrderLineRow[]): ChangeLine[] {
 
 /**
  * The rep's edited lines as change lines. An existing line keeps its invoiced
- * price and discount unless the rep typed one; a new line must have a price.
+ * price and discount unless the rep typed one; a new line uses its typed price,
+ * else the estimate, and needs one of them.
  */
 export function changeLinesFromDrafts(
   drafts: LineDraft[],
@@ -37,7 +38,8 @@ export function changeLinesFromDrafts(
   for (const d of drafts) {
     if (!d.item_number.trim()) continue
     const existing = d.id ? byId.get(d.id) : undefined
-    const price = d.unit_price ?? (existing ? effectivePrice(existing) : null)
+    // A new line without a typed price uses the estimate the table shows and totals.
+    const price = d.unit_price ?? (existing ? effectivePrice(existing) : effectivePrice(d))
     if (price === null) return { ok: false, error: `Enter a unit price for ${d.item_number}.` }
     if (!(d.quantity > 0)) return { ok: false, error: `Quantity must be more than 0 for ${d.item_number}.` }
     if (price < 0) return { ok: false, error: `Unit price can't be negative for ${d.item_number}.` }
