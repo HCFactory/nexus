@@ -139,10 +139,18 @@ export interface CardLabel {
 
 /** What the customer page shows: the active card (if any) and setup-link state. */
 export interface CustomerCardView {
-  card: CardLabel | null;
-  activeLinkExpiresAt: string | null;
-  /** The current default Stripe connection exists and is enabled. */
-  connectionAvailable: boolean;
+  /** 'off' = no enabled default Stripe connection. */
+  stripe: 'off' | 'ready';
+  card: {
+    brand: string | null;
+    last4: string | null;
+    expMonth: number | null;
+    expYear: number | null;
+    savedAt: string;
+  } | null;
+  /** An unexpired, unused setup link, if one exists. */
+  openLink: { createdAt: string; expiresAt: string; emailedTo: string | null } | null;
+  canEdit: boolean;
 }
 
 /** A card payment as shown in the UI. */

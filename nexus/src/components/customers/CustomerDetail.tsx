@@ -20,6 +20,8 @@ import { DELETE_CONFIRM } from "./CustomersClient";
 import { ShipToSection } from "./ShipToSection";
 import type { ShipToOptions } from "./ShipToDialog";
 import type { ShipToRow } from "@/types/salesOrders";
+import { CardOnFileCard } from "./CardOnFileCard";
+import type { CustomerCardView } from "@/types/stripe";
 import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
 
 interface CustomerDetailProps {
@@ -32,6 +34,8 @@ interface CustomerDetailProps {
   /** Saved ship-to addresses (empty/omitted hides nothing; the section still shows). */
   shipTos?: ShipToRow[];
   shipToOptions?: ShipToOptions;
+  /** Card on file + setup link state; omitted hides the card. */
+  cardView?: CustomerCardView;
 }
 
 const NO_SHIP_TO_OPTIONS: ShipToOptions = { taxAreas: [], locations: [], shipmentMethods: [] };
@@ -64,7 +68,7 @@ function FieldCard({
   );
 }
 
-export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom, shipTos = [], shipToOptions = NO_SHIP_TO_OPTIONS }: CustomerDetailProps) {
+export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom, shipTos = [], shipToOptions = NO_SHIP_TO_OPTIONS, cardView }: CustomerDetailProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,6 +196,10 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billco
               canEdit={canEdit}
               options={shipToOptions}
             />
+          )}
+
+          {cardView && number && (
+            <CardOnFileCard customerNumber={number} customerEmail={customer.email} view={cardView} />
           )}
 
           {billcom?.on && (
