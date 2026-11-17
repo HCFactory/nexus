@@ -135,19 +135,13 @@ export async function saveStripeConnection(input: StripeConnectionInput): Promis
   }
 
   if (input.isDefault) {
-    // One default per org (partial unique index): clear the others, then set this.
-    const { error: clearError } = await supabase
-      .from('stripe_connections')
-      .update({ is_default: false })
-      .eq('organization_id', orgId)
-      .neq('id', connectionId);
-    if (clearError) throw clearError;
-    const { error: setError } = await supabase
-      .from('stripe_connections')
-      .update({ is_default: true })
-      .eq('id', connectionId)
-      .eq('organization_id', orgId);
-    if (setError) throw setError;
+    // One database function clears the other default and sets this one in a
+    // single transaction (migration 067), so a failure keeps the old default.
+    const { error } = await supabase.rpc('set_default_stripe_connection', {
+      p_connection_id: connectionId,
+      p_org_id: orgId,
+    });
+    if (error) throw error;
   } else if (input.id) {
     const { error } = await supabase
       .from('stripe_connections')
@@ -184,18 +178,31 @@ export async function deleteStripeConnection(connectionId: string): Promise<void
   const supabase = createServiceClient();
   await requireOwnedConnection(supabase, orgId, connectionId);
 
-  // Vault entries first, while the pointers are still readable.
-  const { error: vaultError } = await supabase.rpc('delete_stripe_secrets', {
-    p_connection_id: connectionId,
-  });
-  if (vaultError) throw vaultError;
+  // Saved cards, customers and payments are financial records: refuse rather
+  // than cascade them away. (The foreign keys also restrict, as a backstop.)
+  for (const table of ['stripe_customers', 'customer_cards', 'card_payments']) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('id')
+      .eq('stripe_connection_id', connectionId)
+      .limit(1);
+    if (error) throw error;
+    if (data && data.length > 0) {
+      throw new Error(
+        'This connection has saved cards or payments — disable it instead of deleting it.',
+      );
+    }
+  }
 
-  const { error } = await supabase
-    .from('stripe_connections')
-    .delete()
-    .eq('id', connectionId)
-    .eq('organization_id', orgId);
+  // One database function deletes the row and its Vault secrets together.
+  const { data: deleted, error } = await supabase.rpc('delete_stripe_connection', {
+    p_connection_id: connectionId,
+    p_org_id: orgId,
+  });
   if (error) throw error;
+  if (!deleted) {
+    throw new Error(`Stripe connection ${connectionId} was not found.`);
+  }
 
   revalidatePath('/admin');
 }

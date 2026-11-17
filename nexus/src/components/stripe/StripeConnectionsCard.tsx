@@ -251,7 +251,7 @@ export function StripeConnectionsCard() {
   async function handleDelete(connection: StripeConnectionSummary) {
     if (
       !confirm(
-        `Delete connection "${connection.displayName}"? The stored keys will be permanently deleted.`,
+        `Delete connection "${connection.displayName}"? The connection and its stored keys will be permanently deleted. This is refused if it has saved cards or payments.`,
       )
     ) {
       return;

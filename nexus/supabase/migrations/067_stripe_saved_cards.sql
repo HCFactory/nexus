@@ -43,7 +43,7 @@ create unique index if not exists stripe_connections_one_default_per_org
 create table if not exists public.stripe_customers (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
-  stripe_connection_id uuid not null references public.stripe_connections(id) on delete cascade,
+  stripe_connection_id uuid not null references public.stripe_connections(id) on delete restrict,
   bc_customer_number text not null,
   stripe_customer_id text not null,
   created_at timestamptz not null default now()
@@ -57,7 +57,7 @@ create unique index if not exists stripe_customers_connection_stripe_customer_ke
 create table if not exists public.customer_cards (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
-  stripe_connection_id uuid not null references public.stripe_connections(id) on delete cascade,
+  stripe_connection_id uuid not null references public.stripe_connections(id) on delete restrict,
   bc_customer_number text not null,
   stripe_payment_method_id text not null,
   brand text,
@@ -100,7 +100,7 @@ create index if not exists card_setup_links_customer_idx
 create table if not exists public.card_payments (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
-  stripe_connection_id uuid not null references public.stripe_connections(id) on delete cascade,
+  stripe_connection_id uuid not null references public.stripe_connections(id) on delete restrict,
   bc_customer_number text not null,
   sales_order_id uuid,
   bc_invoice_id text not null,
@@ -326,3 +326,75 @@ grant execute on function public.get_stripe_secret_key(uuid) to service_role;
 grant execute on function public.set_stripe_webhook_secret(uuid, text) to service_role;
 grant execute on function public.get_stripe_webhook_secret(uuid) to service_role;
 grant execute on function public.delete_stripe_secrets(uuid) to service_role;
+
+-- One transaction: make this connection the org's only default (mirrors 059).
+create or replace function public.set_default_stripe_connection(p_connection_id uuid, p_org_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform 1 from public.stripe_connections
+  where organization_id = p_org_id
+  for update;
+
+  if not exists (
+    select 1 from public.stripe_connections
+    where id = p_connection_id and organization_id = p_org_id
+  ) then
+    raise exception 'Stripe connection % not found', p_connection_id;
+  end if;
+
+  update public.stripe_connections
+  set is_default = false, updated_at = now()
+  where organization_id = p_org_id and id <> p_connection_id and is_default;
+
+  update public.stripe_connections
+  set is_default = true, updated_at = now()
+  where id = p_connection_id and organization_id = p_org_id;
+end;
+$$;
+
+-- Deletes the row and its Vault secrets in one transaction. Scoped to the org;
+-- returns false when no such connection exists. Fails (FK restrict) if saved
+-- cards, customers or payments still reference the connection.
+create or replace function public.delete_stripe_connection(p_connection_id uuid, p_org_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_secret_key_id uuid;
+  v_webhook_id uuid;
+begin
+  select secret_key_secret_id, webhook_secret_secret_id
+  into v_secret_key_id, v_webhook_id
+  from public.stripe_connections
+  where id = p_connection_id and organization_id = p_org_id
+  for update;
+
+  if not found then
+    return false;
+  end if;
+
+  delete from public.stripe_connections
+  where id = p_connection_id and organization_id = p_org_id;
+
+  if v_secret_key_id is not null then
+    delete from vault.secrets where id = v_secret_key_id;
+  end if;
+  if v_webhook_id is not null then
+    delete from vault.secrets where id = v_webhook_id;
+  end if;
+
+  return true;
+end;
+$$;
+
+revoke all on function public.set_default_stripe_connection(uuid, uuid) from public, anon, authenticated;
+revoke all on function public.delete_stripe_connection(uuid, uuid) from public, anon, authenticated;
+
+grant execute on function public.set_default_stripe_connection(uuid, uuid) to service_role;
+grant execute on function public.delete_stripe_connection(uuid, uuid) to service_role;

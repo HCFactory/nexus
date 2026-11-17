@@ -7,6 +7,8 @@ type Call =
 const mocks = vi.hoisted(() => ({
   calls: [] as Call[],
   owned: true,
+  dependents: false,
+  rpcData: {} as Record<string, unknown>,
   user: { id: 'u1', role: 'admin', organization_id: 'org-1' } as Record<string, unknown> | null,
   retrieve: vi.fn(),
   balance: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock('@/lib/supabase/server', () => ({
         eq: () => q,
         neq: () => q,
         order: () => q,
+        limit: () => q,
         update: (values: Record<string, unknown>) => ((pending = { kind: 'update', table, values }), q),
         insert: (values: Record<string, unknown>) => ((pending = { kind: 'insert', table, values }), q),
         delete: () => ((pending = { kind: 'update', table, values: { deleted: true } }), q),
@@ -39,14 +42,15 @@ vi.mock('@/lib/supabase/server', () => ({
         },
         then: (res: (v: unknown) => unknown) => {
           if (pending) mocks.calls.push(pending);
-          return res({ data: [], error: null });
+          const dep = mocks.dependents && table === 'customer_cards';
+          return res({ data: dep ? [{ id: 'd1' }] : [], error: null });
         },
       };
       return q;
     },
     rpc: async (fn: string, args: Record<string, unknown>) => {
       mocks.calls.push({ kind: 'rpc', fn, args });
-      return { data: null, error: null };
+      return { data: mocks.rpcData[fn] ?? null, error: null };
     },
   }),
 }));
@@ -66,6 +70,8 @@ const input = { displayName: 'Main', isDefault: false };
 beforeEach(() => {
   mocks.calls = [];
   mocks.owned = true;
+  mocks.dependents = false;
+  mocks.rpcData = { delete_stripe_connection: true };
   mocks.user = { id: 'u1', role: 'admin', organization_id: 'org-1' };
   mocks.retrieve.mockReset();
   mocks.balance.mockReset();
@@ -114,11 +120,14 @@ describe('saveStripeConnection', () => {
     expect(mocks.calls.filter((c) => c.kind === 'rpc')).toEqual([]);
   });
 
-  it('making a connection default clears the other default first', async () => {
+  it('making a connection default calls the atomic RPC, not two updates', async () => {
     await saveStripeConnection({ ...input, isDefault: true });
-    const updates = mocks.calls.filter((c) => c.kind === 'update');
-    expect(updates[0]).toMatchObject({ values: { is_default: false } });
-    expect(updates.at(-1)).toMatchObject({ values: { is_default: true } });
+    expect(mocks.calls).toContainEqual({
+      kind: 'rpc',
+      fn: 'set_default_stripe_connection',
+      args: { p_connection_id: 'new-1', p_org_id: 'org-1' },
+    });
+    expect(mocks.calls.filter((c) => c.kind === 'update')).toHaveLength(0);
   });
 });
 
@@ -139,10 +148,19 @@ describe('testStripeConnection', () => {
 });
 
 describe('deleteStripeConnection', () => {
-  it('removes Vault secrets before the row', async () => {
+  it('calls delete_stripe_connection once when nothing depends on it', async () => {
     await deleteStripeConnection('c1');
-    expect(mocks.calls[0]).toEqual({ kind: 'rpc', fn: 'delete_stripe_secrets', args: { p_connection_id: 'c1' } });
-    expect(mocks.calls[1]).toMatchObject({ kind: 'update', table: 'stripe_connections' });
+    const rpcs = mocks.calls.filter((c) => c.kind === 'rpc');
+    expect(rpcs).toEqual([
+      { kind: 'rpc', fn: 'delete_stripe_connection', args: { p_connection_id: 'c1', p_org_id: 'org-1' } },
+    ]);
+  });
+  it('is refused when saved cards or payments exist, with no RPC call', async () => {
+    mocks.dependents = true;
+    await expect(deleteStripeConnection('c1')).rejects.toThrow(
+      'This connection has saved cards or payments — disable it instead of deleting it.',
+    );
+    expect(mocks.calls.filter((c) => c.kind === 'rpc')).toEqual([]);
   });
   it('fails closed on a foreign id', async () => {
     mocks.owned = false;
