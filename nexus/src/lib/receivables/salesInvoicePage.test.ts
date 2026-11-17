@@ -147,6 +147,52 @@ describe('getSalesInvoicePage', () => {
     });
     expect((await getSalesInvoicePage(INV))?.salesOrder).toEqual({ id: 'so-1', bcOrderNumber: 'W-100532', billcomInvoiceId: null });
   });
+
+  describe('changes', () => {
+    const NEW = '7aa0c3d1-0000-4000-8000-000000000415';
+    const change = (extra: Row = {}): Row => ({
+      id: 'ch1', organization_id: 'org-1', bc_connection_id: 'conn-1', sales_order_id: 'so-1', state: 'done',
+      old_bc_invoice_id: INV, old_bc_invoice_number: 'INV-100412', new_bc_invoice_id: NEW, new_bc_invoice_number: 'INV-100415',
+      created_at: '2026-11-17T10:00:00.000Z', ...extra,
+    });
+    const tables = (changes: Row[]) => ({
+      business_central_sales_invoices: [invoiceRow(), invoiceRow({ id: 'row-new', bc_invoice_id: NEW, bc_invoice_number: 'INV-100415' })],
+      business_central_sales_invoice_lines: [lineRow('l1', 10000), lineRow('l2', 10000, { bc_invoice_id: NEW })],
+      sales_orders: [{ id: 'so-1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_posted_invoice_id: NEW, bc_order_number: 'W-100532' }],
+      sales_invoice_changes: changes,
+    });
+
+    it('finds the order of a replaced invoice through the change record, and says what replaced it', async () => {
+      setup(tables([change()]));
+      const page = await getSalesInvoicePage(INV);
+      expect(page?.salesOrder?.id).toBe('so-1');
+      expect(page?.replacedBy).toEqual({ id: NEW, number: 'INV-100415' });
+    });
+
+    it('the corrected invoice is not replaced', async () => {
+      setup(tables([change()]));
+      expect((await getSalesInvoicePage(NEW))?.replacedBy).toBeNull();
+    });
+
+    it("lists the order's changes newest first, scoped to the org and connection", async () => {
+      setup(tables([
+        change({ id: 'a', created_at: '2026-11-17T09:00:00.000Z' }),
+        change({ id: 'b', created_at: '2026-11-17T11:00:00.000Z', state: 'discarded' }),
+        change({ id: 'x', organization_id: 'org-2' }),
+      ]));
+      expect((await getSalesInvoicePage(NEW))?.changes.map((c) => c.id)).toEqual(['b', 'a']);
+    });
+
+    it('a discarded change does not mark the old invoice as replaced', async () => {
+      setup(tables([change({ state: 'discarded' })]));
+      expect((await getSalesInvoicePage(INV))?.replacedBy).toBeNull();
+    });
+
+    it('no order: no changes', async () => {
+      setup({ business_central_sales_invoices: [invoiceRow()], business_central_sales_invoice_lines: [lineRow('l1', 10000)] });
+      expect(await getSalesInvoicePage(INV)).toMatchObject({ salesOrder: null, changes: [], replacedBy: null });
+    });
+  });
 });
 
 describe('getSalesInvoiceBillcomPanel', () => {

@@ -118,3 +118,14 @@ describe('SalesInvoicesClient numbering', () => {
     expect(within(rows[0]).getByRole('link', { name: 'INV-77' })).toHaveAttribute('href', '/receivables/invoices/inv-2');
   });
 });
+
+describe('SalesInvoiceDetail — replaced', () => {
+  it('a cancelled invoice links to the one that replaced it', () => {
+    render(
+      <SalesInvoiceDetail invoice={invoice({ status: 'Canceled' })} lines={[line()]} salesOrder={null} billcom={null}
+        replacedBy={{ id: 'new-guid', number: 'INV-100415' }} />,
+    );
+    expect(screen.getByText(/Cancelled — replaced by/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'INV-100415' })).toHaveAttribute('href', '/receivables/invoices/new-guid');
+  });
+});

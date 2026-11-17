@@ -18,6 +18,7 @@ import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { fetchAndMirrorSalesInvoice, mirrorSalesInvoiceLines, type InvoiceMirrorDeps } from '@/lib/businessCentral/invoiceMirror';
 import { createServiceClient } from '@/lib/supabase/server';
 import type { BusinessCentralConnection, BusinessCentralSalesInvoice, BusinessCentralSalesInvoiceLine } from '@/types/database';
+import type { InvoiceChangeRow } from '@/types/invoiceChanges';
 
 const INVOICES = 'business_central_sales_invoices';
 const LINES = 'business_central_sales_invoice_lines';
@@ -59,16 +60,45 @@ async function readLines(ctx: Ctx, bcInvoiceId: string): Promise<BusinessCentral
   return (data ?? []) as BusinessCentralSalesInvoiceLine[];
 }
 
-async function readOrder(ctx: Ctx, bcInvoiceId: string) {
+type OrderLink = { id: string; bc_order_number: string | null; billcom_invoice_id: string | null };
+
+async function readOrderBy(ctx: Ctx, column: 'bc_posted_invoice_id' | 'id', value: string): Promise<OrderLink | null> {
   const { data, error } = await ctx.supabase
     .from('sales_orders')
     .select('id, bc_order_number, billcom_invoice_id')
     .eq('organization_id', ctx.orgId)
     .eq('bc_connection_id', ctx.connection.id)
-    .eq('bc_posted_invoice_id', bcInvoiceId)
+    .eq(column, value)
     .maybeSingle();
   if (error) throw new Error(`Could not read the sales order: ${error.message}`);
-  return (data as { id: string; bc_order_number: string | null; billcom_invoice_id: string | null } | null) ?? null;
+  return (data as OrderLink | null) ?? null;
+}
+
+const CHANGES = 'sales_invoice_changes';
+
+/** Changes whose old (cancelled) invoice is this one, newest first. */
+async function changesReplacing(ctx: Ctx, bcInvoiceId: string): Promise<InvoiceChangeRow[]> {
+  const { data, error } = await ctx.supabase
+    .from(CHANGES)
+    .select('*')
+    .eq('organization_id', ctx.orgId)
+    .eq('bc_connection_id', ctx.connection.id)
+    .eq('old_bc_invoice_id', bcInvoiceId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`Could not read the invoice changes: ${error.message}`);
+  return (data ?? []) as InvoiceChangeRow[];
+}
+
+async function orderChanges(ctx: Ctx, salesOrderId: string): Promise<InvoiceChangeRow[]> {
+  const { data, error } = await ctx.supabase
+    .from(CHANGES)
+    .select('*')
+    .eq('organization_id', ctx.orgId)
+    .eq('bc_connection_id', ctx.connection.id)
+    .eq('sales_order_id', salesOrderId)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`Could not read the invoice changes: ${error.message}`);
+  return (data ?? []) as InvoiceChangeRow[];
 }
 
 async function mirrorDeps(ctx: Ctx): Promise<InvoiceMirrorDeps> {
@@ -90,6 +120,10 @@ export interface SalesInvoicePageData {
   /** Lines were missing and BC couldn't be read to fill them. */
   linesError: boolean;
   salesOrder: { id: string; bcOrderNumber: string | null; billcomInvoiceId: string | null } | null;
+  /** Every change of the order's invoice, newest first. */
+  changes: InvoiceChangeRow[];
+  /** Set when a finished change cancelled this invoice and posted another. */
+  replacedBy: { id: string; number: string } | null;
 }
 
 /** null → the page is a 404 (not a GUID, no BC connection, or no such posted invoice). */
@@ -121,12 +155,19 @@ export async function getSalesInvoicePage(bcInvoiceId: string): Promise<SalesInv
     }
   }
 
-  const order = await readOrder(ctx, bcInvoiceId);
+  // The order points at its current invoice; a replaced (cancelled) one is reached through its change record.
+  const replacing = await changesReplacing(ctx, bcInvoiceId);
+  const order =
+    (await readOrderBy(ctx, 'bc_posted_invoice_id', bcInvoiceId)) ??
+    (replacing[0] ? await readOrderBy(ctx, 'id', replacing[0].sales_order_id) : null);
+  const done = replacing.find((c) => c.state === 'done' && c.new_bc_invoice_id);
   return {
     invoice,
     lines,
     linesError,
     salesOrder: order ? { id: order.id, bcOrderNumber: order.bc_order_number, billcomInvoiceId: order.billcom_invoice_id ?? null } : null,
+    changes: order ? await orderChanges(ctx, order.id) : [],
+    replacedBy: done ? { id: done.new_bc_invoice_id as string, number: done.new_bc_invoice_number ?? '' } : null,
   };
 }
 

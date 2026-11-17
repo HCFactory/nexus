@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 
 import { getSalesInvoiceBillcomPanel, getSalesInvoicePage, type BillcomPanelInput } from '@/lib/receivables/salesInvoicePage';
 import { BillcomInvoicePanel } from '@/components/receivables/BillcomInvoicePanel';
+import { InvoiceChangesCard } from '@/components/receivables/InvoiceChangesCard';
 import { SalesInvoiceDetail } from '@/components/receivables/SalesInvoiceDetail';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,8 @@ export default async function SalesInvoicePage({ params }: { params: Promise<{ b
       lines={data.lines}
       linesError={data.linesError}
       salesOrder={data.salesOrder}
+      replacedBy={data.replacedBy}
+      changes={<InvoiceChangesCard changes={data.changes} />}
       billcom={
         <Suspense fallback={<p className="text-sm text-foreground-muted">Loading Bill.com…</p>}>
           {/* The details already loaded: the panel must not re-read the invoice (memoized reads). */}

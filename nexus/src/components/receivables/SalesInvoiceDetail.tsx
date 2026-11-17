@@ -26,10 +26,14 @@ interface Props {
   salesOrder: { id: string; bcOrderNumber: string | null } | null;
   /** The Bill.com panel (streamed in by the page). */
   billcom: ReactNode;
+  /** The change log card (rendered by the page). */
+  changes?: ReactNode;
+  /** A finished change cancelled this invoice and posted this one instead. */
+  replacedBy?: { id: string; number: string } | null;
 }
 
 /** A posted BC invoice as Nexus holds it: header, Bill.com side, lines and totals. */
-export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom }: Props) {
+export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, changes = null, replacedBy = null }: Props) {
   const cur = invoice.currency_code;
   const title = invoice.external_document_number || invoice.bc_invoice_number || '—';
   return (
@@ -43,6 +47,15 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
           </span>
         </div>
       </div>
+
+      {replacedBy && (
+        <p role="status" className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-foreground">
+          Cancelled — replaced by{' '}
+          <Link href={`/receivables/invoices/${encodeURIComponent(replacedBy.id)}`} className="font-mono text-primary hover:underline">
+            {replacedBy.number}
+          </Link>
+        </p>
+      )}
 
       <section className={`${CARD} grid gap-4 sm:grid-cols-3 lg:grid-cols-6`}>
         <Field label="Invoice #">{invoice.external_document_number || '—'}</Field>
@@ -70,6 +83,8 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
       </section>
 
       {billcom && <section className={CARD}>{billcom}</section>}
+
+      {changes}
 
       <section className={`${CARD} overflow-x-auto`}>
         <table className="min-w-full text-sm">
