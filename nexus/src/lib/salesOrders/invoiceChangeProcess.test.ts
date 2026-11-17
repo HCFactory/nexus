@@ -14,6 +14,7 @@ vi.mock('./bcInvoiceChange', () => ({
   findReplacementInvoice: vi.fn(),
   findDraftInvoice: vi.fn(),
   createDraftInvoice: vi.fn(),
+  applyDraftHeader: vi.fn(),
   setDraftLines: vi.fn(),
   checkDraft: vi.fn(),
   postDraftInvoice: vi.fn(),
@@ -109,6 +110,7 @@ beforeEach(() => {
   vi.mocked(bc.findReplacementInvoice).mockImplementation(async () => bcState.replacement)
   vi.mocked(bc.findDraftInvoice).mockResolvedValue(null)
   vi.mocked(bc.createDraftInvoice).mockResolvedValue({ id: 'draft-1', no: 'S-INV1' })
+  vi.mocked(bc.applyDraftHeader).mockResolvedValue(undefined)
   vi.mocked(bc.setDraftLines).mockResolvedValue(undefined)
   vi.mocked(bc.checkDraft).mockResolvedValue(null)
   vi.mocked(bc.postDraftInvoice).mockImplementation(async () => { bcState.replacement = neu() })
@@ -151,6 +153,7 @@ describe('startInvoiceChange', () => {
     setup()
     fake.failOn = (t, op) => (t === CHANGES && op === 'insert' ? 'duplicate key value violates unique constraint "sales_invoice_changes_one_open_idx"' : null)
     expect(await start()).toEqual({ ok: false, error: 'A change is already open for this invoice.' })
+    expect(order().invoice_state).toBe('done')
     setup({ order: { claimed_until: '2026-11-17T10:01:00.000Z' } })
     expect(await start()).toEqual({ ok: false, error: 'This order is busy. Try again in a moment.' })
   })
@@ -162,6 +165,7 @@ describe('runInvoiceChange', () => {
     expect(await runInvoiceChange(deps, 'ch1')).toBe('done')
     expect(bc.cancelBcInvoice).toHaveBeenCalledWith(deps, OLD)
     expect(bc.createDraftInvoice).toHaveBeenCalledWith(deps, expect.objectContaining({ id: 'o1' }), expect.objectContaining({ id: OLD }), 'W-100528')
+    expect(bc.applyDraftHeader).toHaveBeenCalledWith(deps, { id: 'draft-1', no: 'S-INV1' }, expect.objectContaining({ id: 'o1' }), expect.objectContaining({ id: OLD }))
     expect(bc.setDraftLines).toHaveBeenCalledWith(deps, { id: 'draft-1', no: 'S-INV1' }, after)
     expect(bc.postDraftInvoice).toHaveBeenCalledTimes(1)
     const [, id, payload] = vi.mocked(push.replaceBillcomInvoice).mock.calls[0]
@@ -176,7 +180,7 @@ describe('runInvoiceChange', () => {
     })
     expect(order()).toMatchObject({
       invoice_state: 'done', bc_posted_invoice_id: NEW, bc_posted_invoice_number: 'INV-100415',
-      posted_total_excl_tax: 49, posted_total_tax: 0.24, posted_total_incl_tax: 49.24, total_incl_tax: 49.24, claimed_until: null,
+      posted_total_excl_tax: 49, posted_total_tax: 0.24, posted_total_incl_tax: 49.24, total_incl_tax: 49.24, total_excl_tax: 49, total_tax: 0.24, claimed_until: null,
     })
     expect(fake.tables.sales_order_lines).toEqual([
       expect.objectContaining({ id: 'l1', quantity: 2, unit_price: 24.5, discount_percent: 0, bc_unit_price: 24.5, bc_line_discount_percent: 0, removed: false }),
@@ -244,6 +248,7 @@ describe('runInvoiceChange', () => {
     expect(await runInvoiceChange(deps, 'ch1')).toBe('done')
     expect(bc.findDraftInvoice).toHaveBeenCalledWith(deps, { draftId: 'draft-0', externalDocumentNumber: 'W-100528', customerNumber: 'W00389' })
     expect(bc.createDraftInvoice).not.toHaveBeenCalled()
+    expect(bc.applyDraftHeader).toHaveBeenCalledWith(deps, { id: 'draft-0', no: 'S-INV0' }, expect.objectContaining({ id: 'o1' }), expect.objectContaining({ id: OLD }))
     expect(bc.setDraftLines).toHaveBeenCalledWith(deps, { id: 'draft-0', no: 'S-INV0' }, after)
   })
 
@@ -339,6 +344,52 @@ describe('runInvoiceChange', () => {
     setup({ change: changeRow({ state: 'billcom_updating', cancelled_at: T0, new_bc_invoice_id: NEW, new_bc_invoice_number: 'INV-100415', new_total: 49.24 }), order: { invoice_state: 'done', bc_posted_invoice_id: NEW } })
     expect(await runInvoiceChange(deps, 'ch1')).toBe('done')
     expect(order()).toMatchObject({ invoice_state: 'done', bc_posted_invoice_id: NEW })
+  })
+})
+
+describe('review fixes', () => {
+  it('a BC error before the post (draft header refused) is post_failed with the message, not a silent stop', async () => {
+    setup({ change: changeRow() })
+    vi.mocked(bc.applyDraftHeader).mockRejectedValue(new Error('Location Code WHS-9 does not exist.'))
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('post_failed')
+    expect(change()).toMatchObject({ state: 'post_failed', error: 'Location Code WHS-9 does not exist.', draft_bc_invoice_id: 'draft-1' })
+    expect(bc.postDraftInvoice).not.toHaveBeenCalled()
+  })
+
+  it('a BC read error in the cancel step is cancel_failed with the message', async () => {
+    setup({ change: changeRow() })
+    vi.mocked(bc.readBcInvoice).mockRejectedValue(new Error('BC is unavailable'))
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('cancel_failed')
+    expect(change().error).toBe('BC is unavailable')
+  })
+
+  it('a BC read error in the Bill.com step is billcom_failed with the message', async () => {
+    setup({ change: changeRow({ state: 'billcom_updating', cancelled_at: T0, new_bc_invoice_id: NEW, new_bc_invoice_number: 'INV-100415' }) })
+    vi.mocked(bc.readBcInvoice).mockRejectedValue(new Error('BC is unavailable'))
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('billcom_failed')
+    expect(change().error).toBe('BC is unavailable')
+  })
+
+  it('discard asks BC first: refused when BC shows the old invoice cancelled (cancel outcome was unknown)', async () => {
+    setup({ change: changeRow({ state: 'cancel_failed', error: "BC didn't confirm the cancel." }) })
+    bcState.oldStatus = 'Canceled'
+    expect(await discardInvoiceChange(deps, 'ch1')).toEqual({ ok: false, error: 'BC already cancelled INV-100411; Retry to finish the change.' })
+    expect(change().state).toBe('cancel_failed')
+    expect(order().invoice_state).toBe('changing')
+  })
+
+  it("discard refuses when BC can't be read", async () => {
+    setup({ change: changeRow({ state: 'cancel_failed' }) })
+    vi.mocked(bc.readBcInvoice).mockRejectedValue(new Error('down'))
+    expect(await discardInvoiceChange(deps, 'ch1')).toEqual({ ok: false, error: "Couldn't check BC for INV-100411. Try again." })
+    expect(change().state).toBe('cancel_failed')
+  })
+
+  it('start flips the order first; a database error saving the change puts the order back to done', async () => {
+    setup()
+    fake.failOn = (t, op) => (t === CHANGES && op === 'insert' ? 'connection reset' : null)
+    await expect(start()).rejects.toThrow('connection reset')
+    expect(order().invoice_state).toBe('done')
   })
 })
 

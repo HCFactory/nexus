@@ -34,6 +34,7 @@ import {
 } from '@/types/invoiceChanges'
 import type { SalesOrderRow } from '@/types/salesOrders'
 import {
+  applyDraftHeader,
   CANCELED,
   cancelBcInvoice,
   checkDraft,
@@ -72,6 +73,13 @@ const RETRY_NEXT: Partial<Record<ChangeState, ChangeState>> = {
   cancel_failed: 'cancelling',
   post_failed: 'posting',
   billcom_failed: 'billcom_updating',
+}
+
+/** The failed state of each step that talks to BC or Bill.com. */
+const STEP_FAILURE: Partial<Record<ChangeState, 'cancel_failed' | 'post_failed' | 'billcom_failed'>> = {
+  cancelling: 'cancel_failed',
+  posting: 'post_failed',
+  billcom_updating: 'billcom_failed',
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -190,6 +198,11 @@ export async function startInvoiceChange(
     if (invalid) return { ok: false as const, error: invalid }
 
     const now = deps.now()
+    // The order is flipped first, so an open change never exists on an order that isn't `changing`.
+    if (!(await setOrderState(deps, order.id, 'done', { invoice_state: 'changing', invoice_error: null }))) {
+      return { ok: false as const, error: BUSY }
+    }
+    const revert = () => setOrderState(deps, order.id, 'changing', { invoice_state: 'done' })
     const { data, error } = await deps.supabase
       .from(CHANGES)
       .insert({
@@ -210,15 +223,11 @@ export async function startInvoiceChange(
       })
       .select('id')
     if (error) {
+      await revert()
       if (isUniqueViolation(error)) return { ok: false as const, error: ALREADY_OPEN }
       throw new Error(`Could not save the invoice change: ${error.message}`)
     }
-    const changeId = String((data as { id: string }[])[0].id)
-    if (!(await setOrderState(deps, order.id, 'done', { invoice_state: 'changing', invoice_error: null }))) {
-      await updateChange(deps, changeId, 'pending', { state: 'discarded', error: BUSY, finished_at: now })
-      return { ok: false as const, error: BUSY }
-    }
-    return { ok: true as const, changeId }
+    return { ok: true as const, changeId: String((data as { id: string }[])[0].id) }
   })
   if (res.claimed) return res.value
   try {
@@ -283,11 +292,12 @@ async function postStep(deps: InvoiceDeps, c: InvoiceChangeRow, lease: OrderLeas
   const posted = await findReplacementInvoice(deps, { ...q, excludeId: c.old_bc_invoice_id })
   if (posted) return recordPosted(deps, c, posted)
 
+  const order = await loadOrder(deps, c.sales_order_id)
   let draft = await findDraftInvoice(deps, { draftId: c.draft_bc_invoice_id, ...q })
-  if (!draft) {
-    draft = await createDraftInvoice(deps, await loadOrder(deps, c.sales_order_id), oldInv, q.externalDocumentNumber)
-  }
+  if (!draft) draft = await createDraftInvoice(deps, order, oldInv, q.externalDocumentNumber)
   if (draft.id !== c.draft_bc_invoice_id) await updateChange(deps, c.id, 'posting', { draft_bc_invoice_id: draft.id })
+  // Every run: a draft from a run that crashed may still have BC's customer defaults.
+  await applyDraftHeader(deps, draft, order, oldInv)
   await setDraftLines(deps, draft, c.lines_after)
   const mismatch = await checkDraft(deps, draft, c.lines_after)
   if (mismatch) return fail(deps, c, 'post_failed', mismatch)
@@ -334,6 +344,8 @@ async function finishOrder(deps: InvoiceDeps, c: InvoiceChangeRow, inv: BcInvoic
     posted_total_excl_tax: inv.totalExclTax,
     posted_total_tax: inv.totalTax,
     posted_total_incl_tax: inv.totalInclTax,
+    total_excl_tax: inv.totalExclTax,
+    total_tax: inv.totalTax,
     total_incl_tax: inv.totalInclTax,
   })
   // Already finished by a run that crashed before closing the change: fine.
@@ -432,26 +444,25 @@ async function runSteps(deps: InvoiceDeps, changeId: string, lease: OrderLease):
     if (!c) throw new InvoiceOwnershipLostError(`Invoice change ${changeId} is gone.`)
     if (!(RESUMABLE_CHANGE_STATES as readonly string[]).includes(c.state)) return c.state
     await renewOrStop(lease, LEASE_MS)
-    switch (c.state) {
-      case 'pending':
-        await updateChange(deps, c.id, 'pending', { state: 'cancelling' })
-        break
-      case 'cancelling':
-        await cancelStep(deps, c, lease)
-        break
-      case 'cancelled':
-        await updateChange(deps, c.id, 'cancelled', { state: 'posting' })
-        break
-      case 'posting':
-        await postStep(deps, c, lease)
-        break
-      case 'posted':
-        await updateChange(deps, c.id, 'posted', { state: 'billcom_updating' })
-        break
-      case 'billcom_updating':
-        await billcomStep(deps, c)
-        break
+    const failedAs = STEP_FAILURE[c.state]
+    if (failedAs) {
+      // Any error in a BC or Bill.com step stops it with a visible message and Retry,
+      // never a silent stop (the old invoice may already be cancelled).
+      try {
+        if (c.state === 'cancelling') await cancelStep(deps, c, lease)
+        else if (c.state === 'posting') await postStep(deps, c, lease)
+        else await billcomStep(deps, c)
+      } catch (e) {
+        if (isOwnershipLost(e)) throw e
+        console.error(`[invoice change] ${c.state} of ${c.id} failed:`, e)
+        await fail(deps, c, failedAs, message(e))
+      }
+      continue
     }
+    // The hand-offs between steps.
+    const next: Partial<Record<ChangeState, ChangeState>> = { pending: 'cancelling', cancelled: 'posting', posted: 'billcom_updating' }
+    const to = next[c.state]
+    if (to) await updateChange(deps, c.id, c.state, { state: to })
   }
   throw new Error(`Invoice change ${changeId} did not settle.`)
 }
@@ -504,6 +515,16 @@ export async function discardInvoiceChange(deps: InvoiceDeps, changeId: string):
     return { ok: false, error: `BC already cancelled ${c.old_bc_invoice_number}; Retry to finish the change.` }
   }
   const res = await withOrderLease(deps, c.sales_order_id, async (): Promise<ChangeResult> => {
+    // Ask BC: after a cancel whose outcome was unknown, BC may have cancelled anyway.
+    let oldInv: BcInvoiceState | null
+    try {
+      oldInv = await readOld(deps, c)
+    } catch {
+      return { ok: false, error: `Couldn't check BC for ${c.old_bc_invoice_number}. Try again.` }
+    }
+    if (oldInv && oldInv.status !== 'Open') {
+      return { ok: false, error: `BC already cancelled ${c.old_bc_invoice_number}; Retry to finish the change.` }
+    }
     try {
       await updateChange(deps, c.id, c.state, { state: 'discarded', finished_at: deps.now() })
     } catch (e) {

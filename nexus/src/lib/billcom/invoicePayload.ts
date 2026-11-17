@@ -42,7 +42,9 @@ export function buildBillcomInvoice(input: BillcomInvoiceInput): BillcomInvoiceB
   for (const l of input.lines) {
     const price = effectivePrice(l) ?? 0;
     const disc = effectiveDiscount(l);
-    bcSumCents += cents(round2(l.quantity * price * (1 - disc / 100)));
+    // As BC computes a line: gross rounded to the cent, less the discount amount rounded on its own.
+    const gross = round2(l.quantity * price);
+    bcSumCents += cents(gross) - cents(round2((gross * disc) / 100));
     items.push({
       description: `${l.item_number} ${l.description}`.trim(),
       quantity: l.quantity,

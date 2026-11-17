@@ -7,6 +7,7 @@ import type { SalesOrderRow } from '@/types/salesOrders'
 import {
   cancelBcInvoice,
   checkDraft,
+  applyDraftHeader,
   createDraftInvoice,
   findDraftInvoice,
   findReplacementInvoice,
@@ -135,11 +136,17 @@ describe('createDraftInvoice', () => {
   } as unknown as SalesOrderRow
   const old: PostedInvoice = { id: OLD_ID, number: 'INV-100411', invoiceDate: '2026-11-15', dueDate: '2026-12-15', totalExclTax: 24.5, totalTax: 0.12, totalInclTax: 24.62 }
 
-  it('creates the header with the old dates, then the ship-to, then tax/location/posting with the dates again', async () => {
+  it('creates the draft header with the old dates (and nothing else)', async () => {
     const { deps, create, patch } = makeDeps()
     expect(await createDraftInvoice(deps, order, old, 'W-100528')).toEqual({ id: 'draft-id', no: 'S-INV102030' })
     expect(create.mock.calls[0][0]).toEqual({ kind: 'api', resource: 'salesInvoices' })
     expect(create.mock.calls[0][1]).toEqual({ customerNumber: 'W00389', externalDocumentNumber: 'W-100528', invoiceDate: '2026-11-15', postingDate: '2026-11-15', dueDate: '2026-12-15' })
+    expect(patch).not.toHaveBeenCalled()
+  })
+
+  it('applyDraftHeader: the ship-to, then tax/location/posting with the dates (safe to repeat)', async () => {
+    const { deps, patch } = makeDeps()
+    await applyDraftHeader(deps, { id: 'draft-id', no: 'S-INV1' }, order, old)
     expect(patch).toHaveBeenCalledTimes(2)
     expect(patch.mock.calls[0][1]).toEqual({ values: { id: 'draft-id' } })
     expect(patch.mock.calls[0][3]).toMatchObject({ shipToName: 'Shop', shipToCity: 'Honolulu' })
@@ -152,7 +159,7 @@ describe('createDraftInvoice', () => {
 
   it('a ship-to code is sent as the code, not as an address', async () => {
     const { deps, patch } = makeDeps()
-    await createDraftInvoice(deps, { ...order, ship_to_code: 'STORE2' } as SalesOrderRow, old, 'W-100528')
+    await applyDraftHeader(deps, { id: 'draft-id', no: 'S-INV1' }, { ...order, ship_to_code: 'STORE2' } as SalesOrderRow, old)
     expect(patch.mock.calls[0][3]).toEqual({ shipToCode: 'STORE2' })
   })
 })
@@ -188,6 +195,16 @@ describe('checkDraft', () => {
     expect(await checkDraft(deps, draft, [...lines, line({ quantity: 1, unit_price: 1, discount_percent: 0 })])).toBe(
       "BC's draft has 2 lines totalling $5.00, expected 3 lines totalling $48.43.",
     )
+  })
+
+  it('allows a rounding difference of up to 1 cent per line, not more', async () => {
+    const at = (total: number) =>
+      makeDeps({
+        list: (s) => (s.kind === 'api' && s.resource.endsWith('salesInvoiceLines') ? [rec({ id: 'a' }), rec({ id: 'b' })] : [rec(inv({ id: 'draft-id', status: 'Draft', totalAmountExcludingTax: total }))]),
+      }).deps
+    expect(await checkDraft(at(47.45), draft, lines)).toBeNull()
+    expect(await checkDraft(at(47.41), draft, lines)).toBeNull()
+    expect(await checkDraft(at(47.46), draft, lines)).not.toBeNull()
   })
 })
 

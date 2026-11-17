@@ -73,9 +73,16 @@ export function validateChange(before: ChangeLine[], after: ChangeLine[], reason
   return null
 }
 
-/** Subtotal before tax in cents, each line rounded to the cent as BC rounds it. */
+/**
+ * Subtotal before tax in cents, each line as BC computes it: the gross amount
+ * rounded to the cent, less the discount amount rounded on its own
+ * (1 × 0.25 at 10% = 0.25 − 0.03 = 0.22).
+ */
 export function changeSubtotalCents(lines: ChangeLine[]): number {
-  return lines.reduce((sum, l) => sum + cents(round2(l.quantity * l.unit_price * (1 - l.discount_percent / 100))), 0)
+  return lines.reduce((sum, l) => {
+    const gross = round2(l.quantity * l.unit_price)
+    return sum + cents(gross) - cents(round2((gross * l.discount_percent) / 100))
+  }, 0)
 }
 
 /** Lines for the Bill.com payload builder. */

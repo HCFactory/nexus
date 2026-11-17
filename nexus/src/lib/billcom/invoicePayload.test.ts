@@ -117,3 +117,15 @@ describe('buildBillcomInvoice', () => {
     expect(build({ posted: posted({ totalInclTax: 117.5 }) }).ok).toBe(true);
   });
 });
+
+describe('buildBillcomInvoice — BC rounding', () => {
+  it("checks line amounts the way BC rounds them (1 × 0.25 at 10% is 0.22)", () => {
+    const res = buildBillcomInvoice({
+      billcomCustomerId: 'c',
+      invoiceNumber: 'W-1',
+      posted: posted({ totalExclTax: 0.22, totalTax: 0, totalInclTax: 0.22 }),
+      lines: [{ item_number: 'A', description: 'x', quantity: 1, unit_price: 0.25, bc_unit_price: null, discount_percent: 10, bc_line_discount_percent: null }],
+    });
+    expect(res.ok).toBe(true);
+  });
+});

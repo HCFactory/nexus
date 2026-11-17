@@ -123,6 +123,10 @@ describe('changeSubtotalCents', () => {
     expect(changeSubtotalCents([line({ quantity: 3, unit_price: 1.0925, discount_percent: 0 })])).toBe(328)
     expect(changeSubtotalCents([line({ quantity: 2, unit_price: 24.5, discount_percent: 10 }), line({ unit_price: 3.33 })])).toBe(4743)
   })
+
+  it('rounds the discount amount separately, as BC does (0.25 at 10% is 0.22, not 0.23)', () => {
+    expect(changeSubtotalCents([line({ quantity: 1, unit_price: 0.25, discount_percent: 10 })])).toBe(22)
+  })
 })
 
 describe('toInvoiceSourceLines', () => {

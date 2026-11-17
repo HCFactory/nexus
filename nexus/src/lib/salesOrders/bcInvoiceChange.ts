@@ -84,8 +84,10 @@ export async function findDraftInvoice(
 }
 
 /**
- * A draft invoice for the order's customer with the old invoice's dates and
- * the order's header values (they matched BC when the order was invoiced).
+ * A draft invoice for the order's customer with the old invoice's dates. Its
+ * other header values come from applyDraftHeader, which callers run every
+ * time the draft is used (a crash between the two must not leave BC's
+ * customer defaults in place).
  */
 export async function createDraftInvoice(
   deps: BcInvoicingDeps,
@@ -93,7 +95,6 @@ export async function createDraftInvoice(
   old: PostedInvoice,
   externalDocumentNumber: string,
 ): Promise<DraftInvoice> {
-  const dates = { postingDate: old.invoiceDate, documentDate: old.invoiceDate, ...(old.dueDate ? { dueDate: old.dueDate } : {}) }
   const created = await deps.transport.create(INVOICES, {
     customerNumber: order.customer_number,
     externalDocumentNumber,
@@ -101,8 +102,16 @@ export async function createDraftInvoice(
     postingDate: old.invoiceDate,
     ...(old.dueDate ? { dueDate: old.dueDate } : {}),
   })
-  const draft: DraftInvoice = { id: String(created.fields.id), no: String(created.fields.number) }
+  return { id: String(created.fields.id), no: String(created.fields.number) }
+}
 
+/**
+ * The draft's header from the order (ship-to, tax area, location, posting
+ * groups, terms, shipment method; they matched BC when the order was
+ * invoiced) and the old invoice's dates. Safe to repeat.
+ */
+export async function applyDraftHeader(deps: BcInvoicingDeps, draft: DraftInvoice, order: SalesOrderRow, old: PostedInvoice): Promise<void> {
+  const dates = { postingDate: old.invoiceDate, documentDate: old.invoiceDate, ...(old.dueDate ? { dueDate: old.dueDate } : {}) }
   // Ship-to first: BC refills tax area and location from it, so Nexus's values go after.
   const key = { values: { id: draft.id } }
   const doc = await deps.transport.get(SALES_DOCUMENT_SOURCE, key)
@@ -118,7 +127,6 @@ export async function createDraftInvoice(
     shipmentMethodCode: order.shipment_method_code,
     ...dates,
   })
-  return draft
 }
 
 /** Makes the draft's lines exactly `lines` (removes what is there first, so it is safe to re-run). */
@@ -143,13 +151,16 @@ export async function setDraftLines(deps: BcInvoicingDeps, draft: DraftInvoice, 
 const plural = (n: number) => `${n} line${n === 1 ? '' : 's'}`
 const dollars = (c: number) => `$${(c / 100).toFixed(2)}`
 
-/** Why the draft isn't the change's lines (count or subtotal before tax), or null. */
+/**
+ * Why the draft isn't the change's lines (count, or subtotal before tax off
+ * by more than 1 cent per line for rounding), or null.
+ */
 export async function checkDraft(deps: BcInvoicingDeps, draft: DraftInvoice, lines: ChangeLine[]): Promise<string | null> {
   const [header, bcLines] = await Promise.all([readBcInvoice(deps, draft.id), deps.transport.list(linesOf(draft.id))])
   if (!header) return `BC's draft ${draft.no} is gone.`
   const hasCents = Math.round(header.totalExclTax * 100)
   const wantCents = changeSubtotalCents(lines)
-  if (bcLines.length === lines.length && hasCents === wantCents) return null
+  if (bcLines.length === lines.length && Math.abs(hasCents - wantCents) <= lines.length) return null
   return `BC's draft has ${plural(bcLines.length)} totalling ${dollars(hasCents)}, expected ${plural(lines.length)} totalling ${dollars(wantCents)}.`
 }
 
