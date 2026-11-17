@@ -20,12 +20,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ connect
   const supabase = createServiceClient();
   const { data: connection, error } = await supabase
     .from('stripe_connections')
-    .select('id, organization_id')
+    .select('id, organization_id, is_enabled')
     .eq('id', connectionId)
     .maybeSingle();
   if (error) return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   if (!connection) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  const orgId = (connection as { organization_id: string }).organization_id;
+  const { organization_id: orgId, is_enabled: enabled } = connection as { organization_id: string; is_enabled: boolean };
 
   const signature = req.headers.get('stripe-signature');
   const secret = await getWebhookSecret(supabase, connectionId);
@@ -40,6 +40,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ connect
     event = Stripe.webhooks.constructEvent(body, signature, secret);
   } catch {
     return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+  }
+
+  // A disabled connection is ignored, not an error: a non-2xx would only make
+  // Stripe retry for days. Checked after the signature so it is never revealed
+  // to an unsigned caller.
+  if (!enabled) {
+    console.warn(`Stripe webhook: connection ${connectionId} is disabled; ignored ${event.type} ${event.id}`);
+    return NextResponse.json({ received: true, ignored: 'connection disabled' });
   }
 
   if (event.type === 'checkout.session.completed' && event.data.object.mode === 'setup') {

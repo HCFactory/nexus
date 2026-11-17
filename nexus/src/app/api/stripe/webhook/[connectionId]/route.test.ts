@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
-  connection: null as null | { id: string; organization_id: string },
+  connection: null as null | { id: string; organization_id: string; is_enabled: boolean },
   constructEvent: vi.fn(),
   getWebhookSecret: vi.fn(),
   createStripeForConnection: vi.fn(),
@@ -41,7 +41,7 @@ function call(body = '{"id":"evt_1"}', sig: string | null = 't=1,v1=abc', id = C
 
 beforeEach(() => {
   vi.clearAllMocks();
-  m.connection = { id: CONN, organization_id: 'org-1' };
+  m.connection = { id: CONN, organization_id: 'org-1', is_enabled: true };
   m.getWebhookSecret.mockResolvedValue('whsec_test');
   m.createStripeForConnection.mockResolvedValue(stripeClient);
   m.saveCardFromCheckoutSession.mockResolvedValue({ brand: 'visa', last4: '4242' });
@@ -95,6 +95,26 @@ describe('POST /api/stripe/webhook/[connectionId]', () => {
     const res = await call();
     expect(res.status).toBe(200);
     expect(m.saveCardFromCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('disabled connection → 200 and a warning, nothing processed', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    m.connection = { id: CONN, organization_id: 'org-1', is_enabled: false };
+    m.constructEvent.mockReturnValue({ id: 'evt_1', type: 'checkout.session.completed', data: { object: { id: 'cs_1', mode: 'setup' } } });
+    const res = await call();
+    expect(res.status).toBe(200);
+    expect(m.createStripeForConnection).not.toHaveBeenCalled();
+    expect(m.saveCardFromCheckoutSession).not.toHaveBeenCalled();
+    expect(String(warn.mock.calls[0][0])).toContain('disabled');
+    warn.mockRestore();
+  });
+
+  it('disabled connection still rejects a bad signature (400)', async () => {
+    m.connection = { id: CONN, organization_id: 'org-1', is_enabled: false };
+    m.constructEvent.mockImplementation(() => {
+      throw new Error('No signatures found matching the expected signature');
+    });
+    expect((await call()).status).toBe(400);
   });
 
   it('save failure → 500 so Stripe retries', async () => {
