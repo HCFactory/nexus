@@ -106,6 +106,17 @@ export interface StripeConnectionSummary {
   livemode: boolean | null;
   stripeAccountId: string | null;
   hasCredentials: boolean;
+  hasWebhookSecret: boolean;
+}
+
+export interface StripeConnectionInput {
+  id?: string;
+  displayName: string;
+  /** Write-only. Blank or undefined on edit leaves the stored key alone. */
+  secretKey?: string;
+  /** Write-only. Blank or undefined on edit leaves the stored secret alone. */
+  webhookSecret?: string;
+  isDefault: boolean;
 }
 
 export interface StripeTestResult {
