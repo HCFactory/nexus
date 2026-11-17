@@ -1,6 +1,7 @@
 // Whether an invoice may be changed, from its Bill.com side
 // (spec: docs/superpowers/specs/2026-11-17-change-invoice-design.md).
-import type { BillcomInvoiceStatus } from './invoiceStatus';
+import type { BillcomClient } from './client';
+import { readBillcomInvoiceStatus, type BillcomInvoiceStatus } from './invoiceStatus';
 
 export const CHANGE_PAID = "Paid or partly paid in Bill.com — can't change";
 export const CHANGE_VOID = 'Void in Bill.com';
@@ -26,4 +27,21 @@ export function changeBlockedReason(
     found.dueAmount !== null &&
     Math.round(found.dueAmount * 100) === Math.round(found.totalAmount * 100);
   return unpaid ? null : CHANGE_PAID;
+}
+
+/**
+ * Reads the order's Bill.com invoice and says why it can't be changed, or
+ * null. `client` null = Bill.com is off. No saved Bill.com invoice = allowed
+ * (the change creates or finds it).
+ */
+export async function readChangeBlock(client: BillcomClient | null, billcomInvoiceId: string | null): Promise<string | null> {
+  if (!client) return changeBlockedReason(null, { billcomOn: false, hasBillcomInvoice: false });
+  if (!billcomInvoiceId) return changeBlockedReason(null, { billcomOn: true, hasBillcomInvoice: false });
+  let found: BillcomInvoiceStatus | 'ambiguous' | null | Error;
+  try {
+    found = await readBillcomInvoiceStatus(client, { billcomInvoiceId, invoiceNumbers: [] });
+  } catch (e) {
+    found = e instanceof Error ? e : new Error(String(e));
+  }
+  return changeBlockedReason(found, { billcomOn: true, hasBillcomInvoice: true });
 }

@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { getSalesOrder, getSalesOrderFormContext, getSalesOrderPriceLines } from '@/app/actions/salesOrders';
 import { listSalesOrderNotes } from '@/app/actions/salesOrderNotes';
 import { getInvoiceReadiness, resumeInvoiceIfStuck } from '@/app/actions/salesOrderInvoicing';
+import { resumeInvoiceChangeIfStuck } from '@/app/actions/salesInvoiceChanges';
 import { listShipTos } from '@/app/actions/shipToAddresses';
 import { SalesOrderForm } from '@/components/salesOrders/SalesOrderForm';
 import { resolveSalesOrderPageAccess, SalesOrderPageNotice } from '../salesOrderPageAccess';
@@ -24,6 +25,7 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
     getSalesOrderPriceLines(order.customer_number).catch(() => context.priceListLines),
     getInvoiceReadiness(order.customer_number),
     resumeInvoiceIfStuck(order.id),
+    order.invoice_state === 'changing' ? resumeInvoiceChangeIfStuck(order.id) : undefined,
   ]);
 
   return (

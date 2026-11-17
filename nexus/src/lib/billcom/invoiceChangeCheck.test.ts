@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { changeBlockedReason } from './invoiceChangeCheck';
+import type { BillcomClient } from './client';
+import { changeBlockedReason, readChangeBlock } from './invoiceChangeCheck';
 import type { BillcomInvoiceStatus } from './invoiceStatus';
 
 const st = (over: Partial<BillcomInvoiceStatus> = {}): BillcomInvoiceStatus => ({
@@ -36,5 +37,26 @@ describe('changeBlockedReason', () => {
   });
   it('no Bill.com invoice yet: allowed (the change creates it)', () => {
     expect(changeBlockedReason(null, { billcomOn: true, hasBillcomInvoice: false })).toBeNull();
+  });
+});
+
+describe('readChangeBlock', () => {
+  const client = (impl: () => unknown) => ({ request: vi.fn(async () => impl()) }) as unknown as BillcomClient;
+  const RAW = { id: '00eX', invoiceNumber: 'W-1', status: 'OPEN', totalAmount: 10, dueAmount: 10 };
+
+  it('Bill.com off: no read, allowed', async () => {
+    expect(await readChangeBlock(null, '00eX')).toBeNull();
+  });
+  it('reads the saved Bill.com invoice', async () => {
+    expect(await readChangeBlock(client(() => RAW), '00eX')).toBeNull();
+    expect(await readChangeBlock(client(() => ({ ...RAW, dueAmount: 0, status: 'PAID_IN_FULL' })), '00eX')).toBe(PAID);
+  });
+  it('a failed read means try again', async () => {
+    expect(await readChangeBlock(client(() => { throw new Error('down'); }), '00eX')).toBe("Couldn't reach Bill.com — try again");
+  });
+  it('no saved Bill.com invoice: allowed without a read', async () => {
+    const c = client(() => RAW);
+    expect(await readChangeBlock(c, null)).toBeNull();
+    expect((c as unknown as { request: ReturnType<typeof vi.fn> }).request).not.toHaveBeenCalled();
   });
 });

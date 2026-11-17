@@ -16,6 +16,7 @@ import {
 import type { TaxAreaLine, TaxDetail } from '@/lib/salesOrders/lineAmounts';
 import { buildInvoiceDeps } from '@/lib/salesOrders/invoiceDeps';
 import { sweepInvoiceSteps } from '@/lib/salesOrders/invoiceProcess';
+import { sweepInvoiceChanges } from '@/lib/salesOrders/invoiceChangeProcess';
 import { canChangeStatus, canDelete, editableFields, isInvoiceResumable, isPastPosting, todayIn } from '@/lib/salesOrders/orderRules';
 import { deleteSalesOrderInBc, findBcOrderByMarker, type OrderSyncDeps } from '@/lib/salesOrders/orderSync';
 import { SAVE_UNFINISHED, isUnfinishedSave } from '@/lib/salesOrders/saveMarker';
@@ -253,11 +254,14 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
 
   const needsSweep = list.some((r) => r.sync_state === 'pending' || r.sync_state === 'failed');
   const invoiceStuck = list.some((r) => isInvoiceResumable(r.invoice_state));
-  if (needsSweep || invoiceStuck) {
+  const changeOpen = list.some((r) => r.invoice_state === 'changing');
+  if (needsSweep || invoiceStuck || changeOpen) {
     after(async () => {
       try {
         await sweepPendingOrders(await buildDeps(scope));
-        await sweepInvoiceSteps(await buildInvoiceDeps(scope));
+        const invoiceDeps = await buildInvoiceDeps(scope);
+        await sweepInvoiceSteps(invoiceDeps);
+        if (changeOpen) await sweepInvoiceChanges(invoiceDeps);
       } catch (e) {
         console.error('[sales-orders] background sweep failed:', e);
       }
