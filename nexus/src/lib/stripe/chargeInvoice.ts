@@ -1,0 +1,475 @@
+import 'server-only';
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type Stripe from 'stripe';
+
+import type { BillcomClient } from '@/lib/billcom/client';
+import { recordBillcomCardPayment } from '@/lib/billcom/recordPayment';
+import type { BillcomPanelInput } from '@/lib/receivables/salesInvoicePage';
+import type {
+  BillcomLookup,
+  CardLabel,
+  CardPayment,
+  CardPaymentRow,
+  ChargeEligibility,
+  CustomerCard,
+} from '@/types/stripe';
+
+/**
+ * Charging a past-due invoice to the customer's saved card.
+ *
+ * Money moves here, so the order of writes is fixed:
+ *   insert `processing` → Stripe → `succeeded` (+ intent id) → Bill.com record → `recorded`.
+ * Stripe is never called unless the insert succeeded (the partial unique index
+ * on billcom_invoice_id is the double-charge guard), Bill.com is never called
+ * unless Stripe succeeded, and an unknown Stripe outcome leaves the row
+ * `processing` for checkChargeStatus to settle; it is never re-charged.
+ *
+ * "Today" is the business date in Hawaii (Pacific/Honolulu), the time zone the
+ * app shows dates in: it decides "past due" and is the Bill.com payment date.
+ */
+
+export const DUPLICATE_CHARGE_MESSAGE = 'A charge for this invoice is already in progress or needs attention.';
+export const AUTH_REQUIRED_MESSAGE = 'The bank needs the customer to approve this charge — send a new setup link.';
+
+const REASONS = {
+  noPermission: "You don't have permission to charge cards.",
+  stripeOff: "Stripe isn't set up.",
+  noCard: 'No card on file — send a setup link from the customer page.',
+  notInBillcom: "This invoice isn't in Bill.com yet.",
+  ambiguous: 'More than one Bill.com invoice matches this number.',
+  nothingDue: 'Nothing is due on this invoice.',
+  notPastDue: "This invoice isn't past due yet.",
+} as const;
+
+const NO_STRIPE_RECORD = 'Stripe has no record of this charge, so the card was not charged.';
+const BILLCOM_INTERRUPTED = 'Recording in Bill.com was interrupted. Retry, or mark it paid if it is already there.';
+const BILLCOM_OFF = "Bill.com isn't connected.";
+const NOT_RETRYABLE = "This payment isn't waiting for a Bill.com retry.";
+const NOT_MANUAL = 'Only a charged payment that Bill.com failed to record can be marked paid.';
+const NOT_FOUND = 'Card payment not found.';
+
+/** Stripe search can lag; after this long with nothing found, no charge was made. */
+const NO_RECORD_AFTER_MS = 30 * 60 * 1000;
+/** A Bill.com record takes seconds; still `not_started` after this means it was cut off. */
+const BILLCOM_STUCK_AFTER_MS = 10 * 60 * 1000;
+const UNIQUE_VIOLATION = '23505';
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** What the charge needs to know about the BC posted invoice. */
+export interface ChargeInvoiceContext {
+  bcInvoiceId: string;
+  customerNumber: string | null;
+  /** Shown to staff, sent to Stripe and stored: the BC Invoice No. */
+  invoiceNumber: string;
+  /** For the Bill.com by-number lookup: Invoice #, then BC Invoice No. */
+  invoiceNumbers: string[];
+  salesOrderId: string | null;
+  /** Set when Nexus created the Bill.com invoice. */
+  billcomInvoiceId: string | null;
+}
+
+/** Everything with side effects, injected so tests need no network. */
+export interface ChargeDeps {
+  supabase: SupabaseClient;
+  orgId: string;
+  canCharge: boolean;
+  /** The org's CURRENT default Stripe connection when enabled; null = Stripe off. */
+  stripeConnectionId: string | null;
+  stripeClient: (connectionId: string) => Promise<Stripe>;
+  /** null when Bill.com is off or its client cannot be created. */
+  billcom: () => Promise<BillcomClient | null>;
+  loadInvoice: (bcInvoiceId: string) => Promise<ChargeInvoiceContext | null>;
+  /** A live Bill.com read: the amount due is never taken from the page. */
+  findBillcomInvoice: (input: BillcomPanelInput) => Promise<BillcomLookup>;
+  now: () => Date;
+}
+
+/** YYYY-MM-DD in Hawaii. */
+export function businessDate(now: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Pacific/Honolulu',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
+const toCents = (amount: number) => Math.round(amount * 100);
+
+export function chargeEligibility(a: {
+  canCharge: boolean;
+  /** 'off' = no enabled default Stripe connection. Defaults to 'ready'. */
+  stripe?: 'off' | 'ready';
+  card: CardLabel | null;
+  billcom: BillcomLookup;
+  /** Business date, YYYY-MM-DD. */
+  today: string;
+}): ChargeEligibility {
+  const no = (reason: string): ChargeEligibility => ({ ok: false, reason });
+  if (!a.canCharge) return no(REASONS.noPermission);
+  if (a.stripe === 'off') return no(REASONS.stripeOff);
+  if (!a.card) return no(REASONS.noCard);
+  if (a.billcom.kind === 'ambiguous') return no(REASONS.ambiguous);
+  if (a.billcom.kind !== 'found' || !a.billcom.billcomCustomerId) return no(REASONS.notInBillcom);
+  const { dueAmount, dueDate } = a.billcom.status;
+  if (dueAmount === null || toCents(dueAmount) <= 0) return no(REASONS.nothingDue);
+  if (!dueDate || dueDate.slice(0, 10) >= a.today) return no(REASONS.notPastDue);
+  return { ok: true, amount: dueAmount, dueDate };
+}
+
+// ---------- reads ----------
+
+async function activeCard(deps: ChargeDeps, customerNumber: string | null): Promise<CardLabel | null> {
+  if (!deps.stripeConnectionId || !customerNumber) return null;
+  const { data, error } = await deps.supabase
+    .from('customer_cards')
+    .select('*')
+    .eq('organization_id', deps.orgId)
+    .eq('stripe_connection_id', deps.stripeConnectionId)
+    .eq('bc_customer_number', customerNumber)
+    .is('removed_at', null)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the card: ${error.message}`);
+  const c = data as CustomerCard | null;
+  return c
+    ? {
+        id: c.id,
+        brand: c.brand,
+        last4: c.last4,
+        expMonth: c.exp_month,
+        expYear: c.exp_year,
+        savedAt: c.saved_at,
+        stripePaymentMethodId: c.stripe_payment_method_id,
+        stripeConnectionId: c.stripe_connection_id,
+      }
+    : null;
+}
+
+async function cardOf(deps: ChargeDeps, cardId: string): Promise<{ brand: string | null; last4: string | null }> {
+  const { data, error } = await deps.supabase
+    .from('customer_cards')
+    .select('brand, last4')
+    .eq('organization_id', deps.orgId)
+    .eq('id', cardId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the card: ${error.message}`);
+  const c = data as { brand: string | null; last4: string | null } | null;
+  return { brand: c?.brand ?? null, last4: c?.last4 ?? null };
+}
+
+async function readPayment(deps: ChargeDeps, id: string): Promise<CardPayment> {
+  const { data, error } = await deps.supabase
+    .from('card_payments')
+    .select('*')
+    .eq('organization_id', deps.orgId)
+    .eq('id', id)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the card payment: ${error.message}`);
+  if (!data) throw new Error(NOT_FOUND);
+  return data as CardPayment;
+}
+
+async function toRow(deps: ChargeDeps, p: CardPayment): Promise<CardPaymentRow> {
+  const card = await cardOf(deps, p.card_id);
+  return {
+    id: p.id,
+    bcInvoiceId: p.bc_invoice_id,
+    invoiceNumber: p.invoice_number,
+    billcomInvoiceId: p.billcom_invoice_id,
+    amount: Number(p.amount),
+    currency: p.currency,
+    status: p.status,
+    failureMessage: p.failure_message ?? null,
+    stripePaymentIntentId: p.stripe_payment_intent_id ?? null,
+    billcomState: p.billcom_state,
+    billcomError: p.billcom_error ?? null,
+    billcomRecordedAt: p.billcom_recorded_at ?? null,
+    chargedAt: p.charged_at,
+    chargedBy: p.charged_by ?? null,
+    recordedManuallyBy: p.recorded_manually_by ?? null,
+    cardBrand: card.brand,
+    cardLast4: card.last4,
+  };
+}
+
+const rowById = async (deps: ChargeDeps, id: string) => toRow(deps, await readPayment(deps, id));
+
+/** The first valid address of a customer's email field (it may hold several). */
+async function receiptEmail(deps: ChargeDeps, customerNumber: string): Promise<string | null> {
+  const { data, error } = await deps.supabase
+    .from('business_central_customers')
+    .select('email')
+    .eq('organization_id', deps.orgId)
+    .eq('bc_customer_number', customerNumber)
+    .limit(1)
+    .maybeSingle();
+  if (error) return null; // the receipt is a courtesy; never block a charge on it
+  const raw = (data as { email: string | null } | null)?.email ?? '';
+  return raw.split(/[;,\s]+/).find((e) => EMAIL.test(e)) ?? null;
+}
+
+// ---------- guarded writes ----------
+
+/** Updates the payment only while `guard` still holds; returns whether it did. */
+async function transition(
+  deps: ChargeDeps,
+  id: string,
+  guard: { status?: string; billcomStates?: string[] },
+  values: Record<string, unknown>,
+): Promise<boolean> {
+  let q = deps.supabase.from('card_payments').update(values).eq('id', id).eq('organization_id', deps.orgId);
+  if (guard.status) q = q.eq('status', guard.status);
+  if (guard.billcomStates) q = q.in('billcom_state', guard.billcomStates);
+  const { data, error } = await q.select('id');
+  if (error) throw new Error(`Could not update the card payment: ${error.message}`);
+  return (data ?? []).length > 0;
+}
+
+/** Records a Stripe-succeeded payment in Bill.com. Never throws for a Bill.com error: it is stored. */
+async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
+  const notStarted = { status: 'succeeded', billcomStates: ['not_started'] };
+  const client = await deps.billcom().catch(() => null);
+  if (!client) {
+    await transition(deps, p.id, notStarted, { billcom_state: 'failed', billcom_error: BILLCOM_OFF });
+    return;
+  }
+  const card = await cardOf(deps, p.card_id);
+  const cardText = card.brand || card.last4 ? ` (${[card.brand, card.last4 && `•••• ${card.last4}`].filter(Boolean).join(' ')})` : '';
+  try {
+    const { paymentId } = await recordBillcomCardPayment(client, {
+      billcomInvoiceId: p.billcom_invoice_id,
+      customerId: p.billcom_customer_id,
+      amount: Number(p.amount),
+      paymentDate: businessDate(deps.now()),
+      description: `Card payment via Stripe ${intentId}${cardText}`,
+    });
+    await transition(deps, p.id, notStarted, {
+      billcom_state: 'recorded',
+      billcom_payment_id: paymentId,
+      billcom_error: null,
+      billcom_recorded_at: deps.now().toISOString(),
+    });
+  } catch (e) {
+    await transition(deps, p.id, notStarted, {
+      billcom_state: 'failed',
+      billcom_error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/** processing → succeeded, then Bill.com. Only the caller that wins the transition records. */
+async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
+  let won: boolean;
+  try {
+    won = await transition(deps, p.id, { status: 'processing' }, { status: 'succeeded', stripe_payment_intent_id: intentId, failure_message: null });
+  } catch (e) {
+    throw new Error(
+      `The card was charged in Stripe (${intentId}) but Nexus could not save it. Use Check status. ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+  if (won) await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId);
+}
+
+async function settleFailed(deps: ChargeDeps, id: string, message: string, intentId: string | null): Promise<void> {
+  await transition(deps, id, { status: 'processing' }, {
+    status: 'failed',
+    failure_message: message,
+    ...(intentId ? { stripe_payment_intent_id: intentId } : {}),
+  });
+}
+
+/** Applies a PaymentIntent's state to a processing row. */
+async function applyIntent(deps: ChargeDeps, p: CardPayment, pi: Stripe.PaymentIntent): Promise<void> {
+  switch (pi.status) {
+    case 'succeeded':
+      return settleSucceeded(deps, p, pi.id);
+    case 'processing':
+      await transition(deps, p.id, { status: 'processing' }, { stripe_payment_intent_id: pi.id });
+      return;
+    case 'requires_action':
+      return settleFailed(deps, p.id, AUTH_REQUIRED_MESSAGE, pi.id);
+    default:
+      return settleFailed(deps, p.id, pi.last_payment_error?.message || 'The charge did not go through.', pi.id);
+  }
+}
+
+type StripeErrorLike = { type?: string; code?: string; message?: string; payment_intent?: { id?: string } };
+
+/** A definite "no charge" from Stripe, or null when the outcome is unknown. */
+function definiteFailure(e: unknown): { message: string; intentId: string | null } | null {
+  const err = (e ?? {}) as StripeErrorLike;
+  if (err.type !== 'StripeCardError' && err.type !== 'StripeInvalidRequestError') return null;
+  const message = err.code === 'authentication_required' ? AUTH_REQUIRED_MESSAGE : err.message || 'The card was declined.';
+  return { message, intentId: err.payment_intent?.id ?? null };
+}
+
+// ---------- entry points ----------
+
+async function assess(deps: ChargeDeps, bcInvoiceId: string) {
+  const invoice = await deps.loadInvoice(bcInvoiceId);
+  if (!invoice) throw new Error('Invoice not found.');
+  const card = await activeCard(deps, invoice.customerNumber);
+  const stripe = deps.stripeConnectionId ? ('ready' as const) : ('off' as const);
+  // Bill.com is only asked when nothing before it already rules the charge out.
+  const billcom: BillcomLookup =
+    deps.canCharge && stripe === 'ready' && card
+      ? await deps.findBillcomInvoice({
+          customerNumber: invoice.customerNumber,
+          invoiceNumbers: invoice.invoiceNumbers,
+          billcomInvoiceId: invoice.billcomInvoiceId,
+        })
+      : { kind: 'off' };
+  const eligibility = chargeEligibility({ canCharge: deps.canCharge, stripe, card, billcom, today: businessDate(deps.now()) });
+  return { invoice, card, billcom, eligibility };
+}
+
+/** What the invoice page shows: can it be charged (or why not), the card, and past card payments. */
+export async function invoiceChargeView(
+  deps: ChargeDeps,
+  bcInvoiceId: string,
+): Promise<{ eligibility: ChargeEligibility; card: CardLabel | null; payments: CardPaymentRow[] }> {
+  const { card, eligibility } = await assess(deps, bcInvoiceId);
+  const { data, error } = await deps.supabase
+    .from('card_payments')
+    .select('*')
+    .eq('organization_id', deps.orgId)
+    .eq('bc_invoice_id', bcInvoiceId)
+    .order('charged_at', { ascending: false });
+  if (error) throw new Error(`Could not read the card payments: ${error.message}`);
+  const payments = await Promise.all(((data ?? []) as CardPayment[]).map((p) => toRow(deps, p)));
+  return { eligibility, card, payments };
+}
+
+export async function chargeInvoice(deps: ChargeDeps, a: { bcInvoiceId: string; userId: string }): Promise<CardPaymentRow> {
+  const { invoice, card, billcom, eligibility } = await assess(deps, a.bcInvoiceId);
+  if (!eligibility.ok) throw new Error(eligibility.reason);
+  // Narrowed by eligibility; restated for the type checker.
+  if (!card || billcom.kind !== 'found' || !billcom.billcomCustomerId || !deps.stripeConnectionId || !invoice.customerNumber) {
+    throw new Error(REASONS.notInBillcom);
+  }
+  const connectionId = deps.stripeConnectionId;
+  const customerNumber = invoice.customerNumber;
+
+  const { data: sc, error: scError } = await deps.supabase
+    .from('stripe_customers')
+    .select('stripe_customer_id')
+    .eq('organization_id', deps.orgId)
+    .eq('stripe_connection_id', connectionId)
+    .eq('bc_customer_number', customerNumber)
+    .maybeSingle();
+  if (scError) throw new Error(`Could not read the Stripe customer: ${scError.message}`);
+  const stripeCustomerId = (sc as { stripe_customer_id: string } | null)?.stripe_customer_id;
+  if (!stripeCustomerId) throw new Error(REASONS.noCard);
+
+  const stripe = await deps.stripeClient(connectionId);
+  const email = await receiptEmail(deps, customerNumber);
+
+  // 1. The row first: the unique index turns a second charge into a 23505 here.
+  const { data: inserted, error: insError } = await deps.supabase
+    .from('card_payments')
+    .insert({
+      organization_id: deps.orgId,
+      stripe_connection_id: connectionId,
+      bc_customer_number: customerNumber,
+      sales_order_id: invoice.salesOrderId,
+      bc_invoice_id: invoice.bcInvoiceId,
+      billcom_invoice_id: billcom.status.id,
+      billcom_customer_id: billcom.billcomCustomerId,
+      invoice_number: invoice.invoiceNumber,
+      amount: eligibility.amount,
+      currency: 'usd',
+      card_id: card.id,
+      status: 'processing',
+      billcom_state: 'not_started',
+      charged_by: a.userId,
+      charged_at: deps.now().toISOString(),
+    })
+    .select('*')
+    .single();
+  if (insError) {
+    if (insError.code === UNIQUE_VIOLATION) throw new Error(DUPLICATE_CHARGE_MESSAGE);
+    throw new Error(`Could not start the charge: ${insError.message}`);
+  }
+  const payment = inserted as CardPayment;
+
+  // 2. Stripe. The idempotency key makes a repeated request return the same charge.
+  let pi: Stripe.PaymentIntent;
+  try {
+    pi = await stripe.paymentIntents.create(
+      {
+        amount: toCents(eligibility.amount),
+        currency: 'usd',
+        customer: stripeCustomerId,
+        payment_method: card.stripePaymentMethodId,
+        off_session: true,
+        confirm: true,
+        ...(email ? { receipt_email: email } : {}),
+        description: `Invoice ${invoice.invoiceNumber}`,
+        metadata: {
+          organization_id: deps.orgId,
+          bc_customer_number: customerNumber,
+          card_payment_id: payment.id,
+          invoice_number: invoice.invoiceNumber,
+        },
+      },
+      { idempotencyKey: payment.id },
+    );
+  } catch (e) {
+    const failure = definiteFailure(e);
+    if (failure) await settleFailed(deps, payment.id, failure.message, failure.intentId);
+    else console.error(`[chargeInvoice] Stripe outcome unknown for card payment ${payment.id}; left processing:`, e);
+    return rowById(deps, payment.id);
+  }
+
+  // 3. Save the outcome, then (on success) Bill.com.
+  await applyIntent(deps, payment, pi);
+  return rowById(deps, payment.id);
+}
+
+/** Settles a `processing` row from Stripe (found by metadata card_payment_id). Never charges. */
+export async function checkChargeStatus(deps: ChargeDeps, cardPaymentId: string): Promise<CardPaymentRow> {
+  const p = await readPayment(deps, cardPaymentId);
+  const age = deps.now().getTime() - new Date(p.charged_at).getTime();
+
+  if (p.status === 'succeeded' && p.billcom_state === 'not_started' && age > BILLCOM_STUCK_AFTER_MS) {
+    await transition(deps, p.id, { status: 'succeeded', billcomStates: ['not_started'] }, {
+      billcom_state: 'failed',
+      billcom_error: BILLCOM_INTERRUPTED,
+    });
+    return rowById(deps, p.id);
+  }
+  if (p.status !== 'processing') return toRow(deps, p);
+
+  const stripe = await deps.stripeClient(p.stripe_connection_id);
+  const res = await stripe.paymentIntents.search({ query: `metadata['card_payment_id']:'${p.id}'` });
+  const intents = res.data ?? [];
+  const pi = intents.find((i) => i.status === 'succeeded') ?? intents[0];
+  if (pi) await applyIntent(deps, p, pi);
+  else if (age > NO_RECORD_AFTER_MS) await settleFailed(deps, p.id, NO_STRIPE_RECORD, null);
+  return rowById(deps, p.id);
+}
+
+export async function retryBillcomRecord(deps: ChargeDeps, cardPaymentId: string): Promise<CardPaymentRow> {
+  const p = await readPayment(deps, cardPaymentId);
+  if (p.status !== 'succeeded' || p.billcom_state !== 'failed') throw new Error(NOT_RETRYABLE);
+  const client = await deps.billcom().catch(() => null);
+  if (!client) throw new Error(BILLCOM_OFF);
+  // Claim it (failed → not_started) so two clicks cannot both record it.
+  const claimed = await transition(deps, p.id, { status: 'succeeded', billcomStates: ['failed'] }, { billcom_state: 'not_started', billcom_error: null });
+  if (!claimed) throw new Error(NOT_RETRYABLE);
+  await recordInBillcom(deps, { ...p, billcom_state: 'not_started' }, p.stripe_payment_intent_id ?? '');
+  return rowById(deps, p.id);
+}
+
+export async function markRecordedManually(deps: ChargeDeps, cardPaymentId: string, userId: string): Promise<CardPaymentRow> {
+  const p = await readPayment(deps, cardPaymentId);
+  if (p.status !== 'succeeded' || p.billcom_state !== 'failed') throw new Error(NOT_MANUAL);
+  const done = await transition(deps, p.id, { status: 'succeeded', billcomStates: ['failed'] }, {
+    billcom_state: 'recorded_manually',
+    recorded_manually_by: userId,
+    billcom_recorded_at: deps.now().toISOString(),
+  });
+  if (!done) throw new Error(NOT_MANUAL);
+  return rowById(deps, p.id);
+}

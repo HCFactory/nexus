@@ -40,6 +40,7 @@ describe('readBillcomInvoiceStatus', () => {
       totalAmount: 45.23,
       dueAmount: 45.23,
       dueDate: '2026-12-15',
+      customerId: '0cu1',
     });
     expect(request).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenCalledWith('/v3/invoices/00eX');

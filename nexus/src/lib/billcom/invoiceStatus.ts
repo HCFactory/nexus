@@ -13,6 +13,8 @@ export interface BillcomInvoiceStatus {
   totalAmount: number | null;
   dueAmount: number | null;
   dueDate: string | null;
+  /** The Bill.com customer the invoice belongs to, when Bill.com says. */
+  customerId?: string | null;
 }
 
 type RawInvoice = {
@@ -22,6 +24,7 @@ type RawInvoice = {
   totalAmount?: unknown;
   dueAmount?: unknown;
   dueDate?: string | null;
+  customerId?: string | null;
 };
 
 const LABELS: Record<string, string> = {
@@ -50,6 +53,7 @@ function toStatus(r: RawInvoice): BillcomInvoiceStatus {
     totalAmount: num(r.totalAmount),
     dueAmount: num(r.dueAmount),
     dueDate: r.dueDate ?? null,
+    ...(r.customerId ? { customerId: r.customerId } : {}),
   };
 }
 

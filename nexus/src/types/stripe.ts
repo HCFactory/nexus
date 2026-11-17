@@ -8,6 +8,8 @@
  * Stripe ids.
  */
 
+import type { BillcomInvoiceStatus } from '@/lib/billcom/invoiceStatus';
+
 export type CardPaymentStatus = 'processing' | 'succeeded' | 'failed';
 export type CardPaymentBillcomState =
   | 'not_started'
@@ -156,30 +158,33 @@ export interface CustomerCardView {
 /** A card payment as shown in the UI. */
 export interface CardPaymentRow {
   id: string;
+  bcInvoiceId: string;
   invoiceNumber: string;
   billcomInvoiceId: string;
   amount: number;
   currency: string;
   status: CardPaymentStatus;
   failureMessage: string | null;
+  stripePaymentIntentId: string | null;
   billcomState: CardPaymentBillcomState;
   billcomError: string | null;
+  billcomRecordedAt: string | null;
   chargedAt: string;
+  chargedBy: string | null;
+  recordedManuallyBy: string | null;
   cardBrand: string | null;
   cardLast4: string | null;
 }
 
-/** Return type of findBillcomInvoiceForCharge. */
+/**
+ * Return type of findBillcomInvoiceForCharge: the live Bill.com invoice, or why
+ * there is none. billcomCustomerId is null only when neither the invoice nor a
+ * synced customer link names the Bill.com customer (it cannot be charged then).
+ */
 export type BillcomLookup =
-  | {
-      found: true;
-      billcomInvoiceId: string;
-      billcomCustomerId: string;
-      invoiceNumber: string;
-      amountDue: number;
-    }
-  | { found: false; reason: string };
+  | { kind: 'found'; status: BillcomInvoiceStatus; billcomCustomerId: string | null }
+  | { kind: 'not_linked' | 'not_found' | 'ambiguous' | 'off' };
 
 export type ChargeEligibility =
-  | { eligible: true }
-  | { eligible: false; reason: string };
+  | { ok: true; amount: number; dueDate: string }
+  | { ok: false; reason: string };

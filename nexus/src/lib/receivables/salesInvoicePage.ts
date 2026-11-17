@@ -19,6 +19,7 @@ import { fetchAndMirrorSalesInvoice, mirrorSalesInvoiceLines, type InvoiceMirror
 import { createServiceClient } from '@/lib/supabase/server';
 import type { BusinessCentralConnection, BusinessCentralSalesInvoice, BusinessCentralSalesInvoiceLine } from '@/types/database';
 import type { InvoiceChangeRow } from '@/types/invoiceChanges';
+import type { BillcomLookup } from '@/types/stripe';
 
 const INVOICES = 'business_central_sales_invoices';
 const LINES = 'business_central_sales_invoice_lines';
@@ -180,41 +181,60 @@ export interface BillcomPanelInput {
   billcomInvoiceId: string | null;
 }
 
+/**
+ * The live Bill.com invoice for a BC invoice: by the order's stored Bill.com id,
+ * else by number among the linked customer's invoices (exactly one match only).
+ * Shared by the Bill.com panel and charging, which needs the Bill.com customer
+ * id for record-payment: the invoice's own customerId, else the customer link.
+ * Throws on Bill.com or database errors.
+ */
+export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Promise<BillcomLookup> {
+  const ctx = await context();
+  if (!ctx) return { kind: 'not_found' };
+
+  const conn = await resolveBillcomConnection(ctx.supabase, ctx.orgId);
+  if (!conn?.enabled) return { kind: 'off' };
+  let client;
+  try {
+    client = await createBillcomClientForConnection(conn.id, ctx.orgId, { supabase: ctx.supabase });
+  } catch (e) {
+    console.error('[invoice page] could not create the Bill.com client:', e);
+    return { kind: 'off' };
+  }
+
+  const readLinkedCustomerId = async (): Promise<string | null> => {
+    const { data: link, error } = await ctx.supabase
+      .from('billcom_customer_links')
+      .select('status, billcom_customer_id')
+      .eq('organization_id', ctx.orgId)
+      .eq('bc_connection_id', ctx.connection.id)
+      .eq('billcom_connection_id', conn.id)
+      .eq('bc_customer_number', input.customerNumber ?? '')
+      .maybeSingle();
+    if (error) throw new Error(`Could not read the Bill.com customer link: ${error.message}`);
+    const ready = link as { status: string; billcom_customer_id: string | null } | null;
+    return ready?.status === 'synced' && ready.billcom_customer_id ? ready.billcom_customer_id : null;
+  };
+
+  if (input.billcomInvoiceId) {
+    const found = await readBillcomInvoiceStatus(client, { billcomInvoiceId: input.billcomInvoiceId, invoiceNumbers: [] });
+    if (found === 'ambiguous') return { kind: 'ambiguous' };
+    if (!found) return { kind: 'not_found' };
+    return { kind: 'found', status: found, billcomCustomerId: found.customerId ?? (await readLinkedCustomerId()) };
+  }
+
+  const customerId = await readLinkedCustomerId();
+  if (!customerId) return { kind: 'not_linked' };
+  const found = await readBillcomInvoiceStatus(client, { billcomCustomerId: customerId, invoiceNumbers: input.invoiceNumbers });
+  if (found === 'ambiguous') return { kind: 'ambiguous' };
+  return found ? { kind: 'found', status: found, billcomCustomerId: customerId } : { kind: 'not_found' };
+}
+
 /** The Bill.com side of the invoice. Never throws: any failure is an `error` panel. */
 export async function getSalesInvoiceBillcomPanel(input: BillcomPanelInput): Promise<BillcomPanel> {
   try {
-    const ctx = await context();
-    if (!ctx) return { kind: 'not_found' };
-
-    const conn = await resolveBillcomConnection(ctx.supabase, ctx.orgId);
-    if (!conn?.enabled) return { kind: 'off' };
-    let client;
-    try {
-      client = await createBillcomClientForConnection(conn.id, ctx.orgId, { supabase: ctx.supabase });
-    } catch (e) {
-      console.error('[invoice page] could not create the Bill.com client:', e);
-      return { kind: 'off' };
-    }
-
-    let found;
-    if (input.billcomInvoiceId) {
-      found = await readBillcomInvoiceStatus(client, { billcomInvoiceId: input.billcomInvoiceId, invoiceNumbers: [] });
-    } else {
-      const { data: link, error } = await ctx.supabase
-        .from('billcom_customer_links')
-        .select('status, billcom_customer_id')
-        .eq('organization_id', ctx.orgId)
-        .eq('bc_connection_id', ctx.connection.id)
-        .eq('billcom_connection_id', conn.id)
-        .eq('bc_customer_number', input.customerNumber ?? '')
-        .maybeSingle();
-      if (error) throw new Error(`Could not read the Bill.com customer link: ${error.message}`);
-      const ready = link as { status: string; billcom_customer_id: string | null } | null;
-      if (!ready || ready.status !== 'synced' || !ready.billcom_customer_id) return { kind: 'not_linked' };
-      found = await readBillcomInvoiceStatus(client, { billcomCustomerId: ready.billcom_customer_id, invoiceNumbers: input.invoiceNumbers });
-    }
-    if (found === 'ambiguous') return { kind: 'ambiguous' };
-    return found ? { kind: 'found', status: found } : { kind: 'not_found' };
+    const found = await findBillcomInvoiceForCharge(input);
+    return found.kind === 'found' ? { kind: 'found', status: found.status } : { kind: found.kind };
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
