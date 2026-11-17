@@ -50,6 +50,7 @@ import {
 const INV = '143fbb46-e8e0-f111-84e4-7ced8d88ddac';
 const CP = '7aa0c3d1-0000-4000-8000-000000000415';
 const ROW = { id: CP, bcInvoiceId: INV, status: 'succeeded' };
+const CONFIRMED = { expectedAmountCents: 10000, cardId: 'card-1' };
 
 beforeEach(() => {
   mocks.access.canChargeSavedCards = true;
@@ -64,7 +65,7 @@ beforeEach(() => {
 
 describe('permission enforced on every mutating action', () => {
   const actions: [string, () => Promise<unknown>, ReturnType<typeof vi.fn>][] = [
-    ['chargeInvoiceCard', () => chargeInvoiceCard(INV), mocks.charge],
+    ['chargeInvoiceCard', () => chargeInvoiceCard(INV, CONFIRMED), mocks.charge],
     ['retryCardPaymentBillcom', () => retryCardPaymentBillcom(CP), mocks.retry],
     ['markCardPaymentRecordedManually', () => markCardPaymentRecordedManually(CP), mocks.manual],
     ['checkCardPaymentStatus', () => checkCardPaymentStatus(CP), mocks.check],
@@ -97,9 +98,9 @@ it('rejects a card payment id that is not a UUID', async () => {
 });
 
 it('chargeInvoiceCard passes the current user and the default Stripe connection', async () => {
-  await chargeInvoiceCard(INV);
+  await chargeInvoiceCard(INV, CONFIRMED);
   const [deps, args] = mocks.charge.mock.calls[0];
-  expect(args).toEqual({ bcInvoiceId: INV, userId: 'u1' });
+  expect(args).toEqual({ bcInvoiceId: INV, userId: 'u1', expectedAmountCents: 10000, cardId: 'card-1' });
   expect(deps).toMatchObject({ orgId: 'org-1', canCharge: true, stripeConnectionId: 'sc-1' });
   expect(await deps.loadInvoice(INV)).toEqual({
     bcInvoiceId: INV,
@@ -111,9 +112,15 @@ it('chargeInvoiceCard passes the current user and the default Stripe connection'
   });
 });
 
+it('chargeInvoiceCard refuses without the confirmed amount and card', async () => {
+  await expect(chargeInvoiceCard(INV, { expectedAmountCents: 1.5, cardId: 'card-1' })).rejects.toThrow('Refresh and review before charging.');
+  await expect(chargeInvoiceCard(INV, undefined as never)).rejects.toThrow('Refresh and review before charging.');
+  expect(mocks.charge).not.toHaveBeenCalled();
+});
+
 it('a disabled Stripe connection is passed as off', async () => {
   mocks.resolveStripe.mockResolvedValue({ id: 'sc-1', enabled: false, livemode: false });
-  await chargeInvoiceCard(INV);
+  await chargeInvoiceCard(INV, CONFIRMED);
   expect(mocks.charge.mock.calls[0][0]).toMatchObject({ stripeConnectionId: null });
 });
 

@@ -120,7 +120,12 @@ create table if not exists public.card_payments (
   charged_by uuid,
   charged_at timestamptz not null default now(),
   billcom_recorded_at timestamptz,
-  recorded_manually_by uuid
+  recorded_manually_by uuid,
+  -- When the current Bill.com record attempt started (first attempt or a Retry).
+  -- The "interrupted" check measures from here, not from charged_at.
+  billcom_attempt_at timestamptz,
+  not_charged_by uuid,
+  not_charged_at timestamptz
 );
 
 create unique index if not exists card_payments_payment_intent_key
@@ -134,6 +139,9 @@ create unique index if not exists card_payments_one_open_per_invoice
 
 create index if not exists card_payments_customer_idx
   on public.card_payments (stripe_connection_id, bc_customer_number);
+
+create index if not exists card_payments_card_idx
+  on public.card_payments (card_id);
 
 alter table public.stripe_connections enable row level security;
 alter table public.stripe_customers enable row level security;
@@ -278,33 +286,6 @@ begin
 end;
 $$;
 
--- Deleting a connection row must not orphan its Vault entries. Called before
--- the row is removed, while the pointers are still readable.
-create or replace function public.delete_stripe_secrets(p_connection_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_secret_key_id uuid;
-  v_webhook_id uuid;
-begin
-  select secret_key_secret_id, webhook_secret_secret_id
-  into v_secret_key_id, v_webhook_id
-  from public.stripe_connections
-  where id = p_connection_id;
-
-  if v_secret_key_id is not null then
-    delete from vault.secrets where id = v_secret_key_id;
-  end if;
-
-  if v_webhook_id is not null then
-    delete from vault.secrets where id = v_webhook_id;
-  end if;
-end;
-$$;
-
 -- Lock the wrappers down: service role only. NOT optional: these are SECURITY
 -- DEFINER and take a connection id, so any caller who can execute them could
 -- read, overwrite or erase any connection's Stripe credentials.
@@ -319,13 +300,11 @@ revoke all on function public.set_stripe_secret_key(uuid, text) from public, ano
 revoke all on function public.get_stripe_secret_key(uuid) from public, anon, authenticated;
 revoke all on function public.set_stripe_webhook_secret(uuid, text) from public, anon, authenticated;
 revoke all on function public.get_stripe_webhook_secret(uuid) from public, anon, authenticated;
-revoke all on function public.delete_stripe_secrets(uuid) from public, anon, authenticated;
 
 grant execute on function public.set_stripe_secret_key(uuid, text) to service_role;
 grant execute on function public.get_stripe_secret_key(uuid) to service_role;
 grant execute on function public.set_stripe_webhook_secret(uuid, text) to service_role;
 grant execute on function public.get_stripe_webhook_secret(uuid) to service_role;
-grant execute on function public.delete_stripe_secrets(uuid) to service_role;
 
 -- One transaction: make this connection the org's only default (mirrors 059).
 create or replace function public.set_default_stripe_connection(p_connection_id uuid, p_org_id uuid)

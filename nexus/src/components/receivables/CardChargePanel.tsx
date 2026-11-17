@@ -100,6 +100,17 @@ export function CardChargePanel({ bcInvoiceId, invoiceNumber, eligibility, card,
     });
 
   const amountText = eligibility.ok ? formatMoney(eligibility.amount, 'USD') : '';
+
+  // Sends what the dialog showed: the server refuses if the amount or card has changed since.
+  const charge = async () => {
+    if (!eligibility.ok || !card) return;
+    try {
+      await chargeInvoiceCard(bcInvoiceId, { expectedAmountCents: Math.round(eligibility.amount * 100), cardId: card.id });
+    } catch (e) {
+      router.refresh(); // show the current amount and card next to the error
+      throw e;
+    }
+  };
   const chargeQuestion = `Charge ${cardText(card?.brand ?? null, card?.last4 ?? null)} ${amountText} for Invoice ${invoiceNumber}?`;
 
   const rows = payments.map((p) => (notFound.has(p.id) && p.status === 'processing' ? { ...p, stripeLookup: 'not_found' as const } : p));
@@ -152,6 +163,11 @@ export function CardChargePanel({ bcInvoiceId, invoiceNumber, eligibility, card,
                   )}
                 </div>
               </div>
+              {p.status === 'failed' && p.notChargedAt && (
+                <p className="text-foreground-muted">
+                  Marked as not charged by {p.notChargedByName ?? 'staff'} on {dateText(p.notChargedAt)}
+                </p>
+              )}
 
               {p.status === 'processing' && canCharge && (
                 <div className="space-y-2">
@@ -165,6 +181,20 @@ export function CardChargePanel({ bcInvoiceId, invoiceNumber, eligibility, card,
                         Mark as not charged
                       </Button>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {p.status === 'succeeded' && p.billcomState === 'not_started' && p.billcomStuck && canCharge && (
+                <div className="space-y-2">
+                  <p className="text-foreground-muted">
+                    Recording in Bill.com started over 10 minutes ago and has not finished. The payment may already be recorded in
+                    Bill.com — use Check status, then check Bill.com before pressing Retry.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => check(p.id)}>
+                      Check status
+                    </Button>
                   </div>
                 </div>
               )}
@@ -220,7 +250,7 @@ export function CardChargePanel({ bcInvoiceId, invoiceNumber, eligibility, card,
                 onClick={() => {
                   const c = confirm;
                   closeThen(async () => {
-                    if (c.kind === 'charge') await chargeInvoiceCard(bcInvoiceId);
+                    if (c.kind === 'charge') await charge();
                     else if (c.kind === 'manual') await markCardPaymentRecordedManually(c.id);
                     else await markCardPaymentNotCharged(c.id);
                   });

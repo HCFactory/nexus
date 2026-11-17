@@ -1199,6 +1199,9 @@ export interface Database {
           | 'charged_at'
           | 'billcom_recorded_at'
           | 'recorded_manually_by'
+          | 'billcom_attempt_at'
+          | 'not_charged_by'
+          | 'not_charged_at'
         > & {
           id?: string;
           sales_order_id?: string | null;
@@ -1212,6 +1215,9 @@ export interface Database {
           charged_at?: string;
           billcom_recorded_at?: string | null;
           recorded_manually_by?: string | null;
+          billcom_attempt_at?: string | null;
+          not_charged_by?: string | null;
+          not_charged_at?: string | null;
         };
         Update: Partial<Omit<CardPayment, 'id'>>;
       };

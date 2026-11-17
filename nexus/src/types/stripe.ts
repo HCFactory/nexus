@@ -95,6 +95,9 @@ export interface CardPayment {
   charged_at: string;
   billcom_recorded_at: string | null;
   recorded_manually_by: string | null;
+  billcom_attempt_at: string | null;
+  not_charged_by: string | null;
+  not_charged_at: string | null;
 }
 
 // Client-safe projections
@@ -172,9 +175,15 @@ export interface CardPaymentRow {
   chargedAt: string;
   chargedBy: string | null;
   recordedManuallyBy: string | null;
+  /** Who marked a `processing` charge as not charged, and when. */
+  notChargedBy?: string | null;
+  notChargedAt?: string | null;
   /** Display names, resolved by getInvoiceChargeView; absent when unknown. */
   chargedByName?: string;
   recordedManuallyByName?: string;
+  notChargedByName?: string;
+  /** Charged, but the Bill.com record started over 10 minutes ago and never finished. */
+  billcomStuck?: boolean;
   cardBrand: string | null;
   cardLast4: string | null;
   /** Set by Check status when Stripe has no payment for a `processing` row. */

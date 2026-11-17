@@ -84,9 +84,18 @@ export async function getInvoiceChargeView(
   return invoiceChargeView(deps, bcInvoiceId);
 }
 
-export async function chargeInvoiceCard(bcInvoiceId: string): Promise<CardPaymentRow> {
+/** expectedAmountCents and cardId are what staff confirmed; the server refuses if either changed. */
+export async function chargeInvoiceCard(
+  bcInvoiceId: string,
+  confirmed: { expectedAmountCents: number; cardId: string },
+): Promise<CardPaymentRow> {
   const { deps, userId } = await scope(true);
-  return refresh(await chargeInvoice(deps, { bcInvoiceId, userId }));
+  if (!Number.isInteger(confirmed?.expectedAmountCents) || typeof confirmed?.cardId !== 'string') {
+    throw new Error('Refresh and review before charging.');
+  }
+  return refresh(
+    await chargeInvoice(deps, { bcInvoiceId, userId, expectedAmountCents: confirmed.expectedAmountCents, cardId: confirmed.cardId }),
+  );
 }
 
 export async function retryCardPaymentBillcom(cardPaymentId: string): Promise<CardPaymentRow> {

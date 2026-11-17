@@ -53,7 +53,8 @@ describe('CardChargePanel', () => {
     expect(screen.getByText('Charge Visa •••• 4242 $1,234.56 for Invoice 1043?')).toBeTruthy();
     expect(mocks.charge).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-    await waitFor(() => expect(mocks.charge).toHaveBeenCalledWith('bc1'));
+    // The amount and card the dialog showed, so the server can refuse if either changed.
+    await waitFor(() => expect(mocks.charge).toHaveBeenCalledWith('bc1', { expectedAmountCents: 123456, cardId: 'c1' }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
   });
 
@@ -134,6 +135,50 @@ describe('CardChargePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Charge card' }));
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect((await screen.findByRole('alert')).textContent).toBe('A charge for this invoice is already in progress or needs attention.');
+  });
+
+  it('a "changed since you opened this" refusal is shown and the page refreshes', async () => {
+    mocks.charge.mockRejectedValue(
+      new Error('The amount due or card on file changed since you opened this — refresh and review before charging.'),
+    );
+    ui();
+    fireEvent.click(screen.getByRole('button', { name: 'Charge card' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('changed since you opened this');
+    expect(mocks.refresh).toHaveBeenCalled();
+  });
+
+  it('charged but Bill.com stuck over 10 minutes: warns and offers Check status', async () => {
+    mocks.check.mockResolvedValue(payment({ billcomState: 'failed' }));
+    ui({ payments: [payment({ billcomState: 'not_started', billcomStuck: true, billcomRecordedAt: null })] });
+    expect(screen.getByText('Not recorded yet')).toBeTruthy();
+    expect(screen.getByText(/may already be recorded in\s+Bill\.com — use Check status, then check Bill\.com before pressing Retry/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Check status' }));
+    await waitFor(() => expect(mocks.check).toHaveBeenCalledWith('p1'));
+  });
+
+  it('charged and Bill.com recording just started: no action yet', () => {
+    ui({ payments: [payment({ billcomState: 'not_started', billcomStuck: false, billcomRecordedAt: null })] });
+    expect(screen.getByText('Not recorded yet')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Check status' })).toBeNull();
+  });
+
+  it('stuck Bill.com without the permission shows no action', () => {
+    ui({ canCharge: false, payments: [payment({ billcomState: 'not_started', billcomStuck: true })] });
+    expect(screen.queryByRole('button', { name: 'Check status' })).toBeNull();
+  });
+
+  it('marked as not charged: shows who by name and a formatted date (no raw id or ISO time)', () => {
+    ui({
+      payments: [
+        payment({
+          status: 'failed', billcomState: 'not_started', failureMessage: 'Marked as not charged by staff after checking Stripe.',
+          notChargedBy: 'u2', notChargedByName: 'Sam Lee', notChargedAt: '2026-11-17T20:00:00.000Z',
+        }),
+      ],
+    });
+    expect(screen.getByText('Marked as not charged by Sam Lee on Nov 17, 2026')).toBeTruthy();
+    expect(screen.queryByText(/u2|2026-11-17T/)).toBeNull();
   });
 
   it('disables the buttons while a request is in flight (no double submit)', async () => {

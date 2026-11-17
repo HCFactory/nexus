@@ -9,6 +9,7 @@ vi.mock('@/lib/billcom/recordPayment', () => ({ recordBillcomCardPayment: (...a:
 
 import {
   AUTH_REQUIRED_MESSAGE,
+  CHARGE_CHANGED_MESSAGE,
   DUPLICATE_CHARGE_MESSAGE,
   businessDate,
   chargeEligibility,
@@ -49,6 +50,8 @@ const status = (over: Record<string, unknown> = {}) => ({
   customerId: '0cu1',
   ...over,
 });
+/** What staff confirmed: $100 on card-1 (the default lookup). */
+const ARGS = { bcInvoiceId: INV, userId: 'u1', expectedAmountCents: 10000, cardId: 'card-1' };
 const found = (over: Record<string, unknown> = {}): BillcomLookup => ({ kind: 'found', status: status(over), billcomCustomerId: '0cu1' });
 
 describe('businessDate', () => {
@@ -162,6 +165,7 @@ const paymentRow = (over: Row = {}): Row => ({
   amount: 60, currency: 'usd', card_id: 'card-1', stripe_payment_intent_id: null, status: 'processing', failure_message: null,
   billcom_state: 'not_started', billcom_payment_id: null, billcom_error: null, charged_by: 'u1',
   charged_at: '2026-11-17T19:59:00.000Z', billcom_recorded_at: null, recorded_manually_by: null,
+  billcom_attempt_at: null, not_charged_by: null, not_charged_at: null,
   ...over,
 });
 
@@ -170,36 +174,51 @@ beforeEach(() => {
 });
 
 describe('chargeInvoice', () => {
-  it('uses fresh due amount: the page saw $100, Bill.com now says $60', async () => {
+  it('charges the fresh Bill.com due amount when it matches what staff confirmed', async () => {
     const s = setup({ lookup: found({ dueAmount: 60 }) });
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, { ...ARGS, expectedAmountCents: 6000 });
     expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null });
     expect(s.create.mock.calls[0][0]).toMatchObject({ amount: 6000 });
     expect(row.amount).toBe(60);
   });
 
+  it('refuses when the amount due changed since staff confirmed (page saw $100, Bill.com now says $60): no row, no Stripe', async () => {
+    const s = setup({ lookup: found({ dueAmount: 60 }) });
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow(CHARGE_CHANGED_MESSAGE);
+    expect(CHARGE_CHANGED_MESSAGE).toBe('The amount due or card on file changed since you opened this — refresh and review before charging.');
+    expect(s.db.tables.card_payments).toHaveLength(0);
+    expect(s.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the card on file changed since staff confirmed: no row, no Stripe', async () => {
+    const s = setup();
+    await expect(chargeInvoice(s.deps, { ...ARGS, cardId: 'card-old' })).rejects.toThrow(CHARGE_CHANGED_MESSAGE);
+    expect(s.db.tables.card_payments).toHaveLength(0);
+    expect(s.create).not.toHaveBeenCalled();
+  });
+
   it('refuses when nothing is due (no insert, no Stripe)', async () => {
     const s = setup({ lookup: found({ dueAmount: 0 }) });
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow('Nothing is due on this invoice.');
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow('Nothing is due on this invoice.');
     expect(s.db.tables.card_payments).toHaveLength(0);
     expect(s.create).not.toHaveBeenCalled();
   });
 
   it('refuses without permission even if called directly', async () => {
     const s = setup({ canCharge: false });
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow("You don't have permission to charge cards.");
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow("You don't have permission to charge cards.");
     expect(s.create).not.toHaveBeenCalled();
   });
 
   it('cents rounding: 1234.56 → 123456', async () => {
     const s = setup({ lookup: found({ dueAmount: 1234.56 }) });
-    await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    await chargeInvoice(s.deps, { ...ARGS, expectedAmountCents: 123456 });
     expect(s.create.mock.calls[0][0]).toMatchObject({ amount: 123456 });
   });
 
   it('creates the PaymentIntent off_session + confirm, with idempotency key = card_payments.id and receipt_email', async () => {
     const s = setup();
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     const [params, options] = s.create.mock.calls[0];
     expect(params).toEqual({
       amount: 10000,
@@ -217,7 +236,7 @@ describe('chargeInvoice', () => {
 
   it('inserts the full processing row first', async () => {
     const s = setup();
-    await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    await chargeInvoice(s.deps, ARGS);
     const insert = s.db.writes.find(([t, op]) => t === 'card_payments' && op === 'insert')?.[2];
     expect(insert).toEqual({
       organization_id: 'org-1', stripe_connection_id: 'sc-1', bc_customer_number: 'C1', sales_order_id: 'so-1',
@@ -229,7 +248,7 @@ describe('chargeInvoice', () => {
 
   it('success → succeeded, then Bill.com recorded, in that order', async () => {
     const s = setup();
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(s.log).toEqual(['db:insert:processing', 'stripe', 'db:update:succeeded', 'billcom', 'db:update:recorded']);
     expect(mocks.record.mock.calls[0][1]).toEqual({
       billcomInvoiceId: '00eBILL',
@@ -243,12 +262,15 @@ describe('chargeInvoice', () => {
       cardBrand: 'visa', cardLast4: '4242', invoiceNumber: 'INV-100412', bcInvoiceId: INV,
     });
     expect(s.db.tables.card_payments[0].billcom_payment_id).toBe('0pay1');
+    // The Bill.com attempt starts with the succeeded write.
+    const succeededWrite = s.db.writes.find(([t, op, p]) => t === 'card_payments' && op === 'update' && (p as Row).status === 'succeeded')?.[2];
+    expect(succeededWrite).toMatchObject({ billcom_attempt_at: NOW.toISOString() });
   });
 
   it('Bill.com failure → succeeded + billcom failed, error stored', async () => {
     const s = setup();
     mocks.record.mockRejectedValue(new Error('BDC_1234: not allowed'));
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(row).toMatchObject({ status: 'succeeded', billcomState: 'failed', billcomError: 'BDC_1234: not allowed' });
   });
 
@@ -258,7 +280,7 @@ describe('chargeInvoice', () => {
         throw stripeError('StripeCardError', 'Your card has insufficient funds.', 'card_declined', { id: 'pi_dec' });
       },
     });
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(row).toMatchObject({ status: 'failed', failureMessage: 'Your card has insufficient funds.', stripePaymentIntentId: 'pi_dec', billcomState: 'not_started' });
     expect(mocks.record).not.toHaveBeenCalled();
   });
@@ -269,7 +291,7 @@ describe('chargeInvoice', () => {
         throw stripeError('StripeCardError', 'This payment requires authentication.', 'authentication_required');
       },
     });
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(AUTH_REQUIRED_MESSAGE).toBe('The bank needs the customer to approve this charge — send a new setup link.');
     expect(row).toMatchObject({ status: 'failed', failureMessage: AUTH_REQUIRED_MESSAGE });
     expect(mocks.record).not.toHaveBeenCalled();
@@ -281,7 +303,7 @@ describe('chargeInvoice', () => {
         throw stripeError('StripeConnectionError', 'socket hang up');
       },
     });
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(row.status).toBe('processing');
     expect(mocks.record).not.toHaveBeenCalled();
     expect(s.log).toEqual(['db:insert:processing', 'stripe']);
@@ -295,7 +317,7 @@ describe('chargeInvoice', () => {
           throw stripeError(type, `${type} message`);
         },
       });
-      expect(await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).toMatchObject({ status: 'failed', failureMessage: `${type} message` });
+      expect(await chargeInvoice(s.deps, ARGS)).toMatchObject({ status: 'failed', failureMessage: `${type} message` });
       expect(mocks.record).not.toHaveBeenCalled();
     },
   );
@@ -306,7 +328,7 @@ describe('chargeInvoice', () => {
         throw stripeError(type as string, 'boom');
       },
     });
-    expect((await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).status).toBe('processing');
+    expect((await chargeInvoice(s.deps, ARGS)).status).toBe('processing');
   });
 
   it('Bill.com recorded but saving that fails → not marked Bill.com failed; the error names the Bill.com payment id', async () => {
@@ -317,7 +339,7 @@ describe('chargeInvoice', () => {
       base(table, op, payload);
       return table === 'card_payments' && op === 'update' && (payload as Row).billcom_state === 'recorded' ? 'db down' : null;
     };
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow(/0pay1/);
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow(/0pay1.*Do not press Retry: after 10 minutes use Check status, then "I marked it paid in Bill.com"/);
     const stored = s.db.tables.card_payments[0];
     expect(stored.status).toBe('succeeded');
     expect(stored.billcom_state).toBe('not_started');
@@ -327,7 +349,7 @@ describe('chargeInvoice', () => {
   it('second concurrent charge is rejected by the unique index (23505), no Stripe call', async () => {
     const s = setup();
     s.db.failOn = (table, op) => (table === 'card_payments' && op === 'insert' ? { message: 'duplicate key', code: '23505' } : null);
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow(DUPLICATE_CHARGE_MESSAGE);
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow(DUPLICATE_CHARGE_MESSAGE);
     expect(DUPLICATE_CHARGE_MESSAGE).toBe('A charge for this invoice is already in progress or needs attention.');
     expect(s.create).not.toHaveBeenCalled();
   });
@@ -335,41 +357,41 @@ describe('chargeInvoice', () => {
   it('any other insert failure never calls Stripe', async () => {
     const s = setup();
     s.db.failOn = (table, op) => (table === 'card_payments' && op === 'insert' ? 'db down' : null);
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow('db down');
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow('db down');
     expect(s.create).not.toHaveBeenCalled();
   });
 
   it('refuses a card from a non-default connection', async () => {
     const s = setup({ stripeConnectionId: 'sc-2' });
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow('No card on file — send a setup link from the customer page.');
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow('No card on file — send a setup link from the customer page.');
     expect(s.create).not.toHaveBeenCalled();
   });
 
   it('refuses when Stripe is off', async () => {
     const s = setup({ stripeConnectionId: null });
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow("Stripe isn't set up.");
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow("Stripe isn't set up.");
   });
 
   it('refuses a removed card', async () => {
     const s = setup();
     s.db.tables.customer_cards[0].removed_at = '2026-11-10T00:00:00Z';
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' })).rejects.toThrow('No card on file');
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow('No card on file');
   });
 
   it('refuses an unknown invoice', async () => {
     const s = setup();
-    await expect(chargeInvoice(s.deps, { bcInvoiceId: 'nope', userId: 'u1' })).rejects.toThrow('Invoice not found.');
+    await expect(chargeInvoice(s.deps, { ...ARGS, bcInvoiceId: 'nope' })).rejects.toThrow('Invoice not found.');
   });
 
   it('a requires_payment_method result is failed with Stripe’s last error', async () => {
     const s = setup({ create: async () => ({ id: 'pi_2', status: 'requires_payment_method', last_payment_error: { message: 'Card expired.' } }) });
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(row).toMatchObject({ status: 'failed', failureMessage: 'Card expired.', stripePaymentIntentId: 'pi_2' });
   });
 
   it('a Stripe "processing" result stays processing with the intent id', async () => {
     const s = setup({ create: async () => ({ id: 'pi_3', status: 'processing' }) });
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(row).toMatchObject({ status: 'processing', stripePaymentIntentId: 'pi_3' });
     expect(mocks.record).not.toHaveBeenCalled();
   });
@@ -454,6 +476,48 @@ describe('checkChargeStatus', () => {
     expect(mocks.record).not.toHaveBeenCalled();
   });
 
+  it('the interrupted check measures from the Bill.com attempt: charged 20 min ago but attempt 2 min ago is NOT interrupted', async () => {
+    const s = setup({
+      tables: {
+        card_payments: [
+          paymentRow({ status: 'succeeded', stripe_payment_intent_id: 'pi_1', charged_at: '2026-11-17T19:40:00.000Z', billcom_attempt_at: '2026-11-17T19:58:00.000Z' }),
+        ],
+      },
+    });
+    expect(await checkChargeStatus(s.deps, 'cp-1')).toMatchObject({ billcomState: 'not_started', billcomStuck: false });
+    expect(s.db.tables.card_payments[0].billcom_state).toBe('not_started');
+    expect(s.db.writes).toHaveLength(0);
+  });
+
+  it('an attempt over 10 minutes ago is interrupted, and the message warns to check Bill.com before Retry', async () => {
+    const s = setup({
+      tables: {
+        card_payments: [
+          paymentRow({ status: 'succeeded', stripe_payment_intent_id: 'pi_1', charged_at: '2026-11-17T19:40:00.000Z', billcom_attempt_at: '2026-11-17T19:49:00.000Z' }),
+        ],
+      },
+    });
+    const row = await checkChargeStatus(s.deps, 'cp-1');
+    expect(row.billcomState).toBe('failed');
+    expect(row.billcomError).toContain('may already be in Bill.com');
+    expect(row.billcomError).toContain('before pressing Retry');
+  });
+
+  it('flags a stuck Bill.com record on the row (billcomStuck) so the panel can offer Check status', async () => {
+    const { deps } = setup({
+      tables: {
+        card_payments: [
+          paymentRow({ id: 'cp-1', status: 'succeeded', billcom_attempt_at: '2026-11-17T19:49:00.000Z' }),
+          paymentRow({ id: 'cp-2', status: 'succeeded', billcom_attempt_at: '2026-11-17T19:58:00.000Z', billcom_invoice_id: 'x2' }),
+          paymentRow({ id: 'cp-3', status: 'succeeded', billcom_state: 'recorded', billcom_attempt_at: '2026-11-17T19:00:00.000Z', billcom_invoice_id: 'x3' }),
+        ],
+      },
+    });
+    const { payments } = await invoiceChargeView(deps, INV);
+    const stuck = Object.fromEntries(payments.map((p) => [p.id, p.billcomStuck]));
+    expect(stuck).toEqual({ 'cp-1': true, 'cp-2': false, 'cp-3': false });
+  });
+
   it('is scoped to the org', async () => {
     const s = setup({ tables: { card_payments: [paymentRow({ organization_id: 'org-2' })] } });
     await expect(checkChargeStatus(s.deps, 'cp-1')).rejects.toThrow('Card payment not found.');
@@ -478,6 +542,34 @@ describe('retryBillcomRecord', () => {
     const s = setup({ tables: { card_payments: [paymentRow(over)] } });
     await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow("This payment isn't waiting for a Bill.com retry.");
     expect(mocks.record).not.toHaveBeenCalled();
+  });
+
+  it('the retry claim sets billcom_attempt_at (so the interrupted check measures from the retry)', async () => {
+    const s = setup({
+      tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed', billcom_attempt_at: '2026-11-17T18:00:00.000Z' })] },
+    });
+    await retryBillcomRecord(s.deps, 'cp-1');
+    const claim = s.db.writes.find(([t, op, p]) => t === 'card_payments' && op === 'update' && (p as Row).billcom_state === 'not_started')?.[2];
+    expect(claim).toEqual({ billcom_state: 'not_started', billcom_error: null, billcom_attempt_at: NOW.toISOString() });
+    expect(s.db.tables.card_payments[0].billcom_attempt_at).toBe(NOW.toISOString());
+  });
+
+  it('Bill.com recorded but the row changed meanwhile (marked interrupted): logs loudly, notes the payment, keeps billcom failed, surfaces "I marked it paid"', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    errors.mockClear();
+    const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', stripe_payment_intent_id: 'pi_1', billcom_state: 'failed' })] } });
+    mocks.record.mockImplementation(async () => {
+      // Check status marked it interrupted while Bill.com was recording.
+      s.db.tables.card_payments[0].billcom_state = 'failed';
+      return { paymentId: '0pay9' };
+    });
+    await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow(/Recorded in Bill.com \(payment 0pay9\).*I marked it paid in Bill.com/);
+    const stored = s.db.tables.card_payments[0];
+    expect(stored).toMatchObject({ billcom_state: 'failed', billcom_payment_id: '0pay9' });
+    expect(stored.billcom_error).toContain('0pay9');
+    expect(stored.billcom_error).toContain('Do not press Retry');
+    expect(errors.mock.calls.map((c) => String(c[0])).join('\n')).toContain('BILL.COM RECORDED BUT NOT SAVED');
+    errors.mockRestore();
   });
 
   it('a second failure stays failed with the new error', async () => {
@@ -530,12 +622,14 @@ describe('markNotCharged', () => {
     expect(s.db.tables.card_payments[0].status).toBe('processing');
   });
 
-  it('at 10m, with nothing in Stripe → failed with the message, who and when', async () => {
+  it('at 10m, with nothing in Stripe → failed with the message; who and when in their own columns', async () => {
     const s = setup({ tables: { card_payments: [paymentRow(OLD)] } });
     const row = await markNotCharged(s.deps, 'cp-1', 'u2');
     expect(MARKED_NOT_CHARGED_MESSAGE).toBe('Marked as not charged by staff after checking Stripe.');
     expect(row.status).toBe('failed');
-    expect(row.failureMessage).toBe(`${MARKED_NOT_CHARGED_MESSAGE} (by u2 at ${NOW.toISOString()})`);
+    expect(row.failureMessage).toBe(MARKED_NOT_CHARGED_MESSAGE);
+    expect(row).toMatchObject({ notChargedBy: 'u2', notChargedAt: NOW.toISOString() });
+    expect(s.db.tables.card_payments[0]).toMatchObject({ not_charged_by: 'u2', not_charged_at: NOW.toISOString() });
     expect(s.list).toHaveBeenCalledTimes(1);
   });
 
@@ -587,7 +681,7 @@ describe('a charge that succeeds after the row was marked failed', () => {
         return { id: 'pi_late', status: 'succeeded' };
       },
     });
-    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    const row = await chargeInvoice(s.deps, ARGS);
     expect(row.status).toBe('failed');
     expect(row.failureMessage).toBe(
       'Marked as not charged by staff after checking Stripe. Stripe later reported this charge succeeded (pi_late) — check Stripe and refund or reconcile.',
@@ -637,6 +731,17 @@ describe('invoiceChargeView names', () => {
     });
     const { payments } = await invoiceChargeView(deps, INV);
     expect(payments[0]).toMatchObject({ chargedByName: 'Jane Doe', recordedManuallyByName: 'sam@x.com' });
+  });
+
+  it('resolves who marked it not charged to a display name', async () => {
+    const { deps } = setup({
+      tables: {
+        card_payments: [paymentRow({ status: 'failed', not_charged_by: 'u2', not_charged_at: NOW.toISOString() })],
+        users: [{ id: 'u2', organization_id: 'org-1', display_name: 'Sam Lee', email: 'sam@x.com' }],
+      },
+    });
+    const { payments } = await invoiceChargeView(deps, INV);
+    expect(payments[0]).toMatchObject({ notChargedBy: 'u2', notChargedByName: 'Sam Lee', notChargedAt: NOW.toISOString() });
   });
 
   it('leaves names off when the user is unknown', async () => {

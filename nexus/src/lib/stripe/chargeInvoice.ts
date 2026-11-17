@@ -43,7 +43,10 @@ const REASONS = {
 } as const;
 
 export const MARKED_NOT_CHARGED_MESSAGE = 'Marked as not charged by staff after checking Stripe.';
-const BILLCOM_INTERRUPTED = 'Recording in Bill.com was interrupted. Retry, or mark it paid if it is already there.';
+export const CHARGE_CHANGED_MESSAGE =
+  'The amount due or card on file changed since you opened this — refresh and review before charging.';
+const BILLCOM_INTERRUPTED =
+  'Recording in Bill.com was interrupted, so the payment may already be in Bill.com. Check Bill.com before pressing Retry; if it is there, use "I marked it paid in Bill.com".';
 const BILLCOM_OFF = "Bill.com isn't connected.";
 const NOT_RETRYABLE = "This payment isn't waiting for a Bill.com retry.";
 const NOT_MANUAL = 'Only a charged payment that Bill.com failed to record can be marked paid.';
@@ -205,9 +208,19 @@ async function toRow(deps: ChargeDeps, p: CardPayment): Promise<CardPaymentRow> 
     chargedAt: p.charged_at,
     chargedBy: p.charged_by ?? null,
     recordedManuallyBy: p.recorded_manually_by ?? null,
+    notChargedBy: p.not_charged_by ?? null,
+    notChargedAt: p.not_charged_at ?? null,
     cardBrand: card.brand,
     cardLast4: card.last4,
+    billcomStuck: isBillcomStuck(deps, p),
   };
+}
+
+/** Charged, but the current Bill.com attempt started over 10 minutes ago and is still `not_started`. */
+function isBillcomStuck(deps: ChargeDeps, p: CardPayment): boolean {
+  if (p.status !== 'succeeded' || p.billcom_state !== 'not_started') return false;
+  const attemptAt = p.billcom_attempt_at ?? p.charged_at;
+  return deps.now().getTime() - new Date(attemptAt).getTime() > BILLCOM_STUCK_AFTER_MS;
 }
 
 const rowById = async (deps: ChargeDeps, id: string) => toRow(deps, await readPayment(deps, id));
@@ -270,8 +283,10 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
     });
     return;
   }
+  const recordedIn = `Recorded in Bill.com (payment ${paymentId ?? 'id not returned'})`;
+  let saved: boolean;
   try {
-    await transition(deps, p.id, notStarted, {
+    saved = await transition(deps, p.id, notStarted, {
       billcom_state: 'recorded',
       billcom_payment_id: paymentId,
       billcom_error: null,
@@ -279,17 +294,38 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
     });
   } catch (e) {
     // Bill.com HAS the payment: never mark it failed (a retry would record it twice).
-    const msg = `Recorded in Bill.com (payment ${paymentId ?? 'id not returned'}) but Nexus could not save that. Use "I marked it paid in Bill.com". ${e instanceof Error ? e.message : String(e)}`;
+    // The row stays `not_started`; after 10 minutes the panel offers Check status,
+    // which moves it to failed, where "I marked it paid in Bill.com" is shown.
+    const msg = `${recordedIn} but Nexus could not save that. Do not press Retry: after 10 minutes use Check status, then "I marked it paid in Bill.com". ${e instanceof Error ? e.message : String(e)}`;
     console.error(`[chargeInvoice] card payment ${p.id}: ${msg}`);
     throw new Error(msg);
   }
+  if (saved) return;
+
+  // The row left `not_started` while Bill.com was recording (e.g. Check status
+  // marked it interrupted). Bill.com HAS the payment: say so on the row without
+  // changing its state, so staff use "I marked it paid" instead of Retry.
+  const msg = `${recordedIn}, but this payment had already changed in Nexus, so that was not saved. Do not press Retry: use "I marked it paid in Bill.com".`;
+  console.error(`[chargeInvoice] BILL.COM RECORDED BUT NOT SAVED: card payment ${p.id}, Bill.com payment ${paymentId ?? 'unknown'}. ${msg}`);
+  try {
+    await transition(deps, p.id, { status: 'succeeded', billcomStates: ['failed'] }, { billcom_payment_id: paymentId, billcom_error: msg });
+  } catch (e) {
+    console.error(`[chargeInvoice] card payment ${p.id}: could not note the Bill.com payment on the row:`, e);
+  }
+  throw new Error(msg);
 }
 
 /** processing → succeeded, then Bill.com. Only the caller that wins the transition records. */
 async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
   let won: boolean;
   try {
-    won = await transition(deps, p.id, { status: 'processing' }, { status: 'succeeded', stripe_payment_intent_id: intentId, failure_message: null });
+    // The Bill.com step starts right after this, so its attempt time is set with it.
+    won = await transition(deps, p.id, { status: 'processing' }, {
+      status: 'succeeded',
+      stripe_payment_intent_id: intentId,
+      failure_message: null,
+      billcom_attempt_at: deps.now().toISOString(),
+    });
   } catch (e) {
     throw new Error(
       `The card was charged in Stripe (${intentId}) but Nexus could not save it. Use Check status. ${e instanceof Error ? e.message : String(e)}`,
@@ -383,7 +419,9 @@ export async function invoiceChargeView(
 
   // Resolve who charged / recorded to display names. Names are a nicety: a failed
   // read leaves them off (the UI falls back to "staff") rather than hiding the payments.
-  const ids = [...new Set(rows.flatMap((p) => [p.charged_by, p.recorded_manually_by]).filter((x): x is string => Boolean(x)))];
+  const ids = [
+    ...new Set(rows.flatMap((p) => [p.charged_by, p.recorded_manually_by, p.not_charged_by]).filter((x): x is string => Boolean(x))),
+  ];
   if (ids.length > 0) {
     const { data: users, error: usersError } = await deps.supabase
       .from('users')
@@ -402,17 +440,30 @@ export async function invoiceChargeView(
       for (const p of payments) {
         const by = names.get(p.chargedBy ?? '');
         const rec = names.get(p.recordedManuallyBy ?? '');
+        const notCharged = names.get(p.notChargedBy ?? '');
         if (by) p.chargedByName = by;
         if (rec) p.recordedManuallyByName = rec;
+        if (notCharged) p.notChargedByName = notCharged;
       }
     }
   }
   return { eligibility, card, payments };
 }
 
-export async function chargeInvoice(deps: ChargeDeps, a: { bcInvoiceId: string; userId: string }): Promise<CardPaymentRow> {
+export async function chargeInvoice(
+  deps: ChargeDeps,
+  a: {
+    bcInvoiceId: string;
+    userId: string;
+    /** The amount (in cents) and card staff saw in the confirm dialog. */
+    expectedAmountCents: number;
+    cardId: string;
+  },
+): Promise<CardPaymentRow> {
   const { invoice, card, billcom, eligibility } = await assess(deps, a.bcInvoiceId);
   if (!eligibility.ok) throw new Error(eligibility.reason);
+  // Never charge something other than what staff confirmed.
+  if (toCents(eligibility.amount) !== a.expectedAmountCents || card?.id !== a.cardId) throw new Error(CHARGE_CHANGED_MESSAGE);
   // Narrowed by eligibility; restated for the type checker.
   if (!card || billcom.kind !== 'found' || !billcom.billcomCustomerId || !deps.stripeConnectionId || !invoice.customerNumber) {
     throw new Error(REASONS.notInBillcom);
@@ -544,9 +595,9 @@ async function findIntent(deps: ChargeDeps, p: CardPayment): Promise<Stripe.Paym
  */
 export async function checkChargeStatus(deps: ChargeDeps, cardPaymentId: string): Promise<CardPaymentRow> {
   const p = await readPayment(deps, cardPaymentId);
-  const age = deps.now().getTime() - new Date(p.charged_at).getTime();
 
-  if (p.status === 'succeeded' && p.billcom_state === 'not_started' && age > BILLCOM_STUCK_AFTER_MS) {
+  // Measured from the current Bill.com attempt, so a fresh Retry is never cut off.
+  if (isBillcomStuck(deps, p)) {
     await transition(deps, p.id, { status: 'succeeded', billcomStates: ['not_started'] }, {
       billcom_state: 'failed',
       billcom_error: BILLCOM_INTERRUPTED,
@@ -577,10 +628,11 @@ export async function markNotCharged(deps: ChargeDeps, cardPaymentId: string, us
     if (settled.status === 'failed') return settled;
     throw new Error(INTENT_EXISTS);
   }
-  // No column fits "who marked it not charged", so who and when go in the message.
   const done = await transition(deps, p.id, { status: 'processing' }, {
     status: 'failed',
-    failure_message: `${MARKED_NOT_CHARGED_MESSAGE} (by ${userId} at ${deps.now().toISOString()})`,
+    failure_message: MARKED_NOT_CHARGED_MESSAGE,
+    not_charged_by: userId,
+    not_charged_at: deps.now().toISOString(),
   });
   if (!done) throw new Error(NOT_PROCESSING);
   return rowById(deps, p.id);
@@ -592,7 +644,11 @@ export async function retryBillcomRecord(deps: ChargeDeps, cardPaymentId: string
   const client = await deps.billcom().catch(() => null);
   if (!client) throw new Error(BILLCOM_OFF);
   // Claim it (failed → not_started) so two clicks cannot both record it.
-  const claimed = await transition(deps, p.id, { status: 'succeeded', billcomStates: ['failed'] }, { billcom_state: 'not_started', billcom_error: null });
+  const claimed = await transition(deps, p.id, { status: 'succeeded', billcomStates: ['failed'] }, {
+    billcom_state: 'not_started',
+    billcom_error: null,
+    billcom_attempt_at: deps.now().toISOString(),
+  });
   if (!claimed) throw new Error(NOT_RETRYABLE);
   await recordInBillcom(deps, { ...p, billcom_state: 'not_started' }, p.stripe_payment_intent_id ?? '');
   return rowById(deps, p.id);
