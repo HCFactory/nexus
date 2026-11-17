@@ -378,7 +378,35 @@ export async function invoiceChargeView(
     .eq('bc_invoice_id', bcInvoiceId)
     .order('charged_at', { ascending: false });
   if (error) throw new Error(`Could not read the card payments: ${error.message}`);
-  const payments = await Promise.all(((data ?? []) as CardPayment[]).map((p) => toRow(deps, p)));
+  const rows = (data ?? []) as CardPayment[];
+  const payments = await Promise.all(rows.map((p) => toRow(deps, p)));
+
+  // Resolve who charged / recorded to display names. Names are a nicety: a failed
+  // read leaves them off (the UI falls back to "staff") rather than hiding the payments.
+  const ids = [...new Set(rows.flatMap((p) => [p.charged_by, p.recorded_manually_by]).filter((x): x is string => Boolean(x)))];
+  if (ids.length > 0) {
+    const { data: users, error: usersError } = await deps.supabase
+      .from('users')
+      .select('id, display_name, email')
+      .eq('organization_id', deps.orgId)
+      .in('id', ids);
+    if (usersError) {
+      console.error('[chargeInvoice] could not read user names:', usersError.message);
+    } else {
+      const names = new Map(
+        ((users ?? []) as { id: string; display_name: string | null; email: string | null }[]).map((u) => [
+          u.id,
+          u.display_name?.trim() || u.email || '',
+        ]),
+      );
+      for (const p of payments) {
+        const by = names.get(p.chargedBy ?? '');
+        const rec = names.get(p.recordedManuallyBy ?? '');
+        if (by) p.chargedByName = by;
+        if (rec) p.recordedManuallyByName = rec;
+      }
+    }
+  }
   return { eligibility, card, payments };
 }
 

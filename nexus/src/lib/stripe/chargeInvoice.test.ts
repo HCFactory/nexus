@@ -19,6 +19,7 @@ import {
   markNotCharged,
   markRecordedManually,
   retryBillcomRecord,
+  invoiceChargeView,
   type ChargeDeps,
 } from './chargeInvoice';
 
@@ -619,5 +620,28 @@ describe('a charge that succeeds after the row was marked failed', () => {
     expect(errors).not.toHaveBeenCalled();
     expect(mocks.record).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+});
+
+describe('invoiceChargeView names', () => {
+  it('resolves charged-by and recorded-by user ids to display names (org-scoped)', async () => {
+    const { deps } = setup({
+      tables: {
+        card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'recorded_manually', charged_by: 'u1', recorded_manually_by: 'u2' })],
+        users: [
+          { id: 'u1', organization_id: 'org-1', display_name: 'Jane Doe', email: 'j@x.com' },
+          { id: 'u2', organization_id: 'org-1', display_name: '', email: 'sam@x.com' },
+          { id: 'u3', organization_id: 'org-2', display_name: 'Other Org', email: 'o@x.com' },
+        ],
+      },
+    });
+    const { payments } = await invoiceChargeView(deps, INV);
+    expect(payments[0]).toMatchObject({ chargedByName: 'Jane Doe', recordedManuallyByName: 'sam@x.com' });
+  });
+
+  it('leaves names off when the user is unknown', async () => {
+    const { deps } = setup({ tables: { card_payments: [paymentRow({ charged_by: 'ghost' })], users: [] } });
+    const { payments } = await invoiceChargeView(deps, INV);
+    expect(payments[0].chargedByName).toBeUndefined();
   });
 });

@@ -78,6 +78,16 @@ describe('CardChargePanel', () => {
     expect(screen.getByText('Recorded in Bill.com')).toBeTruthy();
   });
 
+  it('shows who charged by name and who marked it paid manually', () => {
+    ui({
+      payments: [
+        payment({ chargedByName: 'Jane Doe', billcomState: 'recorded_manually', recordedManuallyBy: 'u2', recordedManuallyByName: 'Sam Lee' }),
+      ],
+    });
+    expect(screen.getByText('By Jane Doe')).toBeTruthy();
+    expect(screen.getByText('Marked paid in Bill.com by Sam Lee')).toBeTruthy();
+  });
+
   it('billcom failed: shows the state, hint, Retry, and a confirmed manual mark', async () => {
     mocks.retry.mockResolvedValue(payment());
     mocks.manual.mockResolvedValue(payment());

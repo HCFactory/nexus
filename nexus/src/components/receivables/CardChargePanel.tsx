@@ -137,7 +137,7 @@ export function CardChargePanel({ bcInvoiceId, invoiceNumber, eligibility, card,
                 <span className="text-foreground-muted">{dateText(p.chargedAt)}</span>
                 <span className="font-medium text-foreground">{formatMoney(p.amount, p.currency.toUpperCase())}</span>
                 <span className="text-foreground">{cardText(p.cardBrand, p.cardLast4)}</span>
-                <span className="text-foreground-muted">{p.chargedBy ? 'By staff' : 'By the system'}</span>
+                <span className="text-foreground-muted">{p.chargedBy ? `By ${p.chargedByName ?? 'staff'}` : 'By the system'}</span>
               </div>
               <div className="grid gap-1 sm:grid-cols-2">
                 <div>
@@ -147,6 +147,9 @@ export function CardChargePanel({ bcInvoiceId, invoiceNumber, eligibility, card,
                 <div>
                   <span className="text-[11px] uppercase tracking-wide text-foreground-muted">Bill.com </span>
                   <span className="text-foreground">{billcomText(p)}</span>
+                  {p.billcomState === 'recorded_manually' && p.recordedManuallyBy && (
+                    <div className="text-foreground-muted">Marked paid in Bill.com by {p.recordedManuallyByName ?? 'staff'}</div>
+                  )}
                 </div>
               </div>
 

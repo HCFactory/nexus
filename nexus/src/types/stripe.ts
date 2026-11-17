@@ -172,6 +172,9 @@ export interface CardPaymentRow {
   chargedAt: string;
   chargedBy: string | null;
   recordedManuallyBy: string | null;
+  /** Display names, resolved by getInvoiceChargeView; absent when unknown. */
+  chargedByName?: string;
+  recordedManuallyByName?: string;
   cardBrand: string | null;
   cardLast4: string | null;
   /** Set by Check status when Stripe has no payment for a `processing` row. */
