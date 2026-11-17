@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { BillcomClient } from './client';
 import { BillcomApiError } from './errors';
-import { billcomInvoiceMismatch, BillcomDuplicateInvoiceError, createBillcomInvoice, findBillcomInvoice } from './invoicePush';
+import { billcomInvoiceMismatch, BillcomDuplicateInvoiceError, createBillcomInvoice, findBillcomInvoice, findOrCreateBillcomInvoice, replaceBillcomInvoice } from './invoicePush';
 
 function fakeClient(handler: (path: string, init?: RequestInit) => unknown) {
   const request = vi.fn(async (path: string, init?: RequestInit) => handler(path, init));
@@ -92,5 +92,52 @@ describe('createBillcomInvoice', () => {
       throw err;
     });
     await expect(createBillcomInvoice(client, {})).rejects.toBe(err);
+  });
+});
+
+describe('replaceBillcomInvoice', () => {
+  it('PUTs the full invoice (without processingOptions) to /v3/invoices/<id> and returns what Bill.com saved', async () => {
+    const { client, request } = fakeClient(() => ({ id: '00eX', totalAmount: 8.5, invoiceLineItems: [{}, {}] }));
+    const payload = { customer: { id: '0cu1' }, invoiceNumber: 'W-1', processingOptions: { sendEmail: false }, invoiceLineItems: [] };
+    expect(await replaceBillcomInvoice(client, '00eX', payload)).toEqual({ id: '00eX', totalAmount: 8.5, lineCount: 2 });
+    const [path, init] = request.mock.calls[0];
+    expect(path).toBe('/v3/invoices/00eX');
+    expect(init?.method).toBe('PUT');
+    expect(JSON.parse(String(init?.body))).toEqual({ customer: { id: '0cu1' }, invoiceNumber: 'W-1', invoiceLineItems: [] });
+  });
+});
+
+describe('findOrCreateBillcomInvoice', () => {
+  const payload = { invoiceNumber: 'W-1' };
+  const dup = () =>
+    new BillcomApiError({ status: 422, statusText: 'x', code: 'BDC_1171', message: 'Duplicate invoice number', url: '/v3/invoices' });
+
+  it('returns a found invoice without creating', async () => {
+    const { client, request } = fakeClient(() => ({ results: [{ id: 'found', invoiceNumber: 'W-1', totalAmount: 1, invoiceLineItems: [{}] }] }));
+    expect(await findOrCreateBillcomInvoice(client, '0cu1', payload)).toEqual({ id: 'found', totalAmount: 1, lineCount: 1 });
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('creates when none is found', async () => {
+    const { client } = fakeClient((_p, init) => (init?.method === 'POST' ? { id: 'new', totalAmount: 2, invoiceLineItems: [] } : { results: [] }));
+    expect(await findOrCreateBillcomInvoice(client, '0cu1', payload)).toMatchObject({ id: 'new' });
+  });
+
+  it('a duplicate answer is resolved by finding again', async () => {
+    let lists = 0;
+    const { client } = fakeClient((_p, init) => {
+      if (init?.method === 'POST') throw dup();
+      lists++;
+      return { results: lists === 1 ? [] : [{ id: 'raced', invoiceNumber: 'W-1' }] };
+    });
+    expect(await findOrCreateBillcomInvoice(client, '0cu1', payload)).toMatchObject({ id: 'raced' });
+  });
+
+  it('a duplicate that still cannot be found is thrown', async () => {
+    const { client } = fakeClient((_p, init) => {
+      if (init?.method === 'POST') throw dup();
+      return { results: [] };
+    });
+    await expect(findOrCreateBillcomInvoice(client, '0cu1', payload)).rejects.toBeInstanceOf(BillcomDuplicateInvoiceError);
   });
 });

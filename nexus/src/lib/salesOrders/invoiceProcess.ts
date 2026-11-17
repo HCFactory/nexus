@@ -20,7 +20,7 @@
 import { INVOKE_ACTION_TIMEOUT_MS } from '@/lib/businessCentral/client'
 import type { BillcomClient } from '@/lib/billcom/client'
 import { buildBillcomInvoice } from '@/lib/billcom/invoicePayload'
-import { billcomInvoiceMismatch, BillcomDuplicateInvoiceError, createBillcomInvoice, findBillcomInvoice } from '@/lib/billcom/invoicePush'
+import { billcomInvoiceMismatch, findOrCreateBillcomInvoice } from '@/lib/billcom/invoicePush'
 import type { InvoiceState, SalesOrderRow } from '@/types/salesOrders'
 import {
   BcPostRefusedError,
@@ -274,16 +274,7 @@ async function billcomStep(deps: InvoiceDeps, order: SalesOrderRow): Promise<Inv
     const built = buildBillcomInvoice({ billcomCustomerId: block.customerId, invoiceNumber, posted: storedPosted(order), lines })
     if (!built.ok) return fail(deps, order.id, 'billcom_failed', built.error)
 
-    let invoice = await findBillcomInvoice(client, block.customerId, invoiceNumber)
-    if (!invoice) {
-      try {
-        invoice = await createBillcomInvoice(client, built.payload)
-      } catch (e) {
-        if (!(e instanceof BillcomDuplicateInvoiceError)) throw e
-        invoice = await findBillcomInvoice(client, block.customerId, invoiceNumber)
-        if (!invoice) return fail(deps, order.id, 'billcom_failed', e.message)
-      }
-    }
+    const invoice = await findOrCreateBillcomInvoice(client, block.customerId, built.payload)
     // Only an invoice with the expected total and number of lines counts as done.
     const mismatch = billcomInvoiceMismatch(invoice, built.payload)
     if (mismatch) return fail(deps, order.id, 'billcom_failed', mismatch)

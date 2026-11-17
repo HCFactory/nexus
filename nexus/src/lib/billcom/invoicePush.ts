@@ -93,3 +93,44 @@ export async function createBillcomInvoice(
     throw err;
   }
 }
+
+/**
+ * Replaces the invoice's content (lines, total) keeping its id. Bill.com's PUT
+ * needs the full invoice; lines left out are removed (measured, sandbox).
+ */
+export async function replaceBillcomInvoice(
+  client: BillcomClient,
+  id: string,
+  payload: Record<string, unknown>,
+): Promise<BillcomInvoiceSummary> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { processingOptions, ...body } = payload;
+  const res = await client.request<RawInvoice>(`/v3/invoices/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  return summaryOf(res);
+}
+
+/**
+ * The customer's invoice with the payload's number, created when there is
+ * none. A "duplicate number" answer is resolved by finding it again; if it
+ * still can't be found, the duplicate error is thrown.
+ */
+export async function findOrCreateBillcomInvoice(
+  client: BillcomClient,
+  customerId: string,
+  payload: Record<string, unknown>,
+): Promise<BillcomInvoiceSummary> {
+  const invoiceNumber = String(payload.invoiceNumber);
+  const found = await findBillcomInvoice(client, customerId, invoiceNumber);
+  if (found) return found;
+  try {
+    return await createBillcomInvoice(client, payload);
+  } catch (e) {
+    if (!(e instanceof BillcomDuplicateInvoiceError)) throw e;
+    const raced = await findBillcomInvoice(client, customerId, invoiceNumber);
+    if (!raced) throw e;
+    return raced;
+  }
+}
