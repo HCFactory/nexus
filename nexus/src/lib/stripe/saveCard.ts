@@ -68,6 +68,12 @@ function idOf(value: string | { id: string } | null | undefined): string | null 
  * Records the card saved by a completed setup-mode Checkout Session.
  * Returns null (and writes nothing) for sessions that are not complete setup
  * sessions of this organization.
+ *
+ * Also returns null, without touching the Stripe default or the link, when
+ * this payment method is not the customer's active card afterwards: a late or
+ * replayed event for a card that has since been replaced (its row is removed),
+ * or a lost race where another tab saved a different card at the same moment.
+ * The card that is active in Nexus stays the Stripe default.
  */
 export async function saveCardFromCheckoutSession(
   scope: StripeScope,
@@ -100,11 +106,13 @@ export async function saveCardFromCheckoutSession(
 
   const { data: existing, error: existingError } = await supabase
     .from('customer_cards')
-    .select('id')
+    .select('id, removed_at')
     .eq('stripe_connection_id', connectionId)
     .eq('stripe_payment_method_id', paymentMethod.id)
     .maybeSingle();
   if (existingError) throw new Error(`Could not read saved cards: ${existingError.message}`);
+  // Replaced since (late or replayed event): never make a retired card the default.
+  if ((existing as { removed_at: string | null } | null)?.removed_at) return null;
 
   if (!existing) {
     // Retire the previous active card first: the one-active-card index
@@ -149,6 +157,20 @@ export async function saveCardFromCheckoutSession(
     if (insertError && insertError.code !== UNIQUE_VIOLATION) {
       throw new Error(`Could not save the card: ${insertError.message}`);
     }
+  }
+
+  // Only the card Nexus holds as active may become the Stripe default. A 23505
+  // above can come from the one-active index when another tab won the race.
+  const { data: active, error: activeError } = await supabase
+    .from('customer_cards')
+    .select('stripe_payment_method_id')
+    .eq('stripe_connection_id', connectionId)
+    .eq('bc_customer_number', bcCustomerNumber)
+    .is('removed_at', null)
+    .maybeSingle();
+  if (activeError) throw new Error(`Could not read saved cards: ${activeError.message}`);
+  if ((active as { stripe_payment_method_id: string } | null)?.stripe_payment_method_id !== paymentMethod.id) {
+    return null;
   }
 
   // Both steps are idempotent, so a retry after a partial failure finishes the job.

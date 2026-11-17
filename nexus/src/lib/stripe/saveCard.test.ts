@@ -127,14 +127,64 @@ describe('saveCardFromCheckoutSession', () => {
     expect(ops).toEqual(['update', 'insert']);
   });
 
+  // A concurrent call inserts `winnerPm` just before ours, so our insert hits 23505.
+  function raceOnInsert(fake: ReturnType<typeof fakeSupabase>, winnerPm: string) {
+    fake.failOn = (table, op) => {
+      if (table !== 'customer_cards' || op !== 'insert') return null;
+      fake.tables.customer_cards.push({
+        id: 'winner',
+        organization_id: 'org-1',
+        stripe_connection_id: 'conn-1',
+        bc_customer_number: 'C100',
+        stripe_payment_method_id: winnerPm,
+        removed_at: null,
+      });
+      return { message: 'duplicate key', code: '23505' };
+    };
+  }
+
   it('treats a unique violation on insert as already saved', async () => {
     const { fake, stripe, scope } = setup();
-    fake.failOn = (table, op) =>
-      table === 'customer_cards' && op === 'insert' ? { message: 'duplicate key', code: '23505' } : null;
+    raceOnInsert(fake, 'pm_new');
     const result = await saveCardFromCheckoutSession(scope, 'cs_1');
     expect(result).toEqual({ brand: 'visa', last4: '4242' });
-    expect(stripe.customers.update).toHaveBeenCalled();
+    expect(stripe.customers.update).toHaveBeenCalledWith('cus_1', {
+      invoice_settings: { default_payment_method: 'pm_new' },
+    });
     expect(fake.tables.card_setup_links[0].completed_at).toBeTruthy();
+  });
+
+  it('losing a race to a different card does not make this card the default', async () => {
+    const { fake, stripe, scope } = setup();
+    raceOnInsert(fake, 'pm_other');
+    expect(await saveCardFromCheckoutSession(scope, 'cs_1')).toBeNull();
+    expect(stripe.customers.update).not.toHaveBeenCalled();
+    expect(fake.tables.card_setup_links[0].completed_at).toBeNull();
+  });
+
+  it('replaying an older session after replacement does not touch the default', async () => {
+    const { fake, stripe, scope } = setup([
+      {
+        id: 'a',
+        organization_id: 'org-1',
+        stripe_connection_id: 'conn-1',
+        bc_customer_number: 'C100',
+        stripe_payment_method_id: 'pm_new',
+        removed_at: '2026-11-16T00:00:00.000Z',
+      },
+      {
+        id: 'b',
+        organization_id: 'org-1',
+        stripe_connection_id: 'conn-1',
+        bc_customer_number: 'C100',
+        stripe_payment_method_id: 'pm_b',
+        removed_at: null,
+      },
+    ]);
+    expect(await saveCardFromCheckoutSession(scope, 'cs_1')).toBeNull();
+    expect(stripe.customers.update).not.toHaveBeenCalled();
+    expect(stripe.paymentMethods.detach).not.toHaveBeenCalled();
+    expect(fake.writes).toEqual([]);
   });
 
   it('ignores sessions from another organization', async () => {
