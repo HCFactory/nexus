@@ -26,6 +26,8 @@ interface Props {
   salesOrder: { id: string; bcOrderNumber: string | null } | null;
   /** The Bill.com panel (streamed in by the page). */
   billcom: ReactNode;
+  /** The card-charge panel (streamed in by the page). */
+  cardCharge?: ReactNode;
   /** The change log card (rendered by the page). */
   changes?: ReactNode;
   /** A finished change cancelled this invoice and posted this one instead. */
@@ -33,7 +35,7 @@ interface Props {
 }
 
 /** A posted BC invoice as Nexus holds it: header, Bill.com side, lines and totals. */
-export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, changes = null, replacedBy = null }: Props) {
+export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, cardCharge = null, changes = null, replacedBy = null }: Props) {
   const cur = invoice.currency_code;
   const title = invoice.external_document_number || invoice.bc_invoice_number || '—';
   return (
@@ -83,6 +85,8 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
       </section>
 
       {billcom && <section className={CARD}>{billcom}</section>}
+
+      {cardCharge && <section className={CARD}>{cardCharge}</section>}
 
       {changes}
 
