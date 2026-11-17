@@ -1,4 +1,4 @@
--- 066_stripe_saved_cards.sql
+-- 067_stripe_saved_cards.sql
 -- Stripe saved cards: per-organization Stripe connections (credentials in
 -- Vault), the Stripe customer mapping, the saved-card label, setup links and
 -- card payments.
@@ -305,18 +305,21 @@ begin
 end;
 $$;
 
--- Lock the wrappers down: only the service-role client may call them. NOT
--- optional: Postgres grants EXECUTE to PUBLIC on new functions, and Supabase
--- exposes public-schema functions as RPC endpoints, so without this any caller
--- could read, overwrite or erase any connection's Stripe credentials (see 046).
--- `create or replace function` does not preserve grants; any future migration
--- redefining these must restate this block.
+-- Lock the wrappers down: service role only. NOT optional: these are SECURITY
+-- DEFINER and take a connection id, so any caller who can execute them could
+-- read, overwrite or erase any connection's Stripe credentials.
+--
+-- Each role must be named. Supabase grants EXECUTE on new public functions
+-- directly to `authenticated`, and revoking from PUBLIC does not remove that
+-- direct grant (migration 059 fixed this gap for 046, whose comment had it
+-- backwards). `create or replace function` also keeps existing grants, so any
+-- future migration redefining these must restate this block.
 
-revoke all on function public.set_stripe_secret_key(uuid, text) from public, anon;
-revoke all on function public.get_stripe_secret_key(uuid) from public, anon;
-revoke all on function public.set_stripe_webhook_secret(uuid, text) from public, anon;
-revoke all on function public.get_stripe_webhook_secret(uuid) from public, anon;
-revoke all on function public.delete_stripe_secrets(uuid) from public, anon;
+revoke all on function public.set_stripe_secret_key(uuid, text) from public, anon, authenticated;
+revoke all on function public.get_stripe_secret_key(uuid) from public, anon, authenticated;
+revoke all on function public.set_stripe_webhook_secret(uuid, text) from public, anon, authenticated;
+revoke all on function public.get_stripe_webhook_secret(uuid) from public, anon, authenticated;
+revoke all on function public.delete_stripe_secrets(uuid) from public, anon, authenticated;
 
 grant execute on function public.set_stripe_secret_key(uuid, text) to service_role;
 grant execute on function public.get_stripe_secret_key(uuid) to service_role;
