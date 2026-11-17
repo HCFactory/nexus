@@ -15,6 +15,10 @@ import {
   type SalesOrderFormContext,
 } from '@/app/actions/salesOrders';
 import { refreshShipTos, saveShipToAction } from '@/app/actions/shipToAddresses';
+import { startChangeInvoice } from '@/app/actions/salesInvoiceChanges';
+import { changeLinesFromDrafts, changeSubtotalCents, sameLines, toChangeLines } from '@/lib/salesOrders/invoiceChangeLines';
+import { FAILED_CHANGE_STATES, type ChangeLine, type InvoiceChangeRow } from '@/types/invoiceChanges';
+import { ChangeInvoiceDialog } from './ChangeInvoiceDialog';
 import { GlassButton as Button } from './GlassButton';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -42,7 +46,7 @@ import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
 import { SyncBadge } from './SyncBadge';
-import { InvoiceControls, InvoiceStatus, SAVE_FIRST, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
+import { ChangeInvoiceButton, InvoiceChangeStatus, InvoiceControls, InvoiceStatus, SAVE_FIRST, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
 
 interface Props {
   /** null = a new order. */
@@ -58,6 +62,10 @@ interface Props {
   canSaveShipTo: boolean;
   /** Why Create invoice is blocked for this customer (Bill.com), or null when ready. */
   invoiceBlockedReason?: string | null;
+  /** The order's open invoice change, if any. */
+  invoiceChange?: InvoiceChangeRow | null;
+  /** Why Change invoice is disabled (Bill.com: paid, void, unreachable), or null. */
+  changeBlockedReason?: string | null;
 }
 
 type Option = { code: string; label: string };
@@ -150,6 +158,23 @@ function lineDraftOf(row: SalesOrderLineRow, estimates: Map<string, number | nul
   };
 }
 
+/** An open change's line, shown (locked) in the lines table. */
+function changeLineDraft(l: ChangeLine, i: number): LineDraft {
+  return {
+    key: `change-${i}`,
+    item_number: l.item_number,
+    description: l.description,
+    quantity: l.quantity,
+    unit_price: l.unit_price,
+    discount_percent: l.discount_percent,
+    unit_of_measure_code: l.unit_of_measure_code,
+    amount_incl_tax: null,
+    estimate_price: null,
+    bc_unit_price: null,
+    bc_line_discount_percent: null,
+  };
+}
+
 /** True when the edited lines still match the loaded ones (same lines, same order, same values). */
 function linesUnchanged(draft: LineDraft[], loaded: SalesOrderLineRow[]): boolean {
   return (
@@ -212,7 +237,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo, notes = [], invoiceBlockedReason }: Props) {
+export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos, canEdit, canSaveShipTo, notes = [], invoiceBlockedReason, invoiceChange: openChange = null, changeBlockedReason = null }: Props) {
   const router = useRouter();
   const { customers, items, selectOptions, companyLocation, today, taxAreaLines, taxDetails } = context;
   const initialCustomer = order ? customers.find((c) => c.id === order.customer_id) ?? null : null;
@@ -232,10 +257,16 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const invoiceAtFocus = useRef<{ value: string | null; shown: string }>({ value: null, shown: '' });
   const [invoiceChange, setInvoiceChange] = useState<{ from: string; to: string; saveAfter: boolean } | null>(null);
   const [customerPo, setCustomerPo] = useState(order?.customer_po ?? '');
-  const [draftLines, setDraftLines] = useState<LineDraft[]>(() => {
+  const loadedDrafts = () => {
     const estimates = new Map(items.map((i) => [i.bc_item_number, i.unit_price]));
     return lines.map((l) => lineDraftOf(l, estimates));
-  });
+  };
+  const [draftLines, setDraftLines] = useState<LineDraft[]>(loadedDrafts);
+  // Change invoice: the lines unlock (only them) until Save changes to invoice or Cancel changes.
+  const [changeMode, setChangeMode] = useState(false);
+  const [changeDialog, setChangeDialog] = useState(false);
+  // Bumped by Cancel changes so the lines table drops the cells' typed text.
+  const [linesVersion, setLinesVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -260,8 +291,10 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
 
   // While an invoice is posting or after it posted, the order is locked and polls for the next step.
   const invoiceState = order?.invoice_state ?? 'none';
+  // An open change polls until it finishes or a step fails.
+  const changeRunning = invoiceState === 'changing' && !(openChange && FAILED_CHANGE_STATES.includes(openChange.state));
   useEffect(() => {
-    if (!orderId || !isInvoiceRunning(invoiceState)) return;
+    if (!orderId || !(isInvoiceRunning(invoiceState) || changeRunning)) return;
     let polls = 0;
     const timer = setInterval(() => {
       polls += 1;
@@ -269,7 +302,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
       if (polls >= MAX_INVOICE_POLLS) clearInterval(timer);
     }, INVOICE_POLL_MS);
     return () => clearInterval(timer);
-  }, [orderId, invoiceState, router]);
+  }, [orderId, invoiceState, changeRunning, router]);
 
   const invoiceLocked = isInvoiceLocked(invoiceState);
   // The BC sync state (with Try again / Overwrite) shows before invoicing, and
@@ -534,7 +567,31 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     num(order.total_incl_tax) !== null
       ? { subtotal: num(order.total_excl_tax) ?? 0, tax: num(order.total_tax) ?? 0, total: num(order.total_incl_tax) ?? 0 }
       : null;
-  const totals = bcTotals ?? orderTotals(shownLines.map((l) => lineAmounts(l, taxRate(l))));
+  // An open change shows the corrected lines (locked) until it finishes.
+  const changeLines = openChange ? openChange.lines_after.map(changeLineDraft) : null;
+  const displayLines = changeLines ?? shownLines;
+  const totals = changeLines
+    ? orderTotals(changeLines.map((l) => lineAmounts(l, taxRate(l))))
+    : bcTotals ?? orderTotals(shownLines.map((l) => lineAmounts(l, taxRate(l))));
+  // In change mode: the edits as change lines, and whether they differ from what was invoiced.
+  const changeResult = changeMode ? changeLinesFromDrafts(draftLines, lines) : null;
+  const changeEdited = !!changeResult && (!changeResult.ok || !sameLines(toChangeLines(lines), changeResult.lines));
+  const linesLocked = changeMode ? busy : locked || busy;
+
+  const cancelChange = () => {
+    setDraftLines(loadedDrafts());
+    setLinesVersion((v) => v + 1);
+    setChangeMode(false);
+  };
+  const confirmChange = async (reason: string): Promise<string | null> => {
+    if (!order) return null;
+    const res = await startChangeInvoice(order.id, draftLines, reason);
+    if (!res.ok) return res.error;
+    setChangeDialog(false);
+    setChangeMode(false);
+    router.refresh();
+    return null;
+  };
   const shipAddress = Object.fromEntries(SHIP_ADDRESS_KEYS.map((k) => [k, header[k]])) as ShipToAddressFields;
 
   return (
@@ -563,6 +620,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                   onError={setError}
                 />
               )}
+              {openChange && <InvoiceChangeStatus orderId={order.id} change={openChange} canEdit={canEdit} onError={setError} />}
               {showSyncBadge && (
                 <SyncBadge
                   className="text-xs leading-4"
@@ -591,6 +649,9 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                 total={totals.total}
                 today={today}
               />
+            )}
+            {order && !changeMode && !openChange && (
+              <ChangeInvoiceButton order={order} canEdit={canEdit} blockedReason={changeBlockedReason} onStart={() => setChangeMode(true)} />
             )}
             {canEdit && !invoiceLocked && (
               <Button type="submit" variant="blue-glass" form={FORM_ID} disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
@@ -733,16 +794,36 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
           </div>
 
           <Section title="Order Items">
+            {changeMode && order && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sm text-foreground">
+                <span className="flex-1">Changing invoice {invoiceShown} — edit lines, then Save changes to invoice.</span>
+                <Button type="button" size="sm" variant="outline" disabled={busy} onClick={cancelChange}>Cancel changes</Button>
+                <Button type="button" size="sm" variant="blue-glass" disabled={busy || !changeEdited} onClick={() => setChangeDialog(true)}>
+                  Save changes to invoice
+                </Button>
+              </div>
+            )}
             <SalesOrderLinesTable
-              lines={shownLines}
+              key={linesVersion}
+              lines={displayLines}
               items={items}
-              locked={locked || busy}
+              locked={linesLocked || !!changeLines}
               onChange={setDraftLines}
             />
+            {changeMode && order && (
+              <ChangeInvoiceDialog
+                open={changeDialog}
+                oldTotal={num(order.posted_total_incl_tax)}
+                newSubtotal={changeResult?.ok ? changeSubtotalCents(changeResult.lines) / 100 : totals.subtotal}
+                oldBcNumber={order.bc_posted_invoice_number ?? ''}
+                onConfirm={confirmChange}
+                onClose={() => setChangeDialog(false)}
+              />
+            )}
             <dl className="ml-auto mt-4 grid max-w-sm grid-cols-[1fr_auto] gap-x-6 gap-y-1.5 text-sm">
               <dt className="text-foreground-muted">Subtotal</dt>
               <dd data-testid="total-subtotal" className="text-right text-foreground">{money(totals.subtotal)}</dd>
-              <dt className="text-foreground-muted">{taxLabel(shownLines.map(taxRate))}</dt>
+              <dt className="text-foreground-muted">{taxLabel(displayLines.map(taxRate))}</dt>
               <dd data-testid="total-tax" className="text-right text-foreground">{money(totals.tax)}</dd>
               <dt className="font-semibold text-foreground">Total</dt>
               <dd data-testid="total-total" className="text-right font-semibold text-foreground">{money(totals.total)}</dd>

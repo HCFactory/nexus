@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SalesOrderFormContext } from '@/app/actions/salesOrders';
 import type { CustomerRow, SalesOrderLineRow, SalesOrderRow, SalesPriceListLineRow, ShipToRow } from '@/types/salesOrders';
+import type { InvoiceChangeRow } from '@/types/invoiceChanges';
 import { SalesOrderForm } from './SalesOrderForm';
 
 const orderActions = vi.hoisted(() => ({
@@ -21,6 +22,8 @@ vi.mock('@/app/actions/salesOrders', () => orderActions);
 vi.mock('@/app/actions/shipToAddresses', () => shipActions);
 vi.mock('next/navigation', () => ({ useRouter: () => nav }));
 vi.mock('@/app/actions/salesOrderInvoicing', () => ({ createInvoice: vi.fn(), retryInvoice: vi.fn() }));
+const changeActions = vi.hoisted(() => ({ startChangeInvoice: vi.fn(), retryChangeInvoice: vi.fn(), discardChangeInvoice: vi.fn() }));
+vi.mock('@/app/actions/salesInvoiceChanges', () => changeActions);
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 
 const customer = (over: Partial<CustomerRow>): CustomerRow => ({
@@ -802,5 +805,62 @@ describe('invoicing in the header', () => {
     withLine({ order: final({ invoice_state: 'post_failed', invoice_error: 'Posting date not allowed' }) });
     expect(screen.getByText('Posting date not allowed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+});
+
+describe('changing an invoice', () => {
+  const invoiced = (over: Partial<SalesOrderRow> = {}) =>
+    order({ status: 'invoiced', invoice_state: 'done', bc_posted_invoice_number: 'INV-100411', bc_posted_invoice_id: 'inv-guid', invoice_number: 'W-100528', ...over });
+  const priced = { ...lineRow, unit_price: 12.5 } as SalesOrderLineRow;
+
+  it('Change invoice unlocks only the lines, with the bar and Cancel changes', () => {
+    renderForm({ order: invoiced(), lines: [priced] });
+    expect(screen.getByLabelText('Qty')).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Change invoice' }));
+    expect(screen.getByText('Changing invoice W-100528 — edit lines, then Save changes to invoice.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Qty')).toBeEnabled();
+    expect(screen.getByRole('combobox', { name: 'Customer' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save changes to invoice' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '3' } });
+    expect(screen.getByRole('button', { name: 'Save changes to invoice' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel changes' }));
+    expect(screen.getByLabelText('Qty')).toBeDisabled();
+    expect(screen.getByLabelText('Qty')).toHaveValue(2);
+  });
+
+  it('Save changes to invoice asks for a reason, then starts the change with the edited lines', async () => {
+    changeActions.startChangeInvoice.mockResolvedValue({ ok: true });
+    renderForm({ order: invoiced(), lines: [priced] });
+    fireEvent.click(screen.getByRole('button', { name: 'Change invoice' }));
+    fireEvent.change(screen.getByLabelText('Qty'), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes to invoice' }));
+    expect(screen.getByText("BC will cancel INV-100411 and post a corrected invoice. This can't be undone.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Customer got 3' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(changeActions.startChangeInvoice).toHaveBeenCalled());
+    const [id, drafts, reason] = changeActions.startChangeInvoice.mock.calls[0];
+    expect(id).toBe('so-1');
+    expect(reason).toBe('Customer got 3');
+    expect(drafts).toEqual([expect.objectContaining({ id: 'l1', item_number: 'P100', quantity: 3 })]);
+    await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
+  });
+
+  it('Change invoice is disabled with the Bill.com reason', () => {
+    renderForm({ order: invoiced(), lines: [priced], changeBlockedReason: "Paid or partly paid in Bill.com — can't change" });
+    expect(screen.getByRole('button', { name: 'Change invoice' })).toBeDisabled();
+  });
+
+  it('an open change shows its lines locked, the status and no Change invoice button', () => {
+    const change = {
+      id: 'ch1', state: 'post_failed', error: 'Posting Date is not within your range.', old_bc_invoice_number: 'INV-100411',
+      lines_after: [{ item_number: 'P100', description: 'Pesto sauce', unit_of_measure_code: 'CASE', quantity: 5, unit_price: 12.5, discount_percent: 0 }],
+    } as unknown as InvoiceChangeRow;
+    renderForm({ order: invoiced({ invoice_state: 'changing' }), lines: [priced], invoiceChange: change });
+    expect(screen.getByLabelText('Qty')).toHaveValue(5);
+    expect(screen.getByLabelText('Qty')).toBeDisabled();
+    expect(screen.getByText('Changing invoice…')).toBeInTheDocument();
+    expect(screen.getByText('Posting Date is not within your range.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Change invoice' })).toBeNull();
   });
 });

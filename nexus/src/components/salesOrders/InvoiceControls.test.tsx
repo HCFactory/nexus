@@ -2,11 +2,14 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SalesOrderRow } from '@/types/salesOrders';
-import { InvoiceControls, InvoiceStatus, invoiceStatusText } from './InvoiceControls';
+import type { InvoiceChangeRow } from '@/types/invoiceChanges';
+import { ChangeInvoiceButton, InvoiceChangeStatus, InvoiceControls, InvoiceStatus, invoiceStatusText } from './InvoiceControls';
 
 const actions = vi.hoisted(() => ({ createInvoice: vi.fn(), retryInvoice: vi.fn() }));
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/app/actions/salesOrderInvoicing', () => actions);
+const changeActions = vi.hoisted(() => ({ retryChangeInvoice: vi.fn(), discardChangeInvoice: vi.fn() }));
+vi.mock('@/app/actions/salesInvoiceChanges', () => changeActions);
 vi.mock('next/navigation', () => ({ useRouter: () => nav }));
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 
@@ -136,5 +139,48 @@ describe('status line', () => {
 describe('invoiceStatusText', () => {
   it("shows 'Changing invoice…' while a change is open", () => {
     expect(invoiceStatusText('changing')).toBe('Changing invoice…');
+  });
+});
+
+describe('Change invoice button', () => {
+  const PAID = "Paid or partly paid in Bill.com — can't change";
+  it('shows only for a done invoice and an editor', () => {
+    const onStart = vi.fn();
+    const { rerender } = render(<ChangeInvoiceButton order={order({ invoice_state: 'done' })} canEdit blockedReason={null} onStart={onStart} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Change invoice' }));
+    expect(onStart).toHaveBeenCalled();
+    rerender(<ChangeInvoiceButton order={order({ invoice_state: 'billcom_failed' })} canEdit blockedReason={null} onStart={onStart} />);
+    expect(screen.queryByRole('button', { name: 'Change invoice' })).toBeNull();
+    rerender(<ChangeInvoiceButton order={order({ invoice_state: 'done' })} canEdit={false} blockedReason={null} onStart={onStart} />);
+    expect(screen.queryByRole('button', { name: 'Change invoice' })).toBeNull();
+  });
+  it('is disabled with the reason when Bill.com blocks it', () => {
+    render(<ChangeInvoiceButton order={order({ invoice_state: 'done' })} canEdit blockedReason={PAID} onStart={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Change invoice' })).toBeDisabled();
+    expect(screen.getByText(PAID)).toBeInTheDocument();
+  });
+});
+
+describe('Invoice change status', () => {
+  const change = (state: InvoiceChangeRow['state'], error: string | null = null) =>
+    ({ id: 'ch1', state, error, old_bc_invoice_number: 'INV-100411' }) as InvoiceChangeRow;
+  it('a failed cancel shows its error with Retry and Discard change', async () => {
+    changeActions.discardChangeInvoice.mockResolvedValue({ ok: true });
+    render(<InvoiceChangeStatus orderId="so-1" change={change('cancel_failed', 'The invoice has a payment applied.')} canEdit />);
+    expect(screen.getByText('The invoice has a payment applied.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Discard change' }));
+    await waitFor(() => expect(changeActions.discardChangeInvoice).toHaveBeenCalledWith('so-1'));
+  });
+  it('a failed post offers Retry but not Discard', async () => {
+    changeActions.retryChangeInvoice.mockResolvedValue({ ok: true });
+    render(<InvoiceChangeStatus orderId="so-1" change={change('post_failed', 'Posting Date is not within your range.')} canEdit />);
+    expect(screen.queryByRole('button', { name: 'Discard change' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(changeActions.retryChangeInvoice).toHaveBeenCalledWith('so-1'));
+  });
+  it('a running change shows no buttons', () => {
+    render(<InvoiceChangeStatus orderId="so-1" change={change('posting')} canEdit />);
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });

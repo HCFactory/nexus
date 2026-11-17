@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import { getSalesOrder, getSalesOrderFormContext, getSalesOrderPriceLines } from '@/app/actions/salesOrders';
 import { listSalesOrderNotes } from '@/app/actions/salesOrderNotes';
 import { getInvoiceReadiness, resumeInvoiceIfStuck } from '@/app/actions/salesOrderInvoicing';
-import { resumeInvoiceChangeIfStuck } from '@/app/actions/salesInvoiceChanges';
+import { getInvoiceChangeState, resumeInvoiceChangeIfStuck } from '@/app/actions/salesInvoiceChanges';
 import { listShipTos } from '@/app/actions/shipToAddresses';
 import { SalesOrderForm } from '@/components/salesOrders/SalesOrderForm';
 import { resolveSalesOrderPageAccess, SalesOrderPageNotice } from '../salesOrderPageAccess';
@@ -19,11 +19,13 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
   const { order, lines } = found;
   // Ship-tos need customer view permission; without it the picker just lists none.
   // Price lines for this order's customer only (the context carries just the All Customers ones).
-  const [shipTos, notes, priceListLines, readiness] = await Promise.all([
+  const changeable = order.invoice_state === 'done' || order.invoice_state === 'changing';
+  const [shipTos, notes, priceListLines, readiness, changeState] = await Promise.all([
     listShipTos(order.customer_number).catch(() => []),
     listSalesOrderNotes(order.id).catch(() => []),
     getSalesOrderPriceLines(order.customer_number).catch(() => context.priceListLines),
     getInvoiceReadiness(order.customer_number),
+    changeable ? getInvoiceChangeState(order.id) : null,
     resumeInvoiceIfStuck(order.id),
     order.invoice_state === 'changing' ? resumeInvoiceChangeIfStuck(order.id) : undefined,
   ]);
@@ -42,6 +44,8 @@ export default async function SalesOrderPage({ params }: { params: Promise<{ id:
       canEdit={gate.access.canEditSalesOrders}
       canSaveShipTo={gate.access.canEditCustomers}
       invoiceBlockedReason={readiness.blockedReason}
+      invoiceChange={changeState?.change ?? null}
+      changeBlockedReason={changeState?.blockedReason ?? null}
     />
   );
 }

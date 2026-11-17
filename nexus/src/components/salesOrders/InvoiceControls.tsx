@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { createInvoice, retryInvoice } from '@/app/actions/salesOrderInvoicing';
+import { discardChangeInvoice, retryChangeInvoice } from '@/app/actions/salesInvoiceChanges';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formatMoney } from '@/lib/format';
 import { canStartInvoice, isInvoiceResumable, isPastPosting } from '@/lib/salesOrders/orderRules';
+import { DISCARDABLE_CHANGE_STATES, FAILED_CHANGE_STATES, type InvoiceChangeRow } from '@/types/invoiceChanges';
 import type { InvoiceState, SalesOrderRow } from '@/types/salesOrders';
 import { GlassButton as Button } from './GlassButton';
 
@@ -188,5 +190,77 @@ export function InvoiceControls({ order, canEdit, dirty, blockedReason, invoiceN
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** "Change invoice": shown on an invoiced order (done) to editors; disabled with the Bill.com reason. */
+export function ChangeInvoiceButton({
+  order,
+  canEdit,
+  blockedReason,
+  onStart,
+}: {
+  order: Pick<SalesOrderRow, 'invoice_state'>;
+  canEdit: boolean;
+  blockedReason: string | null | undefined;
+  onStart: () => void;
+}) {
+  if (!canEdit || order.invoice_state !== 'done') return null;
+  return (
+    <div className="flex flex-col items-end">
+      <Button type="button" variant="outline" disabled={!!blockedReason} title={blockedReason ?? undefined} onClick={onStart}>
+        Change invoice
+      </Button>
+      {blockedReason && <span className="mt-0.5 max-w-56 text-right text-[11px] leading-tight text-foreground-muted">{blockedReason}</span>}
+    </div>
+  );
+}
+
+/** The open change's failure (if any) with Retry, and Discard change while BC hasn't cancelled the old invoice. */
+export function InvoiceChangeStatus({
+  orderId,
+  change,
+  canEdit,
+  onError,
+}: {
+  orderId: string;
+  change: Pick<InvoiceChangeRow, 'id' | 'state' | 'error' | 'old_bc_invoice_number'>;
+  canEdit: boolean;
+  onError?: (message: string | null) => void;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const failed = FAILED_CHANGE_STATES.includes(change.state);
+  const discardable = DISCARDABLE_CHANGE_STATES.includes(change.state) && change.state !== 'pending';
+  if (!failed) return null;
+
+  const act = async (fn: (id: string) => Promise<{ ok: true } | { ok: false; error: string }>, fallback: string) => {
+    setBusy(true);
+    onError?.(null);
+    try {
+      const res = await fn(orderId);
+      if (!res.ok) onError?.(res.error);
+    } catch (e) {
+      onError?.(e instanceof Error ? e.message : fallback);
+    } finally {
+      router.refresh();
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {change.error && <span className="text-destructive">{change.error}</span>}
+      {canEdit && (
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => act(retryChangeInvoice, 'Could not retry the change.')}>
+          Retry
+        </Button>
+      )}
+      {canEdit && discardable && (
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => act(discardChangeInvoice, 'Could not discard the change.')}>
+          Discard change
+        </Button>
+      )}
+    </div>
   );
 }
