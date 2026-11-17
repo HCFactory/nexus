@@ -39,9 +39,9 @@ export function isInvoiceResumable(state: InvoiceState | string): boolean {
   return (RESUMABLE_INVOICE_STATES as readonly string[]).includes(state)
 }
 
-/** True once BC holds the posted invoice (so the order can no longer be restarted). */
+/** True once BC holds the posted invoice (so the order can no longer be restarted); 'changing' = a change of it is open. */
 export function isPastPosting(state: InvoiceState): boolean {
-  return state === 'posted' || state === 'billcom_sending' || state === 'billcom_failed' || state === 'done'
+  return state === 'posted' || state === 'billcom_sending' || state === 'billcom_failed' || state === 'done' || state === 'changing'
 }
 
 export function canStartInvoice(

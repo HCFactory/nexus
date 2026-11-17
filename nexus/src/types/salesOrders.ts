@@ -5,7 +5,7 @@ export const ORDER_STATUSES = ['draft', 'final', 'pulled', 'shipped', 'invoiced'
 export type OrderStatus = (typeof ORDER_STATUSES)[number]
 
 export const INVOICE_STATES = [
-  'none', 'posting', 'post_failed', 'posted', 'billcom_sending', 'billcom_failed', 'done',
+  'none', 'posting', 'post_failed', 'posted', 'billcom_sending', 'billcom_failed', 'done', 'changing',
 ] as const
 export type InvoiceState = (typeof INVOICE_STATES)[number]
 

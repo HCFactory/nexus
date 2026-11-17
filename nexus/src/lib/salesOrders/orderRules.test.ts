@@ -35,7 +35,7 @@ describe('orderRules', () => {
   })
 
   it('isPastPosting is true only once BC has the invoice', () => {
-    for (const st of ['posted', 'billcom_sending', 'billcom_failed', 'done'] as const) expect(isPastPosting(st)).toBe(true)
+    for (const st of ['posted', 'billcom_sending', 'billcom_failed', 'done', 'changing'] as const) expect(isPastPosting(st)).toBe(true)
     for (const st of ['none', 'posting', 'post_failed'] as const) expect(isPastPosting(st)).toBe(false)
   })
   it('canStartInvoice needs final/pulled, synced, none and an order number', () => {

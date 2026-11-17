@@ -17,6 +17,7 @@ export function invoiceStatusText(state: InvoiceState): string | null {
   if (state === 'post_failed') return "Couldn't post";
   if (state === 'billcom_failed') return 'Invoiced · Not in Bill.com';
   if (state === 'done') return 'Invoiced · In Bill.com';
+  if (state === 'changing') return 'Changing invoice…';
   return null;
 }
 
@@ -42,11 +43,11 @@ export function showsCreateInvoice(order: Pick<SalesOrderRow, 'status' | 'invoic
 
 const DOT: Partial<Record<InvoiceState, string>> = {
   posting: 'bg-sky-500', posted: 'bg-sky-500', billcom_sending: 'bg-sky-500',
-  post_failed: 'bg-red-500', billcom_failed: 'bg-amber-500', done: 'bg-green-500',
+  post_failed: 'bg-red-500', billcom_failed: 'bg-amber-500', done: 'bg-green-500', changing: 'bg-sky-500',
 };
 const TEXT: Partial<Record<InvoiceState, string>> = {
   posting: 'text-foreground-muted', posted: 'text-foreground-muted', billcom_sending: 'text-foreground-muted',
-  post_failed: 'text-destructive', billcom_failed: 'text-warning', done: 'text-foreground',
+  post_failed: 'text-destructive', billcom_failed: 'text-warning', done: 'text-foreground', changing: 'text-foreground-muted',
 };
 
 export const SAVE_FIRST = 'Save your changes before invoicing.';

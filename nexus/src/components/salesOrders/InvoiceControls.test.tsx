@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SalesOrderRow } from '@/types/salesOrders';
-import { InvoiceControls, InvoiceStatus } from './InvoiceControls';
+import { InvoiceControls, InvoiceStatus, invoiceStatusText } from './InvoiceControls';
 
 const actions = vi.hoisted(() => ({ createInvoice: vi.fn(), retryInvoice: vi.fn() }));
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
@@ -130,5 +130,11 @@ describe('status line', () => {
     expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices/inv-guid');
     expect(screen.getByText('Invoice SI 1/2 ·')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'View invoice' })).not.toHaveAttribute('title');
+  });
+});
+
+describe('invoiceStatusText', () => {
+  it("shows 'Changing invoice…' while a change is open", () => {
+    expect(invoiceStatusText('changing')).toBe('Changing invoice…');
   });
 });
