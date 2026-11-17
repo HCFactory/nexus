@@ -42,11 +42,11 @@ export class BcPostOutcomeUnknownError extends Error {
 const INVOICES = { kind: 'api', resource: 'salesInvoices' } as const
 const ORDERS_API = { kind: 'api', resource: 'salesOrders' } as const
 
-const quote = (v: string) => `'${v.replace(/'/g, "''")}'`
+export const quote = (v: string) => `'${v.replace(/'/g, "''")}'`
 
 const orderKey = (no: string): BcKey => ({ values: { Document_Type: 'Order', No: no } })
 
-function toPostedInvoice(r: BcRecord): PostedInvoice {
+export function toPostedInvoice(r: BcRecord): PostedInvoice {
   const f = r.fields
   return {
     id: String(f.id),
@@ -100,8 +100,17 @@ export async function postShipAndInvoice(deps: BcInvoicingDeps, bcOrderNumber: s
   const found = await deps.transport.list(ORDERS_API, { filter: `number eq ${quote(bcOrderNumber)}` })
   const id = found[0]?.fields.id
   if (!id) throw new Error(`Business Central order ${bcOrderNumber} was not found.`)
+  await invokePostingAction(deps, `/salesOrders(${String(id)})/Microsoft.NAV.shipAndInvoice`)
+}
+
+/**
+ * Invokes a BC bound action that posts something (post, ship and invoice,
+ * cancel). A 4xx is BcPostRefusedError (nothing happened); a timeout, network
+ * error or 5xx is BcPostOutcomeUnknownError (BC may have done it).
+ */
+export async function invokePostingAction(deps: BcInvoicingDeps, path: string): Promise<void> {
   try {
-    await deps.invokeAction(`/salesOrders(${String(id)})/Microsoft.NAV.shipAndInvoice`)
+    await deps.invokeAction(path)
   } catch (e) {
     if (e instanceof BcApiError) {
       const { status } = e.details
