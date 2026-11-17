@@ -151,6 +151,48 @@ describe('cancelSetupLinks', () => {
     expect(fake.tables.card_setup_links.find((r) => r.id === 'a')?.canceled_at).toBeTruthy();
     expect(fake.tables.card_setup_links.find((r) => r.id === 'b')?.canceled_at).toBeNull();
   });
+
+  it('without a Stripe client (auto-cancel on a new link) never expires a session', async () => {
+    const fake = fakeSupabase({ card_setup_links: [linkRow('a', { id: 'a', token_hash: 'ha', stripe_checkout_session_id: 'cs_a' })] });
+    await cancelSetupLinks(fake.client, { orgId: 'org-1', connectionId: 'conn-1', bcCustomerNumber: 'C100' });
+    expect(fake.tables.card_setup_links[0].canceled_at).toBeTruthy();
+  });
+
+  it('with a Stripe client expires open links’ Checkout sessions, skipping links without one and completed links', async () => {
+    const fake = fakeSupabase({
+      card_setup_links: [
+        linkRow('a', { id: 'a', token_hash: 'ha', stripe_checkout_session_id: 'cs_a' }),
+        linkRow('b', { id: 'b', token_hash: 'hb' }),
+        linkRow('c', { id: 'c', token_hash: 'hc', stripe_checkout_session_id: 'cs_done', completed_at: NOW.toISOString() }),
+      ],
+    });
+    const expire = vi.fn(async () => ({}));
+    await cancelSetupLinks(fake.client, { orgId: 'org-1', connectionId: 'conn-1', bcCustomerNumber: 'C100' }, { stripe: { checkout: { sessions: { expire } } } as never });
+    expect(expire).toHaveBeenCalledTimes(1);
+    expect(expire).toHaveBeenCalledWith('cs_a');
+    expect(fake.tables.card_setup_links.find((r) => r.id === 'a')?.canceled_at).toBeTruthy();
+    expect(fake.tables.card_setup_links.find((r) => r.id === 'b')?.canceled_at).toBeTruthy();
+  });
+
+  it('an already-expired/complete session is ignored quietly; any other Stripe error is logged; the link is cancelled either way', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const already = Object.assign(new Error('Only Checkout Sessions with a status in ["open"] can be expired.'), { type: 'StripeInvalidRequestError' });
+    const fake1 = fakeSupabase({ card_setup_links: [linkRow('a', { id: 'a', token_hash: 'ha', stripe_checkout_session_id: 'cs_a' })] });
+    await cancelSetupLinks(fake1.client, { orgId: 'org-1', connectionId: 'conn-1', bcCustomerNumber: 'C100' }, {
+      stripe: { checkout: { sessions: { expire: vi.fn(async () => { throw already; }) } } } as never,
+    });
+    expect(fake1.tables.card_setup_links[0].canceled_at).toBeTruthy();
+    expect(errors).not.toHaveBeenCalled();
+
+    const fake2 = fakeSupabase({ card_setup_links: [linkRow('a', { id: 'a', token_hash: 'ha', stripe_checkout_session_id: 'cs_a' })] });
+    await cancelSetupLinks(fake2.client, { orgId: 'org-1', connectionId: 'conn-1', bcCustomerNumber: 'C100' }, {
+      stripe: { checkout: { sessions: { expire: vi.fn(async () => { throw Object.assign(new Error('boom'), { type: 'StripeAPIError' }); }) } } } as never,
+    });
+    expect(fake2.tables.card_setup_links[0].canceled_at).toBeTruthy();
+    expect(errors).toHaveBeenCalledTimes(1);
+    expect(String(errors.mock.calls[0][0])).toContain('cs_a');
+    errors.mockRestore();
+  });
 });
 
 describe('startSetupCheckout', () => {

@@ -114,7 +114,12 @@ export async function createCardSetupLink(
 
 export async function cancelCardSetupLink(bcCustomerNumber: string): Promise<void> {
   const s = await requireEditScope(bcCustomerNumber);
-  await cancelSetupLinks(s.supabase, { orgId: s.orgId, connectionId: s.connectionId, bcCustomerNumber });
+  // Also expire any open Checkout session; without a Stripe client the link is still cancelled.
+  const stripe = await createStripeForConnection(s.supabase, s.orgId, s.connectionId).catch((e: unknown) => {
+    console.error('[customerCards] could not create the Stripe client to expire the Checkout session:', e);
+    return undefined;
+  });
+  await cancelSetupLinks(s.supabase, { orgId: s.orgId, connectionId: s.connectionId, bcCustomerNumber }, { stripe });
   revalidatePath('/customers');
 }
 

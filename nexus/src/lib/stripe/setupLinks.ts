@@ -3,6 +3,7 @@ import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type Stripe from 'stripe';
 
 import type { CardSetupLink } from '@/types/stripe';
 
@@ -37,11 +38,45 @@ export function setupLinkUrl(token: string): string {
   return `${appUrl()}/card-setup/${token}`;
 }
 
-/** Cancels every unused (not completed, not cancelled) link for the customer on this connection. */
+/** Stripe refuses to expire a session that is already expired or complete: nothing left to do. */
+function alreadyClosed(e: unknown): boolean {
+  const err = (e ?? {}) as { type?: string; message?: string };
+  return err.type === 'StripeInvalidRequestError' && /expired|complete|status/i.test(err.message ?? '');
+}
+
+/**
+ * Cancels every unused (not completed, not cancelled) link for the customer on this connection.
+ * With `stripe` (an explicit staff cancel only), also expires each link's open Checkout
+ * session so a customer already on the Stripe page cannot still save a card. A Stripe
+ * error never stops the cancel.
+ */
 export async function cancelSetupLinks(
   supabase: SupabaseClient,
   a: { orgId: string; connectionId: string; bcCustomerNumber: string },
+  opts: { stripe?: Stripe } = {},
 ): Promise<void> {
+  if (opts.stripe) {
+    const { data, error: readError } = await supabase
+      .from('card_setup_links')
+      .select('id, stripe_checkout_session_id')
+      .eq('organization_id', a.orgId)
+      .eq('stripe_connection_id', a.connectionId)
+      .eq('bc_customer_number', a.bcCustomerNumber)
+      .is('canceled_at', null)
+      .is('completed_at', null);
+    if (readError) console.error('[setupLinks] could not read setup links to expire their Checkout sessions:', readError.message);
+    for (const link of (data ?? []) as { id: string; stripe_checkout_session_id: string | null }[]) {
+      if (!link.stripe_checkout_session_id) continue;
+      try {
+        await opts.stripe.checkout.sessions.expire(link.stripe_checkout_session_id);
+      } catch (e) {
+        if (!alreadyClosed(e)) {
+          console.error(`[setupLinks] could not expire Checkout session ${link.stripe_checkout_session_id} for link ${link.id}:`, e);
+        }
+      }
+    }
+  }
+
   const { error } = await supabase
     .from('card_setup_links')
     .update({ canceled_at: new Date().toISOString() })

@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   cancelLinks: vi.fn(),
   sendEmail: vi.fn(),
   detach: vi.fn(),
+  expire: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -24,7 +25,7 @@ vi.mock('@/lib/auth/currentUserAccess', () => ({
 }));
 vi.mock('@/lib/stripe/connection', () => ({
   resolveDefaultStripeConnection: mocks.resolveConn,
-  createStripeForConnection: async () => ({ paymentMethods: { detach: mocks.detach } }),
+  createStripeForConnection: async () => ({ paymentMethods: { detach: mocks.detach }, checkout: { sessions: { expire: mocks.expire } } }),
 }));
 vi.mock('@/lib/stripe/setupLinks', () => ({
   createSetupLink: mocks.createLink,
@@ -161,9 +162,13 @@ describe('createCardSetupLink', () => {
 });
 
 describe('cancel and remove', () => {
-  it('cancelCardSetupLink cancels unused links', async () => {
+  it('cancelCardSetupLink cancels unused links and passes the Stripe client so open Checkout sessions are expired', async () => {
     await cancelCardSetupLink('C1');
-    expect(mocks.cancelLinks).toHaveBeenCalledWith(expect.anything(), { orgId: 'org-1', connectionId: 'conn-1', bcCustomerNumber: 'C1' });
+    expect(mocks.cancelLinks).toHaveBeenCalledWith(
+      expect.anything(),
+      { orgId: 'org-1', connectionId: 'conn-1', bcCustomerNumber: 'C1' },
+      { stripe: expect.objectContaining({ checkout: { sessions: { expire: mocks.expire } } }) },
+    );
   });
 
   it('removeCustomerCard marks removed and detaches in Stripe', async () => {
