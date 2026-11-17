@@ -64,6 +64,12 @@ const NO_CHARGE_ERRORS = new Set([
 ]);
 /** A Bill.com record takes seconds; still `not_started` after this means it was cut off. */
 const BILLCOM_STUCK_AFTER_MS = 10 * 60 * 1000;
+/**
+ * "Not charged" is refused this soon after the attempt: a create can still be
+ * in flight (client timeout + retries) and succeed after Check status saw nothing.
+ */
+export const NOT_CHARGED_MIN_AGE_MS = 10 * 60 * 1000;
+const TOO_SOON_FOR_NOT_CHARGED = 'Wait at least 10 minutes after the charge attempt before marking it as not charged.';
 const UNIQUE_VIOLATION = '23505';
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -289,7 +295,21 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
       `The card was charged in Stripe (${intentId}) but Nexus could not save it. Use Check status. ${e instanceof Error ? e.message : String(e)}`,
     );
   }
-  if (won) await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId);
+  if (won) {
+    await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId);
+    return;
+  }
+  // Lost the transition. If the row was marked failed meanwhile, money moved anyway: say so loudly.
+  const current = await readPayment(deps, p.id);
+  if (current.status !== 'failed') return;
+  console.error(
+    `[chargeInvoice] CARD WAS CHARGED but the row says failed: card payment ${p.id}, intent ${intentId}, amount ${Number(p.amount)} ${p.currency}. Refund or reconcile in Stripe.`,
+  );
+  const note = `Stripe later reported this charge succeeded (${intentId}) — check Stripe and refund or reconcile.`;
+  if (current.failure_message?.includes(intentId)) return;
+  await transition(deps, p.id, { status: 'failed' }, {
+    failure_message: current.failure_message ? `${current.failure_message} ${note}` : note,
+  });
 }
 
 async function settleFailed(deps: ChargeDeps, id: string, message: string, intentId: string | null): Promise<void> {
@@ -520,9 +540,13 @@ export async function checkChargeStatus(deps: ChargeDeps, cardPaymentId: string)
 export async function markNotCharged(deps: ChargeDeps, cardPaymentId: string, userId: string): Promise<CardPaymentRow> {
   const p = await readPayment(deps, cardPaymentId);
   if (p.status !== 'processing') throw new Error(NOT_PROCESSING);
+  if (deps.now().getTime() - new Date(p.charged_at).getTime() < NOT_CHARGED_MIN_AGE_MS) throw new Error(TOO_SOON_FOR_NOT_CHARGED);
   const pi = await findIntent(deps, p);
   if (pi) {
     await applyIntent(deps, p, pi);
+    const settled = await rowById(deps, p.id);
+    // Stripe itself says it failed: that is the answer staff wanted.
+    if (settled.status === 'failed') return settled;
     throw new Error(INTENT_EXISTS);
   }
   // No column fits "who marked it not charged", so who and when go in the message.

@@ -15,6 +15,7 @@ import {
   chargeInvoice,
   checkChargeStatus,
   MARKED_NOT_CHARGED_MESSAGE,
+  NOT_CHARGED_MIN_AGE_MS,
   markNotCharged,
   markRecordedManually,
   retryBillcomRecord,
@@ -510,8 +511,26 @@ describe('markRecordedManually', () => {
 });
 
 describe('markNotCharged', () => {
-  it('from processing with nothing in Stripe → failed with the message, who and when', async () => {
-    const s = setup({ tables: { card_payments: [paymentRow()] } });
+  // Exactly NOT_CHARGED_MIN_AGE_MS before NOW.
+  const OLD = { charged_at: '2026-11-17T19:50:00.000Z' };
+
+  it('the minimum age is 10 minutes', () => {
+    expect(NOT_CHARGED_MIN_AGE_MS).toBe(10 * 60 * 1000);
+  });
+
+  it('refused at 9m59s after the attempt: no Stripe lookup, no write', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ charged_at: '2026-11-17T19:50:01.000Z' })] } });
+    await expect(markNotCharged(s.deps, 'cp-1', 'u2')).rejects.toThrow(
+      'Wait at least 10 minutes after the charge attempt before marking it as not charged.',
+    );
+    expect(s.list).not.toHaveBeenCalled();
+    expect(s.retrieve).not.toHaveBeenCalled();
+    expect(s.db.writes).toHaveLength(0);
+    expect(s.db.tables.card_payments[0].status).toBe('processing');
+  });
+
+  it('at 10m, with nothing in Stripe → failed with the message, who and when', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow(OLD)] } });
     const row = await markNotCharged(s.deps, 'cp-1', 'u2');
     expect(MARKED_NOT_CHARGED_MESSAGE).toBe('Marked as not charged by staff after checking Stripe.');
     expect(row.status).toBe('failed');
@@ -519,27 +538,86 @@ describe('markNotCharged', () => {
     expect(s.list).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses when Stripe has an intent, and settles the row from it instead', async () => {
+  it('refuses when Stripe has a succeeded intent, and settles the row from it instead', async () => {
     const s = setup({
-      tables: { card_payments: [paymentRow()] },
+      tables: { card_payments: [paymentRow(OLD)] },
       list: async () => ({ data: [intent('pi_9', 'succeeded')], has_more: false }),
     });
     await expect(markNotCharged(s.deps, 'cp-1', 'u2')).rejects.toThrow('Stripe has a payment for this charge');
     expect(s.db.tables.card_payments[0]).toMatchObject({ status: 'succeeded', stripe_payment_intent_id: 'pi_9' });
   });
 
-  it('refuses when a stored intent id is retrievable', async () => {
-    const s = setup({ tables: { card_payments: [paymentRow({ stripe_payment_intent_id: 'pi_3' })] }, retrieve: async (id) => intent(id, 'processing') });
+  it('refuses when a stored intent is still processing in Stripe', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ ...OLD, stripe_payment_intent_id: 'pi_3' })] }, retrieve: async (id) => intent(id, 'processing') });
     await expect(markNotCharged(s.deps, 'cp-1', 'u2')).rejects.toThrow('Stripe has a payment for this charge');
     expect(s.db.tables.card_payments[0].status).toBe('processing');
+  });
+
+  it.each(['requires_payment_method', 'canceled'])('a %s intent settles the row as failed and returns it (no error)', async (status) => {
+    const s = setup({
+      tables: { card_payments: [paymentRow(OLD)] },
+      list: async () => ({ data: [intent('pi_9', status, { last_payment_error: { message: 'Declined.' } })], has_more: false }),
+    });
+    const row = await markNotCharged(s.deps, 'cp-1', 'u2');
+    expect(row).toMatchObject({ status: 'failed', failureMessage: 'Declined.', stripePaymentIntentId: 'pi_9' });
   });
 
   it.each([
     ['succeeded', { status: 'succeeded' }],
     ['failed', { status: 'failed' }],
   ])('refuses from %s', async (_n, over) => {
-    const s = setup({ tables: { card_payments: [paymentRow(over)] } });
+    const s = setup({ tables: { card_payments: [paymentRow({ ...OLD, ...over })] } });
     await expect(markNotCharged(s.deps, 'cp-1', 'u2')).rejects.toThrow('Only a charge still being checked with Stripe can be marked as not charged.');
     expect(s.list).not.toHaveBeenCalled();
+  });
+});
+
+describe('a charge that succeeds after the row was marked failed', () => {
+  it('logs loudly and notes it on the row, without flipping status or recording in Bill.com', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    errors.mockClear();
+    const tables: Record<string, Row[]> = { card_payments: [] };
+    const s = setup({
+      tables,
+      create: async () => {
+        // Staff marked it not charged while the create was still in flight.
+        tables.card_payments[0].status = 'failed';
+        tables.card_payments[0].failure_message = 'Marked as not charged by staff after checking Stripe.';
+        return { id: 'pi_late', status: 'succeeded' };
+      },
+    });
+    const row = await chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1' });
+    expect(row.status).toBe('failed');
+    expect(row.failureMessage).toBe(
+      'Marked as not charged by staff after checking Stripe. Stripe later reported this charge succeeded (pi_late) — check Stripe and refund or reconcile.',
+    );
+    expect(mocks.record).not.toHaveBeenCalled();
+    const logged = errors.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('CARD WAS CHARGED');
+    expect(logged).toContain(row.id);
+    expect(logged).toContain('pi_late');
+    expect(logged).toContain('100');
+    errors.mockRestore();
+  });
+
+  it('a lost transition to an already-succeeded row stays quiet', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    errors.mockClear();
+    const s = setup({
+      tables: { card_payments: [paymentRow({ status: 'succeeded', stripe_payment_intent_id: 'pi_9', billcom_state: 'recorded' })] },
+      list: async () => ({ data: [intent('pi_9', 'succeeded')], has_more: false }),
+    });
+    // Simulate a racing settle: the row is processing when read, succeeded by the time we write.
+    s.db.tables.card_payments[0].status = 'processing';
+    const base = s.db.failOn!;
+    s.db.failOn = (table, op, payload) => {
+      if (table === 'card_payments' && op === 'update' && (payload as Row).status === 'succeeded') s.db.tables.card_payments[0].status = 'succeeded';
+      return base(table, op, payload);
+    };
+    // The fake applies the guard after failOn runs, so the processing→succeeded update matches nothing.
+    await checkChargeStatus(s.deps, 'cp-1');
+    expect(errors).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+    errors.mockRestore();
   });
 });
