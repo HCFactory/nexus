@@ -39,8 +39,13 @@ export async function updateSession(request: NextRequest) {
   const isPublicFriendsFamilyPage =
     request.nextUrl.pathname === '/fnforders' ||
     request.nextUrl.pathname === '/friends-family-order-form';
+  // Stripe saved cards: customers open setup links without an account, and
+  // Stripe calls the webhook without a session (it verifies its signature).
+  const isPublicStripePath =
+    request.nextUrl.pathname.startsWith('/card-setup/') ||
+    request.nextUrl.pathname.startsWith('/api/stripe/webhook/');
 
-  if (!user && !isAuthPage && !isPublicFriendsFamilyPage) {
+  if (!user && !isAuthPage && !isPublicFriendsFamilyPage && !isPublicStripePath) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
