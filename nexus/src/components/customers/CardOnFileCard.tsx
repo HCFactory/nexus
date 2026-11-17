@@ -46,12 +46,14 @@ export function CardOnFileCard({ customerNumber, customerEmail, view }: Props) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [manual, setManual] = useState<{ url: string; expiresAt: string } | null>(null);
   const [emailing, setEmailing] = useState(false);
   const [email, setEmail] = useState(customerEmail ?? '');
 
   const run = (work: () => Promise<void>) => {
     setError(null);
     setNotice(null);
+    setManual(null);
     startTransition(async () => {
       try {
         await work();
@@ -65,8 +67,13 @@ export function CardOnFileCard({ customerNumber, customerEmail, view }: Props) {
   const copy = () =>
     run(async () => {
       const { url, expiresAt } = await createCardSetupLink(customerNumber, { email: null });
-      await navigator.clipboard.writeText(url);
-      setNotice(`Copied — expires ${shortDate(expiresAt)}`);
+      try {
+        await navigator.clipboard.writeText(url);
+        setNotice(`Copied — expires ${shortDate(expiresAt)}`);
+      } catch {
+        // The link already exists (and earlier ones are cancelled), so show it for manual copying.
+        setManual({ url, expiresAt });
+      }
     });
 
   const sendEmail = () =>
@@ -112,6 +119,20 @@ export function CardOnFileCard({ customerNumber, customerEmail, view }: Props) {
             </p>
           )}
           {notice && <p className="text-sm text-foreground">{notice}</p>}
+          {manual && (
+            <div className="space-y-1">
+              <p className="text-sm text-foreground">
+                Couldn&apos;t copy automatically — copy this link (expires {shortDate(manual.expiresAt)}):
+              </p>
+              <Input
+                readOnly
+                aria-label="Card setup link"
+                value={manual.url}
+                onFocus={(e) => e.currentTarget.select()}
+                ref={(el) => el?.select()}
+              />
+            </div>
+          )}
 
           {canEdit && (
             <div className="flex flex-wrap gap-2">

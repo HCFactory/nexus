@@ -62,6 +62,18 @@ describe('CardOnFileCard', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('https://app/card-setup/tok');
   });
 
+  it('shows the URL for manual copy when the clipboard write fails', async () => {
+    mocks.create.mockResolvedValue({ url: 'https://app/card-setup/tok', expiresAt: '2026-11-30T12:00:00Z' });
+    (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('denied'));
+    ui();
+    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+    const input = (await screen.findByLabelText('Card setup link')) as HTMLInputElement;
+    expect(input.value).toBe('https://app/card-setup/tok');
+    expect(input.readOnly).toBe(true);
+    expect(screen.getByText(/Couldn't copy automatically/)).toBeTruthy();
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
   it('Email opens a dialog prefilled with the customer email and sends', async () => {
     mocks.create.mockResolvedValue({ url: 'u', expiresAt: '2026-11-30T12:00:00Z' });
     ui();
