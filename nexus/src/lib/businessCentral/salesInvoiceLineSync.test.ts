@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   INVOICE_BATCH_SIZE,
+  fetchLinesForInvoicesFromBc,
   syncSalesInvoiceLines,
   type SalesInvoiceLineSyncDeps,
 } from './salesInvoiceLineSync';
@@ -14,6 +15,11 @@ const ctx: SyncContext = {
   companyId: 'company-1',
   now: '2026-03-04T00:00:00Z',
 };
+
+/** A batch fetch built from a per-invoice answer (one call per batch, like BC's $expand). */
+function perInvoice(fn: (invoiceId: string) => Promise<BcSalesInvoiceLine[]>) {
+  return vi.fn(async (ids: string[]) => (await Promise.all(ids.map(fn))).flat());
+}
 
 function line(id: string, documentId: string): BcSalesInvoiceLine {
   return { id, documentId, sequence: 1, description: 'Widget' };
@@ -39,7 +45,7 @@ function makeDeps(overrides: Partial<SalesInvoiceLineSyncDeps> = {}): SalesInvoi
     upserts: Record<string, unknown>[][];
   } = {
     listInvoiceIdsAfter: vi.fn(async () => []),
-    fetchLinesForInvoice: vi.fn(async () => []),
+    fetchLinesForInvoices: vi.fn(async () => []),
     upsertLines: vi.fn(async (rows: Record<string, unknown>[]) => {
       upserts.push(rows);
     }),
@@ -59,6 +65,19 @@ function makeDeps(overrides: Partial<SalesInvoiceLineSyncDeps> = {}): SalesInvoi
 }
 
 describe('syncSalesInvoiceLines', () => {
+  it('fetches each batch of invoices in one request, 50 at a time', async () => {
+    expect(INVOICE_BATCH_SIZE).toBe(50);
+    const ids = Array.from({ length: 50 }, (_, i) => `inv-${String(i).padStart(2, '0')}`);
+    const deps = makeDeps({
+      listInvoiceIdsAfter: vi.fn().mockResolvedValueOnce(ids).mockResolvedValueOnce([]),
+      fetchLinesForInvoices: vi.fn(async (batch: string[]) => batch.map((id) => line(`${id}-l1`, id))),
+    });
+    const result = await syncSalesInvoiceLines(deps, ctx, 60_000);
+    expect(deps.fetchLinesForInvoices).toHaveBeenCalledTimes(1);
+    expect(deps.fetchLinesForInvoices).toHaveBeenCalledWith(ids);
+    expect(result).toMatchObject({ complete: true, recordsSynced: 50 });
+  });
+
   it('resumes from a stored cursor', async () => {
     const deps = makeDeps({
       readCheckpoint: vi.fn(async () => ({ cursor_value: 'inv-5', records_synced: 10 })),
@@ -73,7 +92,7 @@ describe('syncSalesInvoiceLines', () => {
     const invoiceIds = ['inv-1', 'inv-2'];
     const deps = makeDeps({
       listInvoiceIdsAfter: vi.fn(async () => invoiceIds),
-      fetchLinesForInvoice: vi.fn(async (invoiceId: string) => [
+      fetchLinesForInvoices: perInvoice(async (invoiceId: string) => [
         line(`${invoiceId}-line-1`, invoiceId),
         line(`${invoiceId}-line-2`, invoiceId),
       ]),
@@ -97,7 +116,7 @@ describe('syncSalesInvoiceLines', () => {
     const invoiceIds = Array.from({ length: 3 }, (_, i) => `inv-${i}`);
     const deps = makeDeps({
       listInvoiceIdsAfter: vi.fn(async () => invoiceIds),
-      fetchLinesForInvoice: vi.fn(async (invoiceId: string) => [line(`${invoiceId}-l1`, invoiceId)]),
+      fetchLinesForInvoices: perInvoice(async (invoiceId: string) => [line(`${invoiceId}-l1`, invoiceId)]),
     });
 
     const result = await syncSalesInvoiceLines(deps, ctx, 60_000);
@@ -121,7 +140,7 @@ describe('syncSalesInvoiceLines', () => {
   it('does not upsert when an invoice in the batch has no lines', async () => {
     const deps = makeDeps({
       listInvoiceIdsAfter: vi.fn(async () => ['inv-1']),
-      fetchLinesForInvoice: vi.fn(async () => []),
+      fetchLinesForInvoices: vi.fn(async () => []),
     });
 
     const result = await syncSalesInvoiceLines(deps, ctx, 60_000);
@@ -150,7 +169,7 @@ describe('syncSalesInvoiceLines', () => {
         clockMs.value += 70_000;
         return batch;
       }),
-      fetchLinesForInvoice: vi.fn(async (invoiceId: string) => [line(`${invoiceId}-l1`, invoiceId)]),
+      fetchLinesForInvoices: perInvoice(async (invoiceId: string) => [line(`${invoiceId}-l1`, invoiceId)]),
       nowMs: () => clockMs.value,
     });
 
@@ -171,7 +190,7 @@ describe('syncSalesInvoiceLines', () => {
     const deps = makeDeps({
       readCheckpoint: vi.fn(async () => ({ cursor_value: 'inv-0', records_synced: 5 })),
       listInvoiceIdsAfter: vi.fn(async () => ['inv-1', 'inv-2']),
-      fetchLinesForInvoice: vi.fn(async (invoiceId: string) => {
+      fetchLinesForInvoices: perInvoice(async (invoiceId: string) => {
         if (invoiceId === 'inv-2') {
           throw new Error('BC request failed');
         }
@@ -218,5 +237,32 @@ describe('syncSalesInvoiceLines', () => {
     expect(result.error).toBe('store offline');
     expect(result.complete).toBe(false);
     expect(deps.listInvoiceIdsAfter).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchLinesForInvoicesFromBc', () => {
+  it('asks BC once for the invoices by id with their lines expanded, and returns the lines with their invoice id', async () => {
+    const listResourcePage = vi.fn(async () => [
+      { id: 'a', salesInvoiceLines: [{ id: 'a1', documentId: 'a' }, { id: 'a2' }] },
+      { id: 'b', salesInvoiceLines: [] },
+      { id: 'c' },
+    ]);
+    const lines = await fetchLinesForInvoicesFromBc({ listResourcePage } as never, ['a', 'b', 'c']);
+    expect(listResourcePage).toHaveBeenCalledWith('salesInvoices', {
+      filter: 'id eq a or id eq b or id eq c',
+      top: 3,
+      select: 'id',
+      expand: 'salesInvoiceLines',
+    });
+    expect(lines).toEqual([
+      { id: 'a1', documentId: 'a' },
+      { id: 'a2', documentId: 'a' },
+    ]);
+  });
+
+  it('makes no request for an empty batch', async () => {
+    const listResourcePage = vi.fn();
+    expect(await fetchLinesForInvoicesFromBc({ listResourcePage } as never, [])).toEqual([]);
+    expect(listResourcePage).not.toHaveBeenCalled();
   });
 });

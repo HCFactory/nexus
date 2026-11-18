@@ -31,6 +31,20 @@ interface CustomersClientProps {
 
 export const DELETE_CONFIRM = "Delete this customer? This can't be undone.";
 
+/** Safety cap on automatic rounds; each round is one sync (about 1–2 minutes). */
+const MAX_SYNC_ROUNDS = 200;
+
+/**
+ * Run another round while some part is incomplete without an error and moved
+ * forward (synced records, or its cursor changed since the last round). An
+ * error alone (e.g. a missing BC page) never repeats on its own.
+ */
+function shouldSyncAgain(results: SyncEntityResult[], previous: SyncEntityResult[] | null): boolean {
+  return results.some(
+    (r, i) => !r.complete && !r.error && (r.recordsSynced > 0 || r.cursor !== previous?.[i]?.cursor)
+  );
+}
+
 export function CustomersClient({ customers, canSync, initialSearch, edit, billcom }: CustomersClientProps) {
   const router = useRouter();
   const billcomOn = billcom?.on === true;
@@ -42,10 +56,13 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
   const [notice, setNotice] = useState<{ text: string; href?: string } | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [search, setSearch] = useState(initialSearch ?? "");
-  const [isPending, startTransition] = useTransition();
   const [isDeleting, startDeleteTransition] = useTransition();
   const [syncResults, setSyncResults] = useState<SyncEntityResult[] | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  // Sync runs round after round on its own until everything is complete.
+  const [syncRound, setSyncRound] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  const stopSync = useRef(false);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -59,22 +76,29 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
     });
   }, [customers, search]);
 
-  const runSync = () => {
+  const runSync = async () => {
     setSyncError(null);
-    startTransition(() => {
-      syncBusinessCentralReceivables()
-        .then((results) => {
-          setSyncResults(results);
+    setSyncing(true);
+    stopSync.current = false;
+    let previous: SyncEntityResult[] | null = null;
+    try {
+      for (let round = 1; round <= MAX_SYNC_ROUNDS; round++) {
+        setSyncRound(round);
+        const results = await syncBusinessCentralReceivables();
+        setSyncResults(results);
+        if (stopSync.current || !shouldSyncAgain(results, previous)) {
           // New or changed customers were queued for Bill.com; send them now.
           if (billcomAdmin && !results.some((r) => r.error)) pushPanel.current?.startPending();
-        })
-        .catch((error) => {
-          setSyncError(
-            error instanceof Error ? error.message : "Business Central sync failed"
-          );
-          setSyncResults(null);
-        });
-    });
+          break;
+        }
+        previous = results;
+      }
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "Business Central sync failed");
+      setSyncResults(null);
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const removeCustomer = (customer: BusinessCentralCustomer) => {
@@ -108,7 +132,6 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
           <Button
             type="button"
             size="sm"
-            disabled={isPending}
             onClick={() => {
               setFormFor("new");
               setNotice(null);
@@ -124,12 +147,20 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
             type="button"
             variant="outline"
             size="sm"
-            disabled={isPending}
-            onClick={runSync}
+            disabled={syncing}
+            onClick={() => void runSync()}
           >
-            <RefreshCw className={cn("size-4", isPending && "animate-spin")} />
-            {isPending ? "Syncing…" : "Sync now"}
+            <RefreshCw className={cn("size-4", syncing && "animate-spin")} />
+            {syncing ? "Syncing…" : "Sync now"}
           </Button>
+        )}
+        {syncing && (
+          <span className="flex items-center gap-2 text-xs text-foreground-subtle">
+            Round {syncRound} — keep this page open
+            <Button type="button" variant="ghost" size="sm" onClick={() => (stopSync.current = true)}>
+              Stop
+            </Button>
+          </span>
         )}
       </header>
 
@@ -185,9 +216,9 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
 
       {syncResults && !syncError && (
         <div className="space-y-2 border-b border-border bg-surface px-5 py-3">
-          {syncResults.map((result) => (
+          {syncResults.map((result, i) => (
             <div
-              key={result.entityType}
+              key={`${result.entityType}-${i}`}
               className="flex flex-wrap items-center gap-2 text-sm"
             >
               <span className="font-medium text-foreground">{result.entityType}</span>
@@ -198,6 +229,8 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
                 <Badge variant="destructive">{result.error}</Badge>
               ) : result.complete ? (
                 <Badge variant="success">Complete</Badge>
+              ) : syncing ? (
+                <Badge variant="warning">In progress</Badge>
               ) : (
                 <Badge variant="warning">
                   Incomplete — click Sync again to continue
@@ -223,7 +256,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
               </p>
             </div>
             {canSync && (
-              <Button type="button" disabled={isPending} onClick={runSync}>
+              <Button type="button" disabled={syncing} onClick={() => void runSync()}>
                 <RefreshCw className="size-4" />
                 Sync now
               </Button>
@@ -337,7 +370,6 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
                               variant="ghost"
                               size="icon-sm"
                               aria-label={`Edit ${customer.display_name}`}
-                              disabled={isPending}
                               onClick={() => {
                                 setFormFor(customer);
                                 setNotice(null);
@@ -351,7 +383,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
                               variant="ghost"
                               size="icon-sm"
                               aria-label={`Delete ${customer.display_name}`}
-                              disabled={isPending || isDeleting}
+                              disabled={isDeleting}
                               onClick={() => removeCustomer(customer)}
                             >
                               <Trash2 className="size-4" />

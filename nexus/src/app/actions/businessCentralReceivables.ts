@@ -27,10 +27,10 @@ import {
   type SyncEntityResult,
 } from '@/lib/businessCentral/syncRunner';
 import {
+  fetchLinesForInvoicesFromBc,
   syncSalesInvoiceLines,
   type SalesInvoiceLineSyncDeps,
 } from '@/lib/businessCentral/salesInvoiceLineSync';
-import type { BcSalesInvoiceLine } from '@/lib/businessCentral/salesInvoiceLineMapper';
 import { queueChangedCustomers } from '@/lib/billcom/customerSyncHooks';
 import { createServiceClient } from '@/lib/supabase/server';
 import {
@@ -50,6 +50,10 @@ const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 // The card fill starts new batches for up to this long (each batch is one
 // short BC request), then stops and continues on the next sync.
 const CARD_BUDGET_MS = 30_000;
+// Invoice lines get their own window too: the AR budget above is usually spent,
+// which left lines one batch per sync. Worst case for the whole sync stays well
+// under the function timeout (~60s AR + ~30s cards + ~40s lines + page fetches).
+const LINES_BUDGET_MS = 40_000;
 // Sync checkpoint row that remembers where the card fill stopped.
 const CARD_CHECKPOINT = 'customer_card';
 
@@ -119,14 +123,7 @@ function salesInvoiceLineSyncDeps(
       if (error) throw error;
       return (data ?? []).map((row) => row.bc_invoice_id as string);
     },
-    async fetchLinesForInvoice(invoiceId) {
-      // Edm.Guid literals are unquoted in OData v4 filters; no $orderby —
-      // ordering within a single invoice's lines is not needed.
-      return bcClient.listResourcePage<BcSalesInvoiceLine>('salesInvoiceLines', {
-        filter: `documentId eq ${invoiceId}`,
-        top: 500,
-      });
-    },
+    fetchLinesForInvoices: (invoiceIds) => fetchLinesForInvoicesFromBc(bcClient, invoiceIds),
     async upsertLines(rows) {
       const { error } = await supabase
         .from('business_central_sales_invoice_lines')
@@ -176,7 +173,6 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
     const ledgerClient = await createCustomerLedgerClientForOrg(orgId, connection.id);
     const adapters = buildArSyncAdapters({ bcClient, ledgerClient });
 
-    const started = Date.now();
     const ctx = {
       organizationId: orgId,
       connectionId: connection.id,
@@ -322,11 +318,10 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
     // salesInvoiceLineSync.ts) — BC cannot query them as a flat collection,
     // so they are NOT one of the shared-runner adapters above. Give it
     // whatever time budget remains from the overall sync budget.
-    const linesRemaining = Math.max(SYNC_BUDGET_MS - (Date.now() - started), 0);
     const linesResult = await syncSalesInvoiceLines(
       salesInvoiceLineSyncDeps(supabase, orgId, connection.id, bcClient),
       ctx,
-      linesRemaining
+      LINES_BUDGET_MS
     );
     results.push(linesResult);
 

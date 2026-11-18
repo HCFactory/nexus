@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   pullShipTos: vi.fn(),
   pullPriceLists: vi.fn(),
   calls: [] as string[],
+  syncLines: vi.fn(),
   list: vi.fn(),
   checkpoint: null as null | { cursor_value: string | null; records_synced: number },
   upserts: [] as { table: string; row: Record<string, unknown> }[],
@@ -36,7 +37,8 @@ vi.mock('@/lib/businessCentral/customerLedgerClient', () => ({ createCustomerLed
 vi.mock('@/lib/businessCentral/arSyncAdapters', () => ({ buildArSyncAdapters: () => [] }));
 vi.mock('@/lib/businessCentral/syncRunner', () => ({ runAllEntitySyncs: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/lib/businessCentral/salesInvoiceLineSync', () => ({
-  syncSalesInvoiceLines: vi.fn().mockResolvedValue({ entityType: 'sales_invoice_line', recordsSynced: 0, complete: true, cursor: null }),
+  syncSalesInvoiceLines: (...a: unknown[]) => mocks.syncLines(...a),
+  fetchLinesForInvoicesFromBc: vi.fn(),
 }));
 vi.mock('@/lib/businessCentral/customerReferences/transport', () => ({
   createReferenceTransportForOrg: vi.fn().mockResolvedValue({ list: (...a: unknown[]) => mocks.list(...a) }),
@@ -63,6 +65,7 @@ beforeEach(() => {
   mocks.queueChanged.mockReset().mockResolvedValue(3);
   mocks.fillCards.mockReset().mockResolvedValue({ filled: 0, cursor: null, complete: true });
   mocks.list.mockReset().mockResolvedValue([]);
+  mocks.syncLines.mockReset().mockResolvedValue({ entityType: 'sales_invoice_line', recordsSynced: 0, complete: true, cursor: null, error: null });
   mocks.checkpoint = null;
   mocks.upserts.length = 0;
   mocks.pullShipTos.mockReset().mockResolvedValue({ upserted: 0, deleted: 0 });
@@ -164,5 +167,12 @@ describe('sync fills customer card fields in batches', () => {
     const results = await syncBusinessCentralReceivables();
     expect(cardCheckpoint()).toMatchObject({ cursor_value: 'W00500', last_error: 'timeout' });
     expect(results).toContainEqual({ entityType: 'customer', recordsSynced: 500, complete: false, cursor: 'W00500', error: 'Customer card fields: timeout' });
+  });
+});
+
+describe('invoice lines get their own time window', () => {
+  it('passes 40 seconds, not what the other syncs left over', async () => {
+    await syncBusinessCentralReceivables();
+    expect(mocks.syncLines.mock.calls[0][2]).toBe(40_000);
   });
 });
