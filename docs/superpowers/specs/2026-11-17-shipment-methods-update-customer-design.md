@@ -45,3 +45,12 @@ The user's words: the delivery method "will be one off for the order but add a b
 ## Left to the builder
 
 Exact placement of the button beside the field; the empty-state and error wording for the list, reusing the existing list UI's patterns.
+
+## Live check (TEST BC, 2026-11-17)
+
+- An earlier "Sync with BC" failed with BC's "The credentials provided are incorrect" (Payment terms too). It cleared without any code change; it was temporary on BC's side.
+- Sync with BC: 15 shipment methods pulled into Nexus. The sales order's Delivery method dropdown now lists all 15 (plus blank).
+- Add `NXTEST` "Nexus test" → created in BC. Edit to code `NXTEST2`, description "Nexus test renamed" → saved; re-sync showed 0 changes (BC matches).
+- Delete `NXTEST2` → removed from BC; re-sync confirmed it's gone.
+- Delete `WAREHOUSE` → refused: "Used by 9 customers"; still in BC after re-sync.
+- Order W-100535 (TEST1 Zaha Mart, default WAREHOUSE): no button while the order matched; switched to DELIVERY → "Update Customer" appeared → saved, "Saved as TEST1's default delivery method.", button hid. Switched back to WAREHOUSE → button → saved back. The order itself was not saved, so it's unchanged.
