@@ -1,4 +1,5 @@
 import 'server-only';
+import { freshFetchWith } from '@/lib/freshFetch';
 import { apiRoot, createBcClientForOrg, type BcClient } from '../client';
 import { BcConflictError, BcReferenceError, ReferencePageUnavailableError } from './errors';
 
@@ -73,8 +74,10 @@ function mapRecord(source: ReferenceSource, row: Record<string, unknown>): BcRec
 export function createReferenceTransport(
   bc: BcClient,
   companyName: string,
-  fetchImpl: typeof fetch = fetch,
+  baseFetch: typeof fetch = fetch,
 ): ReferenceTransport {
+  // Every request fresh: a page render must not answer a re-read (lines, status) from the first response.
+  const fetchImpl = freshFetchWith(baseFetch);
   const odataBase = `${trimTrailingSlash(bc.config.apiBaseUrl ?? 'https://api.businesscentral.dynamics.com')}/v2.0/${encodeURIComponent(bc.config.environment)}/ODataV4/Company('${encodeURIComponent(companyName)}')`;
   const apiBase = `${apiRoot(bc.config)}/companies(${encodeURIComponent(bc.config.companyId)})`;
 

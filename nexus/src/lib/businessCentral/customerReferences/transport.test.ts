@@ -33,6 +33,20 @@ const odataSource = { kind: 'odata' as const, service: 'CustomerPriceGroups', pa
 const apiSource = { kind: 'api' as const, resource: 'paymentTerms' };
 
 describe('reference transport', () => {
+  it('every request has its own abort signal (a repeated read during a page render is never answered from the first response)', async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      seen.push(init?.signal);
+      return json({ value: [] });
+    });
+    const transport = createReferenceTransport(fakeBcClient(), 'My Co', fetchImpl as unknown as typeof fetch);
+    await transport.list(apiSource);
+    await transport.list(apiSource);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(seen[1]).toBeInstanceOf(AbortSignal);
+    expect(seen[0]).not.toBe(seen[1]);
+  });
+
   it('list follows nextLink across pages', async () => {
     const { transport, calls } = setup([
       json({ value: [{ id: 'a', '@odata.etag': 'W/"1"' }, { id: 'b', '@odata.etag': 'W/"2"' }], '@odata.nextLink': 'https://next/page2' }),
