@@ -61,6 +61,21 @@ async function readStripeCustomerId(scope: StripeScope, bcCustomerNumber: string
   return (data as { stripe_customer_id: string } | null)?.stripe_customer_id ?? null;
 }
 
+/** Whether the setup link exists for this customer on this connection and wasn't cancelled. */
+async function linkStillLive(scope: StripeScope, linkId: string, bcCustomerNumber: string): Promise<boolean> {
+  const { data, error } = await scope.supabase
+    .from('card_setup_links')
+    .select('id, canceled_at')
+    .eq('id', linkId)
+    .eq('organization_id', scope.orgId)
+    .eq('stripe_connection_id', scope.connectionId)
+    .eq('bc_customer_number', bcCustomerNumber)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the setup link: ${error.message}`);
+  const link = data as { canceled_at: string | null } | null;
+  return Boolean(link && !link.canceled_at);
+}
+
 function idOf(value: string | { id: string } | null | undefined): string | null {
   if (!value) return null;
   return typeof value === 'string' ? value : value.id;
@@ -105,6 +120,17 @@ export async function saveCardFromCheckoutSession(
   if (!paymentMethod || !card) return null;
   const customerId = idOf(session.customer as string | { id: string } | null);
   const label = { brand: card.brand, last4: card.last4 };
+
+  // The link must still be live and this customer's on this connection: a
+  // replaced or cancelled link's Stripe page may still be open somewhere.
+  if (!(await linkStillLive(scope, linkId, bcCustomerNumber))) {
+    try {
+      await stripe.paymentMethods.detach(paymentMethod.id);
+    } catch (e) {
+      console.error(`[saveCard] could not detach card ${paymentMethod.id} from cancelled link ${linkId}:`, e);
+    }
+    return null;
+  }
 
   const { data: existing, error: existingError } = await supabase
     .from('customer_cards')

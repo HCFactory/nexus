@@ -46,10 +46,12 @@ function fakeStripe(sess: unknown) {
   };
 }
 
-function setup(cards: Row[] = [], sess: unknown = session()) {
+function setup(cards: Row[] = [], sess: unknown = session(), link: Row = {}) {
   const fake = fakeSupabase({
     customer_cards: cards,
-    card_setup_links: [{ id: 'link-1', organization_id: 'org-1', completed_at: null }],
+    card_setup_links: [
+      { id: 'link-1', organization_id: 'org-1', stripe_connection_id: 'conn-1', bc_customer_number: 'C100', completed_at: null, canceled_at: null, ...link },
+    ],
     stripe_customers: [],
     business_central_customers: [{ organization_id: 'org-1', bc_customer_number: 'C100', display_name: 'Aloha School' }],
   });
@@ -191,6 +193,22 @@ describe('saveCardFromCheckoutSession', () => {
     expect(stripe.customers.update).not.toHaveBeenCalled();
     expect(stripe.paymentMethods.detach).not.toHaveBeenCalled();
     expect(fake.writes).toEqual([]);
+  });
+
+  it('a card from a cancelled or replaced link is refused and removed from Stripe; nothing is saved', async () => {
+    vi.mocked(sendCardSavedNotification).mockClear();
+    const { fake, stripe, scope } = setup([], session(), { canceled_at: '2026-11-17T00:00:00Z' });
+    expect(await saveCardFromCheckoutSession(scope, 'cs_1')).toBeNull();
+    expect(fake.tables.customer_cards).toEqual([]);
+    expect(stripe.paymentMethods.detach).toHaveBeenCalledWith('pm_new');
+    expect(stripe.customers.update).not.toHaveBeenCalled();
+    expect(sendCardSavedNotification).not.toHaveBeenCalled();
+  });
+
+  it("a link that isn't this customer's on this connection is refused", async () => {
+    const { fake, scope } = setup([], session(), { bc_customer_number: 'OTHER' });
+    expect(await saveCardFromCheckoutSession(scope, 'cs_1')).toBeNull();
+    expect(fake.tables.customer_cards).toEqual([]);
   });
 
   it('ignores sessions from another organization', async () => {

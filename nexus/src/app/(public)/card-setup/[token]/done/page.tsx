@@ -26,7 +26,8 @@ export default async function CardSetupDonePage({
 
   const link = await findSetupLinkByToken(supabase, token);
   const ownSession = Boolean(link && sessionId && sessionId === link.stripe_checkout_session_id);
-  if (!link || (!ownSession && !link.completed_at)) {
+  // A cancelled or replaced link: its Stripe page may still have been open; nothing is saved.
+  if (!link || link.canceled_at || (!ownSession && !link.completed_at)) {
     return <CardSetupMessage>This link is no longer valid — please contact us.</CardSetupMessage>;
   }
 
