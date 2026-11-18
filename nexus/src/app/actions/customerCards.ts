@@ -2,8 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { requireOrganizationContext } from '@/lib/auth/currentUserAccess';
+import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnection';
 import { sendCardSetupEmail } from '@/lib/email';
-import { createStripeForConnection, resolveDefaultStripeConnection } from '@/lib/stripe/connection';
+import { createStripeForConnection, resolveStripeConnection } from '@/lib/stripe/connection';
 import { cancelSetupLinks, createSetupLink } from '@/lib/stripe/setupLinks';
 import { createServiceClient } from '@/lib/supabase/server';
 import type { CustomerCardView } from '@/types/stripe';
@@ -11,6 +12,12 @@ import type { CustomerCardView } from '@/types/stripe';
 // NOTE: only async functions are exported here; types live in @/types/stripe.
 
 const NO_PERMISSION = "You don't have permission to change customers";
+/** The Stripe connection picked for the user's active BC environment; none = off. */
+async function environmentStripe(supabase: ReturnType<typeof createServiceClient>, orgId: string, userId: string) {
+  const env = await resolveActiveBcConnection(orgId, userId);
+  return env ? resolveStripeConnection(supabase, orgId, env.id) : null;
+}
+
 const STRIPE_OFF = "Stripe isn't set up — an admin can add it in Admin.";
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -19,7 +26,7 @@ async function requireEditScope(bcCustomerNumber: string) {
   if (!ctx.access.canEditCustomers || !ctx.access.canViewCustomers) throw new Error(NO_PERMISSION);
   if (!bcCustomerNumber) throw new Error('This customer has no Business Central number.');
   const supabase = createServiceClient();
-  const connection = await resolveDefaultStripeConnection(supabase, ctx.orgId);
+  const connection = await environmentStripe(supabase, ctx.orgId, ctx.user.id as string);
   if (!connection || !connection.enabled) throw new Error(STRIPE_OFF);
   return { supabase, orgId: ctx.orgId, userId: ctx.user.id as string, connectionId: connection.id };
 }
@@ -29,7 +36,7 @@ export async function getCustomerCardView(bcCustomerNumber: string): Promise<Cus
   if (!ctx.access.canViewCustomers) throw new Error("You don't have permission to view customers");
   const canEdit = ctx.access.canEditCustomers;
   const supabase = createServiceClient();
-  const connection = await resolveDefaultStripeConnection(supabase, ctx.orgId);
+  const connection = await environmentStripe(supabase, ctx.orgId, ctx.user.id as string);
   if (!connection || !connection.enabled) {
     return { stripe: 'off', card: null, openLink: null, canEdit };
   }

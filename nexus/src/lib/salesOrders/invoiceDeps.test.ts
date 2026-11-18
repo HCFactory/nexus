@@ -39,6 +39,7 @@ describe('buildInvoiceDeps: Bill.com client', () => {
   it('uses the Bill.com client when it can be created', async () => {
     const deps = await buildInvoiceDeps(scope)
     expect(deps).toMatchObject({ billcom: client, billcomConnectionId: 'bcom-1', timeZone: 'America/Chicago', billcomUnavailable: false })
+    expect(mocks.resolveConn).toHaveBeenCalledWith(expect.anything(), 'org-1', 'conn-1')
   })
 
   it('a disabled connection gives billcom = null, quietly', async () => {

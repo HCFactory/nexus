@@ -47,6 +47,10 @@ export interface UpdateBcConnectionInput {
   apiBaseUrl?: string | null;
   timeZone?: string | null;
   billcomViaConnector?: boolean;
+  /** The Bill.com connection this environment uses; null = none (Bill.com off here). */
+  billcomConnectionId?: string | null;
+  /** The Stripe connection this environment uses; null = none (Stripe off here). */
+  stripeConnectionId?: string | null;
 }
 
 function canManageBusinessCentralConnection(access: ResolvedUserAccess): boolean {
@@ -240,6 +244,21 @@ export async function createBcConnection(
   return data as BusinessCentralConnection;
 }
 
+/** The id if it is a connection of this org; null clears the pick. Throws for anything else. */
+async function connectionInOrg(
+  supabase: ReturnType<typeof createServiceClient>,
+  table: 'billcom_connections' | 'stripe_connections',
+  id: string | null,
+  orgId: string,
+  label: string,
+): Promise<string | null> {
+  if (!id) return null;
+  const { data, error } = await supabase.from(table).select('id').eq('id', id).eq('organization_id', orgId).maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error(`${label} connection not found`);
+  return id;
+}
+
 /** Edits an existing BC environment connection. */
 export async function updateBcConnection(
   id: string,
@@ -268,6 +287,12 @@ export async function updateBcConnection(
   }
   if (input.billcomViaConnector !== undefined) {
     updates.billcom_via_connector = input.billcomViaConnector === true;
+  }
+  if (input.billcomConnectionId !== undefined) {
+    updates.billcom_connection_id = await connectionInOrg(supabase, 'billcom_connections', input.billcomConnectionId, orgId, 'Bill.com');
+  }
+  if (input.stripeConnectionId !== undefined) {
+    updates.stripe_connection_id = await connectionInOrg(supabase, 'stripe_connections', input.stripeConnectionId, orgId, 'Stripe');
   }
 
   const { data, error } = await supabase

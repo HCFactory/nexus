@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { createStripeForConnection, getWebhookSecret, resolveDefaultStripeConnection } from './connection';
+import { createStripeForConnection, getWebhookSecret, resolveStripeConnection } from './connection';
 
 const state = vi.hoisted(() => ({ rows: [] as unknown[], conn: null as unknown, rpcCalls: [] as string[], rpcData: {} as Record<string, unknown> }));
 
@@ -31,16 +31,42 @@ beforeEach(() => {
   state.rpcData = {};
 });
 
-describe('resolveDefaultStripeConnection', () => {
-  it('prefers the enabled default and reports livemode', async () => {
-    state.rows = [
-      { id: 'a', is_enabled: true, is_default: false, livemode: false },
-      { id: 'b', is_enabled: true, is_default: true, livemode: true },
-    ];
-    expect(await resolveDefaultStripeConnection(fakeSupabase(), 'org')).toEqual({ id: 'b', enabled: true, livemode: true });
+describe('resolveStripeConnection', () => {
+  type Row = Record<string, unknown>;
+  function tables(t: Record<string, Row[]>) {
+    return {
+      from: (table: string) => {
+        const filters: Array<(r: Row) => boolean> = [];
+        const q: Record<string, unknown> = {
+          select: () => q,
+          eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), q),
+          maybeSingle: async () => ({ data: (t[table] ?? []).filter((r) => filters.every((f) => f(r)))[0] ?? null, error: null }),
+        };
+        return q;
+      },
+    } as never;
+  }
+  const env = (stripe_connection_id: string | null, organization_id = 'org') => ({ id: 'bc-1', organization_id, stripe_connection_id });
+  const stripeRow = (id: string, is_enabled = true, livemode = false, organization_id = 'org') => ({ id, organization_id, is_enabled, is_default: false, livemode });
+
+  it("uses the Stripe connection picked on the active BC environment and reports livemode", async () => {
+    const sb = tables({ business_central_connections: [env('b')], stripe_connections: [stripeRow('a'), stripeRow('b', true, true)] });
+    expect(await resolveStripeConnection(sb, 'org', 'bc-1')).toEqual({ id: 'b', enabled: true, livemode: true });
   });
-  it('returns null when there are none', async () => {
-    expect(await resolveDefaultStripeConnection(fakeSupabase(), 'org')).toBeNull();
+
+  it('reports a picked connection that is disabled as disabled', async () => {
+    const sb = tables({ business_central_connections: [env('a')], stripe_connections: [stripeRow('a', false)] });
+    expect(await resolveStripeConnection(sb, 'org', 'bc-1')).toEqual({ id: 'a', enabled: false, livemode: false });
+  });
+
+  it('nothing picked means off', async () => {
+    const sb = tables({ business_central_connections: [env(null)], stripe_connections: [{ ...stripeRow('a'), is_default: true }] });
+    expect(await resolveStripeConnection(sb, 'org', 'bc-1')).toBeNull();
+  });
+
+  it("never uses another organisation's environment or connection", async () => {
+    expect(await resolveStripeConnection(tables({ business_central_connections: [env('a', 'org-2')], stripe_connections: [stripeRow('a')] }), 'org', 'bc-1')).toBeNull();
+    expect(await resolveStripeConnection(tables({ business_central_connections: [env('a')], stripe_connections: [stripeRow('a', true, false, 'org-2')] }), 'org', 'bc-1')).toBeNull();
   });
 });
 

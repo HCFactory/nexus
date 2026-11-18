@@ -50,6 +50,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
       },
       order: () => q,
       range: (a: number, b: number) => ((range = [a, b]), q),
+      maybeSingle: async () => { const r = run(); return { data: r.data[0] ?? null, error: null }; },
       update: (p: Row) => {
         writes.push({ table, op: 'update' });
         mode = 'update';
@@ -719,6 +720,8 @@ describe('live-test fixes: failed links and missing fields', () => {
 describe('needs_attention links and the sync re-queue', () => {
   const withConnection = (sb: ReturnType<typeof fakeSupabase>) => {
     sb.tables.billcom_connections = [{ id: BILL, organization_id: ORG, is_enabled: true, is_default: true }];
+    // The BC environment picks this Bill.com connection (per-environment connections, 071).
+    sb.tables.business_central_connections = [{ id: BC, organization_id: ORG, billcom_connection_id: BILL }];
     return { supabase: sb.client, orgId: ORG, bcConnectionId: BC };
   };
   const hashOf = (r: BusinessCentralCustomer) => payloadHash(toBillcomCustomer(r), shouldBeArchived(r));
