@@ -5,7 +5,9 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
 ## Up next (agreed order, 2026-11-17)
 
 1. **Go-live of `feat/sales-orders`** (sales orders, invoicing, change invoice, shipment methods, order number up front, Stripe saved cards). Do these in production **before** merging to `main`, or the live app will query tables/columns that don't exist:
-   - apply migrations **060–068** in production Supabase (059 if not already there);
+   - ~~apply migrations 060–068 in production Supabase~~ **done:** the live site uses the same Supabase project as local (user confirmed 2026-11-17), so 060–068 are already applied;
+   - in Nexus Settings, add the **production Bill.com** connection (only the sandbox is set up today) and make it the default when going live;
+   - ⚠️ **payments gap:** with the connector's invoice copying off, Bill.com payments on Nexus-created invoices are likely not sent back to BC by the connector (it doesn't know those invoices). Until the Payments project (#5.4) ships, payments may need recording in BC by hand. Confirm in the Bill.com sandbox or with Bill.com support before switching;
    - switch off the Bill.com connector's invoice copying from BC (otherwise invoices are created twice in Bill.com);
    - BC production: check General Ledger Setup "Allow Posting From/To" covers today (and any User Setup line for the Nexus app user), and tick **Manual Nos.** on the sales order number series;
    - after the merge deploys: switch Nexus to the production BC connection, run Customer Sync + Bill.com customer push, sync Shipment methods, invoice one real order and compare BC, Nexus and Bill.com.
