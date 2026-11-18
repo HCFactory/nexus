@@ -24,6 +24,8 @@ vi.mock('next/navigation', () => ({ useRouter: () => nav }));
 vi.mock('@/app/actions/salesOrderInvoicing', () => ({ createInvoice: vi.fn(), retryInvoice: vi.fn() }));
 const changeActions = vi.hoisted(() => ({ startChangeInvoice: vi.fn(), retryChangeInvoice: vi.fn(), discardChangeInvoice: vi.fn() }));
 vi.mock('@/app/actions/salesInvoiceChanges', () => changeActions);
+const customerActions = vi.hoisted(() => ({ setCustomerDeliveryMethod: vi.fn() }));
+vi.mock('@/app/actions/customerEditing', () => customerActions);
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 
 const customer = (over: Partial<CustomerRow>): CustomerRow => ({
@@ -877,5 +879,55 @@ describe('changing an invoice', () => {
     expect(screen.getByText('Posting Date is not within your range.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Change invoice' })).toBeNull();
+  });
+});
+
+describe('Update Customer (delivery method)', () => {
+  const pick = (code: string) => fireEvent.change(screen.getByLabelText('Delivery method'), { target: { value: code } });
+  const button = () => screen.queryByRole('button', { name: 'Update Customer' });
+
+  it("shows Update Customer when the order's method differs and saves it", async () => {
+    customerActions.setCustomerDeliveryMethod.mockResolvedValue({ ok: true });
+    renderForm({ order: order({ shipment_method_code: 'UPS' }) });
+    expect(button()).toBeNull();
+    pick('GROUND');
+    fireEvent.click(button()!);
+    await waitFor(() => expect(customerActions.setCustomerDeliveryMethod).toHaveBeenCalledWith('cust-1', 'GROUND'));
+    expect(await screen.findByText("Saved as C1's default delivery method.")).toBeInTheDocument();
+    expect(button()).toBeNull();
+  });
+
+  it('hidden when the method matches the customer', () => {
+    renderForm({ order: order({ shipment_method_code: 'UPS' }) });
+    expect(button()).toBeNull();
+  });
+
+  it('hidden without canSaveShipTo', () => {
+    renderForm({ order: order({ shipment_method_code: 'UPS' }), canSaveShipTo: false });
+    pick('GROUND');
+    expect(button()).toBeNull();
+  });
+
+  it('no customer, no button', () => {
+    renderForm();
+    pick('GROUND');
+    expect(button()).toBeNull();
+  });
+
+  it('saves a blank method', async () => {
+    customerActions.setCustomerDeliveryMethod.mockResolvedValue({ ok: true });
+    renderForm({ order: order({ shipment_method_code: 'UPS' }) });
+    pick('');
+    fireEvent.click(button()!);
+    await waitFor(() => expect(customerActions.setCustomerDeliveryMethod).toHaveBeenCalledWith('cust-1', ''));
+  });
+
+  it('shows the error from the save in place', async () => {
+    customerActions.setCustomerDeliveryMethod.mockResolvedValue({ ok: false, error: "You don't have permission to change customers" });
+    renderForm({ order: order({ shipment_method_code: 'UPS' }) });
+    pick('GROUND');
+    fireEvent.click(button()!);
+    expect(await screen.findByText("You don't have permission to change customers")).toBeInTheDocument();
+    expect(button()).not.toBeNull();
   });
 });

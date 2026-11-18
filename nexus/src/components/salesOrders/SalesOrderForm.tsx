@@ -45,6 +45,7 @@ import { NotesPanel } from './NotesPanel';
 import { SalesOrderLinesTable } from './SalesOrderLinesTable';
 import type { ShipToAddressFields, ShipToChoice } from './ShipToPicker';
 import { StatusSelect } from './StatusSelect';
+import { UpdateCustomerButton } from './UpdateCustomerButton';
 import { SyncBadge } from './SyncBadge';
 import { ChangeInvoiceButton, InvoiceChangeStatus, InvoiceControls, InvoiceStatus, SAVE_FIRST, isInvoiceLocked, isInvoiceRunning, showsCreateInvoice } from './InvoiceControls';
 
@@ -312,6 +313,8 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const busy = pending;
   const invoiceShown = invoiceNumber ?? autoInvoiceNumber(order?.bc_order_number ?? null, customerPo);
 
+  // The customer as saved in Nexus (null before one is picked): "Update Customer" compares against it.
+  const savedCustomer = customers.find((c) => c.id === customerId) ?? null;
   const currentCustomer = (): CustomerRow =>
     customers.find((c) => c.id === customerId) ?? customerFromHeader(customerId, customerNumber, defaultShipCode, header);
 
@@ -766,14 +769,24 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
                   </div>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <SelectField
-                    id="so-shipment_method_code"
-                    label="Delivery method"
-                    value={header.shipment_method_code}
-                    options={selectOptions.shipmentMethods ?? []}
-                    disabled={locked || busy}
-                    onChange={(v) => setField('shipment_method_code', v)}
-                  />
+                  <div className="space-y-1.5">
+                    <SelectField
+                      id="so-shipment_method_code"
+                      label="Delivery method"
+                      value={header.shipment_method_code}
+                      options={selectOptions.shipmentMethods ?? []}
+                      disabled={locked || busy}
+                      onChange={(v) => setField('shipment_method_code', v)}
+                    />
+                    {canSaveShipTo && savedCustomer && (
+                      <UpdateCustomerButton
+                        customerId={savedCustomer.id}
+                        customerNumber={savedCustomer.bc_customer_number ?? customerNumber}
+                        orderMethod={header.shipment_method_code}
+                        customerMethod={savedCustomer.shipment_method_code ?? ''}
+                      />
+                    )}
+                  </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="so-requested-date" className={LABEL}>Requested delivery date</Label>
                     <Input
