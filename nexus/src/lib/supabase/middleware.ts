@@ -1,7 +1,34 @@
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
+const hostOf = (url: string | undefined): string | null => {
+  try {
+    return url?.trim() ? new URL(url.trim()).host.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * On the card setup address (CARD_SETUP_BASE_URL, when it is its own host),
+ * only card setup pages and the Stripe webhook are served; every other page
+ * goes to the same path on the main address (NEXT_PUBLIC_APP_URL).
+ */
+function cardHostRedirect(request: NextRequest): NextResponse | null {
+  const cardHost = hostOf(process.env.CARD_SETUP_BASE_URL);
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  const appHost = hostOf(appUrl);
+  if (!cardHost || !appUrl || !appHost || cardHost === appHost) return null;
+  if ((request.headers.get('host') ?? request.nextUrl.host).toLowerCase() !== cardHost) return null;
+  const { pathname, search } = request.nextUrl;
+  if (pathname.startsWith('/card-setup/') || pathname.startsWith('/api/stripe/webhook/')) return null;
+  return NextResponse.redirect(new URL(pathname + search, appUrl), 308);
+}
+
 export async function updateSession(request: NextRequest) {
+  const toMain = cardHostRedirect(request);
+  if (toMain) return toMain;
+
   let supabaseResponse = NextResponse.next({
     request,
   });

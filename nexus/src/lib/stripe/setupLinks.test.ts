@@ -56,6 +56,16 @@ describe('newSetupToken', () => {
   it('builds the public URL from NEXT_PUBLIC_APP_URL', () => {
     expect(setupLinkUrl('abc')).toBe('https://nexus.example.com/card-setup/abc');
   });
+
+  it('uses CARD_SETUP_BASE_URL when set (trailing slash ignored)', () => {
+    vi.stubEnv('CARD_SETUP_BASE_URL', 'https://payment.example.com/');
+    expect(setupLinkUrl('abc')).toBe('https://payment.example.com/card-setup/abc');
+  });
+
+  it('a blank CARD_SETUP_BASE_URL falls back to NEXT_PUBLIC_APP_URL', () => {
+    vi.stubEnv('CARD_SETUP_BASE_URL', '  ');
+    expect(setupLinkUrl('abc')).toBe('https://nexus.example.com/card-setup/abc');
+  });
 });
 
 describe('findUsableSetupLink', () => {
