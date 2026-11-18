@@ -55,7 +55,8 @@ async function scope(requireCharge: boolean): Promise<{ deps: ChargeDeps; userId
       return {
         bcInvoiceId: inv.bc_invoice_id,
         customerNumber: inv.customer_number,
-        invoiceNumber: inv.bc_invoice_number ?? inv.external_document_number ?? inv.bc_invoice_id,
+        // The "Invoice #" staff see in the Nexus page header (BC External Document No.).
+        invoiceNumber: inv.external_document_number || inv.bc_invoice_number || inv.bc_invoice_id,
         invoiceNumbers: [inv.external_document_number ?? '', inv.bc_invoice_number ?? ''],
         salesOrderId: page.salesOrder?.id ?? null,
         billcomInvoiceId: page.salesOrder?.billcomInvoiceId ?? null,

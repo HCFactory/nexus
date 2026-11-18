@@ -105,7 +105,7 @@ it('chargeInvoiceCard passes the current user and the default Stripe connection'
   expect(await deps.loadInvoice(INV)).toEqual({
     bcInvoiceId: INV,
     customerNumber: 'C1',
-    invoiceNumber: 'INV-1',
+    invoiceNumber: 'W-1',
     invoiceNumbers: ['W-1', 'INV-1'],
     salesOrderId: 'so-1',
     billcomInvoiceId: '00e1',
