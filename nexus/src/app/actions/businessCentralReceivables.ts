@@ -14,8 +14,9 @@ import { buildArSyncAdapters } from '@/lib/businessCentral/arSyncAdapters';
 import { createBcClientForOrg, type BcClient } from '@/lib/businessCentral/client';
 import { createReferenceTransportForOrg } from '@/lib/businessCentral/customerReferences/transport';
 import {
+  CARD_SELECT_FIELDS,
   CUSTOMER_CARD_SOURCE,
-  fillCustomerCardFields,
+  fillCustomerCardFieldsInChunks,
 } from '@/lib/businessCentral/customers/customerCardFill';
 import { pullShipTos } from '@/lib/businessCentral/shipTo/shipToService';
 import { pullSalesPriceLists } from '@/lib/businessCentral/priceLists/priceListSync';
@@ -46,6 +47,11 @@ import {
 // below the deployment's serverless function timeout.
 const SYNC_BUDGET_MS = 60_000;
 const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+// The card fill starts new batches for up to this long (each batch is one
+// short BC request), then stops and continues on the next sync.
+const CARD_BUDGET_MS = 30_000;
+// Sync checkpoint row that remembers where the card fill stopped.
+const CARD_CHECKPOINT = 'customer_card';
 
 type SupabaseServiceClient = ReturnType<typeof createServiceClient>;
 
@@ -193,12 +199,14 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
       SYNC_BUDGET_MS
     );
 
-    // Fill the extra customer columns from the Customer_Card_Excel OData page.
-    // Runs after customers are upserted; a failure is reported but never
-    // blocks the rest of the sync.
+    // Fill the extra customer columns from the Customer_Card_Excel OData page,
+    // in batches of customers sorted by number, continuing from where the last
+    // sync stopped. Gets its own time window (the AR budget above is usually
+    // spent). A failure is reported but never blocks the rest of the sync.
     try {
+      const checkpoints = checkpointStore(supabase, orgId);
+      const saved = await checkpoints.read(connection.id, CARD_CHECKPOINT);
       const transport = await createReferenceTransportForOrg(orgId, connection.id);
-      const cards = await transport.list(CUSTOMER_CARD_SOURCE);
       const known = new Map<string, string | null>();
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase
@@ -214,15 +222,43 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
         }
         if ((data ?? []).length < 1000) break;
       }
-      await fillCustomerCardFields(cards, known, async (number, patch) => {
-        const { error } = await supabase
-          .from('business_central_customers')
-          .update(patch)
-          .eq('organization_id', orgId)
-          .eq('bc_connection_id', connection.id)
-          .eq('bc_customer_number', number);
-        if (error) throw error;
+      const cardStarted = Date.now();
+      const card = await fillCustomerCardFieldsInChunks({
+        startAfter: saved?.cursor_value ?? null,
+        hasTime: () => Date.now() - cardStarted < CARD_BUDGET_MS,
+        known,
+        fetchChunk: (after, size) =>
+          transport.list(CUSTOMER_CARD_SOURCE, {
+            select: CARD_SELECT_FIELDS,
+            orderby: 'No',
+            top: size,
+            ...(after !== null ? { filter: `No gt '${after.replace(/'/g, "''")}'` } : {}),
+          }),
+        update: async (number, patch) => {
+          const { error } = await supabase
+            .from('business_central_customers')
+            .update(patch)
+            .eq('organization_id', orgId)
+            .eq('bc_connection_id', connection.id)
+            .eq('bc_customer_number', number);
+          if (error) throw error;
+        },
       });
+      await checkpoints.write(connection.id, CARD_CHECKPOINT, {
+        cursor_value: card.cursor,
+        records_synced: card.complete ? 0 : Number(saved?.records_synced ?? 0) + card.filled,
+        last_error: card.error ?? null,
+        complete: card.complete,
+      });
+      if (!card.complete) {
+        results.push({
+          entityType: 'customer',
+          recordsSynced: card.filled,
+          complete: false,
+          cursor: card.cursor,
+          error: card.error ? `Customer card fields: ${card.error}` : null,
+        });
+      }
     } catch (cardError) {
       results.push({
         entityType: 'customer',

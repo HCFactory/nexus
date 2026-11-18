@@ -90,6 +90,12 @@ describe('reference transport', () => {
     expect(calls[0].url).toContain("?$filter=A%20eq%20'x'&$select=No,Name");
   });
 
+  it('list with orderby and top asks BC for one sorted batch', async () => {
+    const { transport, calls } = setup([json({ value: [] })]);
+    await transport.list(odataSource, { filter: "No gt 'W1'", select: ['No'], orderby: 'No', top: 500 });
+    expect(calls[0].url).toContain("?$filter=No%20gt%20'W1'&$select=No&$orderby=No&$top=500");
+  });
+
   it('list without a filter sends no query string', async () => {
     const { transport, calls } = setup([json({ value: [] })]);
     await transport.list(odataSource, {});

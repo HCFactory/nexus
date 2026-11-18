@@ -4,20 +4,42 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
 
 ## Up next (agreed order, 2026-11-17)
 
-1. **Go-live of `feat/sales-orders`** (sales orders, invoicing, change invoice, shipment methods, order number up front, Stripe saved cards). Do these in production **before** merging to `main`, or the live app will query tables/columns that don't exist:
+1. ~~**Go-live of `feat/sales-orders`**~~ **Done 2026-11-18** (PR #10, #11; per-environment Bill.com/Stripe connections PR #12). Kept for reference: (sales orders, invoicing, change invoice, shipment methods, order number up front, Stripe saved cards). Do these in production **before** merging to `main`, or the live app will query tables/columns that don't exist:
    - ~~apply migrations 060–068 in production Supabase~~ **done:** the live site uses the same Supabase project as local (user confirmed 2026-11-17), so 060–068 are already applied;
    - **Bill.com connector stays on in production** (user decision 2026-11-17); it keeps copying invoices and sending payments back to BC. So: apply migration **069** (same database, so applying it once covers both), and in Nexus **Admin** → Business Central Environments → Edit on the **production** connection → tick "Bill.com invoices come from Bill.com's own BC connector". Create/Change invoice then post in BC only there (spec `docs/superpowers/specs/2026-11-17-billcom-via-connector-design.md`). TEST stays unticked (full flow with the Bill.com sandbox). No production Bill.com connection is needed in Nexus for now;
    - BC production: check General Ledger Setup "Allow Posting From/To" covers today (and any User Setup line for the Nexus app user), and tick **Manual Nos.** on the sales order number series;
    - after the merge deploys: switch Nexus to the production BC connection, run Customer Sync, sync Shipment methods, invoice one real order in Nexus and check BC posted it and the connector copied it to Bill.com once.
    - Stripe stays off until its pre-live fixes are done (see #12) and Charge saved cards stays off for everyone.
 2. **Send invoice** (#5.3): a button that has Bill.com email the invoice to the customer. Small, low risk.
-3. **Stripe pre-live fixes** (#12): the failed→charged duplicate-charge guard and the Retry fixes (a)–(d), before live Stripe keys.
+3. **Stripe pre-live fixes** (#12): **built 2026-11-18** on branch `fix/stripe-prelive` (spec `docs/superpowers/specs/2026-11-18-stripe-prelive-fixes-design.md`; 1664 tests; reviewed). Covers the failed→charged duplicate-charge guard, Retry fixes (a)–(d), and Bill.com writes guarded by attempt.
+   - **Still to do — push and merge** `fix/stripe-prelive` (local only; not pushed). The user asked to do this later. Safe to merge any time: Stripe charging is off for everyone, and Production has no Stripe connection.
+   - **Still to do — live check in TEST** (Stripe test mode + Bill.com sandbox), the user asked to do it later:
+     1. Switch to TEST and turn on Charge saved cards for the tester.
+     2. Briefly disable the Bill.com sandbox connection.
+     3. Charge one past-due TEST invoice with a saved test card. Expect "Bill.com isn't connected".
+     4. Re-enable Bill.com and press Retry. Expect it to check Bill.com, then record.
+     5. Press Retry again on a recorded or paid invoice. Expect a refusal.
+     6. Turn the permission back off.
+   - **Then, to turn on live Stripe in Production** (in order):
+     1. Do the live check above, then push and merge.
+     2. Verify a sending domain in Resend and set `CUSTOMER_EMAIL_FROM` in Vercel, for Email link and the "card saved" email. Copy link works without it.
+     3. Confirm `NEXT_PUBLIC_APP_URL` in Vercel is the real site address.
+     4. Enable the live Stripe connection (Admin → Stripe) and pick it for Production (Admin → Business Central Environments → Production → Stripe).
+     5. Do one real card save to confirm the webhook arrives.
+     6. Turn on Charge saved cards only for the right people.
+   - **Charging in Production waits for Bill.com:** Charge card needs a Nexus-made Bill.com invoice, and today Bill.com's own connector makes them. It also waits for the switch away from the connector (see the duplicate-customer note under customer sync go-live prep).
+   - **Gap left (from review):** a Stripe charge that completes after the request that started it died is only noticed by Check status while the row is still processing. If the row was already marked not charged, nothing notices. A `payment_intent.succeeded` webhook would close this.
+   - **Live Stripe connection added 2026-11-18** (live mode, webhook `checkout.session.completed`, snapshot). Left **disabled**, and Production → Stripe = None.
 4. **Payments** (#5.4): Bill.com payments into Nexus, reviewed, then recorded in BC. Big, high risk (writes to the general ledger); needs its own design, including the Bill.com rounding difference.
 5. Older items still open: item-editing permission (#8), BC edit-conflict warning for items (#9), database can't be rebuilt from migrations (#11).
 
 ## To do
 
 1. **Go-live prep for customer sync** — settings to change in production BC and Bill.com before turning the sync on there. No code changes.
+   - **First production sync, 2026-11-18:** 3,644 customers synced. The user then published `ShipToAddresses`, `CustomerTemplates` and `NoSeries` in production, and ship-to addresses work. Setup steps are saved in `docs/onboarding/business-central-setup.md`.
+   - **To do (user): check `CustomerTemplates` in production BC.** In Web Services, its Object Name must be **"Customer Templ. Card"**, the same as TEST (usually page 1382). Claude first said page 1340, which was wrong. If it points elsewhere, re-point it, or creating customers from a template may fail.
+   - **Built 2026-11-18 (branch `fix/card-fields-chunks`): "Customer card fields" timeout fix.** Nexus now asks for only the 16 fields it uses (BC skips the calculated fields), in batches of 500 customers sorted by number. It gets its own 30-second window and continues from the last customer on the next sync (sync checkpoint `customer_card`, no migration). Read-only check against production BC: all 3,637 cards in 8 batches, about 5 s in total (one request used to pass 50 s), and the etag is the same with and without `$select`. **To do:** merge, then sync once in production and confirm the timeout line is gone.
+   - **To do (code): the first sync is slow for large companies.** Each run gets about a minute: invoices load about 2,000 per run, customer ledger entries about 500, and invoice lines only about 110–117. With thousands of invoices that means a very large number of "Sync now" clicks. Look at faster paging, larger batches, or letting the sync continue on its own in the background until it's complete.
    - **Checked production on 2026-11-12 (read-only):** done — 6 of the reference web services, `NoSeriesLines`, and `Customer_Card_Excel` with the `EMailCCHCABG` field. **Still missing:** (a) `CustomerTemplates` and `NoSeries` are not published (404) — without `CustomerTemplates`, payment-term and tax-area deletes are refused; (b) production has **no `CUST` series** — it has `CUST-PERS` (Sequence), `FUND-CUST` (Sequence), `WHSL-CUST` (Normal), so any series a template numbers from must be switched to Normal (`FUND-CUST` is Sequence in TEST too); (c) Nexus has **no production Bill.com connection** — only the sandbox one.
    - **Before picking a Bill.com connection for Production** (Admin → BC Environments → Edit; None today, since 2026-11-18): the next customer sync queues every Production customer Nexus hasn't sent (all of them), while Bill.com's own connector has already copied them, so duplicates are likely. Switch the connector's customer sync off first and plan matching Nexus to the existing Bill.com customers.
    - `nexus/.env.local`'s `BUSINESS_CENTRAL_CLIENT_SECRET` has **expired** (AADSTS7000222). The app doesn't use it — it reads the secret stored in the database, which works — but `scripts/seed-bc-credentials.ts` would fail.
