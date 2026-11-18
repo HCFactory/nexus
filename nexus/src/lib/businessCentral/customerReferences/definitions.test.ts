@@ -35,9 +35,9 @@ const TABLES: Record<ListKey, string> = {
 const defs = Object.entries(LIST_DEFINITIONS);
 
 describe('LIST_DEFINITIONS', () => {
-  it('shipmentMethods is a read-only api list keyed by code', () => {
+  it('shipmentMethods is a managed api list keyed by code', () => {
     const d = LIST_DEFINITIONS.shipmentMethods;
-    expect(d.mode).toBe('readOnly');
+    expect(d.mode).toBe('managed');
     expect(d.source).toEqual({ kind: 'api', resource: 'shipmentMethods' });
     const code = d.fields.find((x) => x.name === 'code')!;
     expect(code).toMatchObject({ bcName: 'code', isKey: true, maxLength: 10 });
@@ -65,9 +65,16 @@ describe('LIST_DEFINITIONS', () => {
     expect(LIST_DEFINITIONS.taxDetails.fields.filter((f) => f.isKey)).toHaveLength(4);
   });
 
+  it('shipment methods are managed: code (required key, 10 chars) and description are editable', () => {
+    const d = LIST_DEFINITIONS.shipmentMethods;
+    expect(d.mode).toBe('managed');
+    expect(d.fields.find((f) => f.name === 'code')).toMatchObject({ editable: true, required: true, isKey: true, maxLength: 10 });
+    expect(d.fields.find((f) => f.name === 'display_name')).toMatchObject({ editable: true });
+  });
+
   it('read-only lists have no editable fields', () => {
     const ro = defs.filter(([, d]) => d.mode === 'readOnly').map(([k]) => k).sort();
-    expect(ro).toEqual(['customerPostingGroups', 'generalBusinessPostingGroups', 'locations', 'noSeries', 'shipmentMethods']);
+    expect(ro).toEqual(['customerPostingGroups', 'generalBusinessPostingGroups', 'locations', 'noSeries']);
     for (const [, d] of defs) if (d.mode === 'readOnly') expect(d.fields.every((f) => !f.editable)).toBe(true);
   });
 
