@@ -11,7 +11,16 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
    - after the merge deploys: switch Nexus to the production BC connection, run Customer Sync, sync Shipment methods, invoice one real order in Nexus and check BC posted it and the connector copied it to Bill.com once.
    - Stripe stays off until its pre-live fixes are done (see #12) and Charge saved cards stays off for everyone.
 2. **Send invoice** (#5.3): a button that has Bill.com email the invoice to the customer. Small, low risk.
-3. **Stripe pre-live fixes** (#12): the failed→charged duplicate-charge guard and the Retry fixes (a)–(d), before live Stripe keys.
+3. **Stripe pre-live fixes** (#12): **built 2026-11-18** on branch `fix/stripe-prelive` (spec `docs/superpowers/specs/2026-11-18-stripe-prelive-fixes-design.md`; 1664 tests; reviewed). Covers the failed→charged duplicate-charge guard, Retry fixes (a)–(d), and Bill.com writes guarded by attempt.
+   - **Still to do — live check in TEST** (Stripe test mode + Bill.com sandbox), the user asked to do it later:
+     1. Switch to TEST and turn on Charge saved cards for the tester.
+     2. Briefly disable the Bill.com sandbox connection.
+     3. Charge one past-due TEST invoice with a saved test card. Expect "Bill.com isn't connected".
+     4. Re-enable Bill.com and press Retry. Expect it to check Bill.com, then record.
+     5. Press Retry again on a recorded or paid invoice. Expect a refusal.
+     6. Turn the permission back off.
+   - **Gap left (from review):** a Stripe charge that completes after the request that started it died is only noticed by Check status while the row is still processing. If the row was already marked not charged, nothing notices. A `payment_intent.succeeded` webhook would close this.
+   - **Live Stripe connection added 2026-11-18** (live mode, webhook `checkout.session.completed`, snapshot). Left **disabled**, and Production → Stripe = None.
 4. **Payments** (#5.4): Bill.com payments into Nexus, reviewed, then recorded in BC. Big, high risk (writes to the general ledger); needs its own design, including the Bill.com rounding difference.
 5. Older items still open: item-editing permission (#8), BC edit-conflict warning for items (#9), database can't be rebuilt from migrations (#11).
 
