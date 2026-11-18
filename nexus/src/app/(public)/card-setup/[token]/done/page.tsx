@@ -4,6 +4,7 @@ import { findSetupLinkByToken } from '@/lib/stripe/setupLinks';
 import { createServiceClient } from '@/lib/supabase/server';
 
 import { CardSetupMessage } from '../CardSetupMessage';
+import { CardSavedMessage } from './CardSavedMessage';
 
 export const dynamic = 'force-dynamic';
 
@@ -43,9 +44,5 @@ export default async function CardSetupDonePage({
     }
   }
 
-  return (
-    <CardSetupMessage>
-      {saved ? `Thanks — your card ending ${saved.last4} is saved.` : 'Thanks — your card is saved.'}
-    </CardSetupMessage>
-  );
+  return <CardSavedMessage last4={saved?.last4 ?? null} />;
 }
