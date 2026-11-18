@@ -35,3 +35,13 @@ Today Nexus uses the organisation's **default** Bill.com and Stripe connection w
 - **Links on the BC environment (picked):** one place per environment; matches how 069's switch lives there.
 - A BC environment column on each Bill.com/Stripe connection: same effect, but one Bill.com connection could then serve only one environment.
 - Fall back to the org default when nothing is picked: the user chose "off" instead.
+
+## Live check (local app, shared database, 2026-11-18)
+
+- Migration 071 applied by the user.
+- **Picks set** in Admin → Business Central Environments → Edit:
+  - TEST: Bill.com "Sandbox Bill.com (sandbox)", Stripe "HCF sandbox (test)". Reopened the form; both had stuck.
+  - Production: Bill.com None, Stripe None.
+- **TEST active:** Customers shows the Bill.com column and "Push to Bill.com" (statuses such as Synced and Needs attention). A customer page shows "Card on file" with Email link and Copy link (Stripe) and the Bill.com panel.
+- **Production active:** Customers has no Bill.com bar, so Bill.com is off. No Production customers are synced locally yet.
+- The user's active environment was left on Production, as found.
