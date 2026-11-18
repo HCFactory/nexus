@@ -14,7 +14,7 @@ The user keeps Bill.com's own BC connector on in production for now: it copies B
 
 ## What gets built
 
-1. **A switch per BC connection** (Settings → BC environments, edit): "Bill.com invoices come from Bill.com's own BC connector". Default off. Stored in `business_central_connections.billcom_via_connector` (migration 069).
+1. **A switch per BC connection** (Admin → Business Central Environments → Edit): "Bill.com invoices come from Bill.com's own BC connector". Default off. Stored in `business_central_connections.billcom_via_connector` (migration 069).
 2. **When it's on, for that BC environment:**
    - **Create invoice:** no Bill.com checks before starting; posts in BC; the order goes straight to Invoiced (no Bill.com step, nothing sent to Bill.com).
    - **Change invoice:** cancels and re-posts in BC only. No Bill.com check or update; BC itself refuses to cancel a paid invoice.
@@ -37,3 +37,12 @@ The user keeps Bill.com's own BC connector on in production for now: it copies B
 
 - The switch label and default (off).
 - Invoiced orders with no Bill.com invoice show "Invoiced", whatever the reason.
+
+## Live check (TEST BC + Bill.com sandbox, 2026-11-18)
+
+- Migration 069 applied by the user. The switch is on the **Admin** page → Business Central Environments → Edit.
+- **Switch on:** ticked on TEST; it saved and reopened ticked.
+- **Create invoice:** W-100536 (TEST1 Zaha Mart, $2.80) set to Final, then Create invoice. The confirm box showed Invoice Date, customer, total and Invoice #. The order ended **"Invoiced"** with "Invoice INV-100416".
+- **BC:** INV-100416 posted for TEST1, External Doc No. "W-100536 / ZZNUM-1", total 2.80.
+- **Bill.com sandbox:** no invoice "W-100536 / ZZNUM-1"; nothing was sent.
+- **Switch off again:** unticked on TEST and confirmed. TEST is back to the full flow.
