@@ -69,3 +69,26 @@ No BC cancel and no BC post were run. Each draft invoice created here was delete
 - `findDraftInvoice`: API v2 `salesInvoices?$filter=externalDocumentNumber eq '..' and customerNumber eq '..' and status eq 'Draft'`.
 - `postDraftInvoice`: `salesInvoices(<id>)/Microsoft.NAV.post` (not run yet).
 - `cancelBcInvoice`: `salesInvoices(<id>)/Microsoft.NAV.cancel` (not run yet).
+
+## Live test (W-100532, 2026-11-17)
+
+- **Cancel:** `Microsoft.NAV.cancel` on INV-100412 worked. BC marks it Canceled and
+  posts a credit memo.
+- **First post attempt** stopped with "BC's draft has 0 lines". A second, empty draft
+  (S-INV102029) was created on resume.
+  - **Cause:** Next.js answers a repeated GET (same URL and headers) from the first
+    response for the rest of a render. Background work started from a page render
+    (`resumeInvoiceChangeIfStuck` → `after()`) inherited that, so it re-read stale
+    change rows, stale BC line lists and stale draft lists.
+  - The order lock itself was verified correct against the real DB.
+  - **Fix:** `freshFetch` (a fresh AbortSignal per request, `cache: 'no-store'`) for the
+    Supabase service client and the BC reference transport.
+  - **Safeguard:** the post step refuses to post while more than one draft has the
+    Invoice #. "Delete extra drafts" shows keep and delete with totals, and deletes only
+    after a confirm.
+- **After deleting S-INV102029,** Retry posted **INV-100415**:
+  - Invoice # W-100532;
+  - dates 11/15/2026 and 12/15/2026;
+  - $58.00 excl. tax, $58.29 total.
+- **Bill.com:** the same invoice was updated to $58.29 open. The old page shows
+  "Cancelled — replaced by INV-100415", and both pages show the Changes card.
