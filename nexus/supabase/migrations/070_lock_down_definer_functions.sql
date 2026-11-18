@@ -1,16 +1,9 @@
--- Security review 2026-11-18: two SECURITY DEFINER functions were callable by
--- more people than intended. Supabase grants EXECUTE on new public functions to
--- anon and authenticated by default, so "revoke from public" alone is not enough.
+-- Security review 2026-11-18: create_environment_purchase_order was callable
+-- by more people than intended. Supabase grants EXECUTE on new public functions
+-- to anon and authenticated by default, so it must be revoked explicitly.
 -- Re-runnable.
 
--- 1. delete_billcom_secrets erased a Bill.com connection's Vault secrets by id.
---    046 revoked it from public/anon but not authenticated, so any logged-in
---    user could wipe any connection's Bill.com credentials. The app never calls
---    it (delete_billcom_connection does the work), so only the server keeps it.
-revoke all on function public.delete_billcom_secrets(uuid) from public, anon, authenticated;
-grant execute on function public.delete_billcom_secrets(uuid) to service_role;
-
--- 2. create_environment_purchase_order created a purchase order in whatever
+-- create_environment_purchase_order created a purchase order in whatever
 --    organization was passed, with whatever creator was passed, and had never
 --    been revoked from anon. It now requires a signed-in member of that
 --    organization (or the server) and records the caller as the creator.

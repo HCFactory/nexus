@@ -2,7 +2,7 @@
 
 **Question:** can any API/secret key be read or reached by a logged-in user, a visitor, the browser, or logs?
 
-**Answer:** no key can be read. Two database functions let people change things they shouldn't, and one log setting printed keys typed in Admin. All three are fixed (migration 070 + `next.config.ts`).
+**Answer:** no key can be read. One database function let people create purchase orders without signing in, and one log setting printed keys typed in Admin. Both are fixed (migration 070 + `next.config.ts`).
 
 ## Checked and fine
 
@@ -17,9 +17,12 @@
 
 ## Fixed
 
-1. **`delete_billcom_secrets` was callable by any logged-in user.** It could erase any connection's Bill.com credentials. It couldn't read them, but erasing would break Bill.com until an admin re-entered them. 046 revoked it from public/anon but not authenticated, and 059 missed it when fixing the others. The app never calls it. Migration 070 limits it to the service role.
-2. **`create_environment_purchase_order` was callable without signing in, for any organisation.** It took the organisation id and creator as plain inputs and was never revoked. Someone with the public anon key and an organisation and environment id could create purchase orders and fake the creator. Migration 070 now requires a signed-in member of that organisation (or the server), checks the environment belongs to it, records the caller as creator, and revokes anon.
-3. **The server log printed arguments to server actions**, including keys typed in Admin (seen with the Stripe test key on 2026-11-17). This is Next.js's `logging.serverFunctions`, on by default. It's now `false`.
+1. **`create_environment_purchase_order` was callable without signing in, for any organisation.** It took the organisation id and creator as plain inputs and was never revoked. Someone with the public anon key and an organisation and environment id could create purchase orders and fake the creator. Migration 070 now requires a signed-in member of that organisation (or the server), checks the environment belongs to it, records the caller as creator, and revokes anon.
+2. **The server log printed arguments to server actions**, including keys typed in Admin (seen with the Stripe test key on 2026-11-17). This is Next.js's `logging.serverFunctions`, on by default. It's now `false`.
+
+## Retracted
+
+- **`delete_billcom_secrets`** was first reported as callable by any logged-in user. Wrong: migration 059 had already dropped the function (applying 070 failed with "does not exist"). The first check listed functions without noticing later `drop function` statements.
 
 ## Still to do (user)
 
