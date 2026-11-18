@@ -2,6 +2,8 @@ import 'server-only';
 
 import type Stripe from 'stripe';
 
+import { sendCardSavedNotification } from '@/lib/email';
+
 import type { StripeScope } from './connection';
 
 /**
@@ -179,13 +181,47 @@ export async function saveCardFromCheckoutSession(
       invoice_settings: { default_payment_method: paymentMethod.id },
     });
   }
-  const { error: linkError } = await supabase
+  const { data: completed, error: linkError } = await supabase
     .from('card_setup_links')
     .update({ completed_at: new Date().toISOString() })
     .eq('id', linkId)
     .eq('organization_id', orgId)
-    .is('completed_at', null);
+    .is('completed_at', null)
+    .select('id');
   if (linkError) throw new Error(`Could not complete the setup link: ${linkError.message}`);
 
+  // Only the call that completed the link notifies staff, so the webhook and
+  // the done page never both send it. Email trouble never fails the save.
+  if ((completed ?? []).length > 0) {
+    await notifyCardSaved(supabase, orgId, bcCustomerNumber, card);
+  }
+
   return label;
+}
+
+async function notifyCardSaved(
+  supabase: StripeScope['supabase'],
+  orgId: string,
+  bcCustomerNumber: string,
+  card: { brand: string; last4: string; exp_month: number; exp_year: number },
+): Promise<void> {
+  try {
+    const { data: customer } = await supabase
+      .from('business_central_customers')
+      .select('display_name')
+      .eq('organization_id', orgId)
+      .eq('bc_customer_number', bcCustomerNumber)
+      .limit(1)
+      .maybeSingle();
+    await sendCardSavedNotification({
+      customerName: (customer as { display_name: string | null } | null)?.display_name || bcCustomerNumber,
+      brand: card.brand,
+      last4: card.last4,
+      expMonth: card.exp_month,
+      expYear: card.exp_year,
+      savedAt: new Date(),
+    });
+  } catch (e) {
+    console.error(`Card saved for ${bcCustomerNumber}, but the staff email failed: ${e instanceof Error ? e.message : e}`);
+  }
 }

@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { fakeSupabase, type Row } from '@/test/fakeSupabase';
 
+import { sendCardSavedNotification } from '@/lib/email';
+
 import { ensureStripeCustomer, saveCardFromCheckoutSession } from './saveCard';
+
+vi.mock('@/lib/email', () => ({ sendCardSavedNotification: vi.fn(async () => {}) }));
+
 
 const ALLOWED_CARD_KEYS = [
   'organization_id',
@@ -46,6 +51,7 @@ function setup(cards: Row[] = [], sess: unknown = session()) {
     customer_cards: cards,
     card_setup_links: [{ id: 'link-1', organization_id: 'org-1', completed_at: null }],
     stripe_customers: [],
+    business_central_customers: [{ organization_id: 'org-1', bc_customer_number: 'C100', display_name: 'Aloha School' }],
   });
   const stripe = fakeStripe(sess);
   const scope = { supabase: fake.client, orgId: 'org-1', connectionId: 'conn-1', stripe: stripe as never };
@@ -205,6 +211,29 @@ describe('saveCardFromCheckoutSession', () => {
     const { fake, scope } = setup([], session(over));
     expect(await saveCardFromCheckoutSession(scope, 'cs_1')).toBeNull();
     expect(fake.writes).toEqual([]);
+  });
+});
+
+describe('card saved staff email', () => {
+  it('emails staff once with customer name and card details, even when saved twice', async () => {
+    vi.mocked(sendCardSavedNotification).mockClear();
+    const { scope } = setup();
+    await saveCardFromCheckoutSession(scope, 'cs_1');
+    await saveCardFromCheckoutSession(scope, 'cs_1');
+    expect(sendCardSavedNotification).toHaveBeenCalledTimes(1);
+    expect(sendCardSavedNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ customerName: 'Aloha School', brand: 'visa', last4: '4242', expMonth: 12, expYear: 2030 }),
+    );
+  });
+
+  it('still saves the card when the staff email fails', async () => {
+    vi.mocked(sendCardSavedNotification).mockClear().mockRejectedValueOnce(new Error('no domain'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { fake, scope } = setup();
+    await expect(saveCardFromCheckoutSession(scope, 'cs_1')).resolves.toEqual({ brand: 'visa', last4: '4242' });
+    expect(fake.tables.card_setup_links[0].completed_at).toBeTruthy();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });
 
