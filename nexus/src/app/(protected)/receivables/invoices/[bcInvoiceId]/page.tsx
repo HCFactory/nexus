@@ -8,7 +8,7 @@ import { loadChargePanel } from '@/lib/stripe/chargePanelLoad';
 import { CardChargePanel } from '@/components/receivables/CardChargePanel';
 import { BillcomInvoicePanel } from '@/components/receivables/BillcomInvoicePanel';
 import { InvoiceChangesCard } from '@/components/receivables/InvoiceChangesCard';
-import { SalesInvoiceDetail } from '@/components/receivables/SalesInvoiceDetail';
+import { CARD, SalesInvoiceDetail } from '@/components/receivables/SalesInvoiceDetail';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,8 +24,18 @@ async function CardChargeSide({ bcInvoiceId, invoiceNumber }: { bcInvoiceId: str
     view: getInvoiceChargeView,
   });
   if (load.kind === 'hidden') return null;
-  if (load.kind === 'error') return <p className="text-sm text-foreground-muted">Card payments couldn&apos;t be loaded right now.</p>;
-  return <CardChargePanel bcInvoiceId={bcInvoiceId} invoiceNumber={invoiceNumber} canCharge={load.canCharge} {...load.view} />;
+  if (load.kind === 'error') {
+    return (
+      <section className={CARD}>
+        <p className="text-sm text-foreground-muted">Card payments couldn&apos;t be loaded right now.</p>
+      </section>
+    );
+  }
+  return (
+    <section className={CARD}>
+      <CardChargePanel bcInvoiceId={bcInvoiceId} invoiceNumber={invoiceNumber} canCharge={load.canCharge} {...load.view} />
+    </section>
+  );
 }
 
 export default async function SalesInvoicePage({ params }: { params: Promise<{ bcInvoiceId: string }> }) {
@@ -41,7 +51,7 @@ export default async function SalesInvoicePage({ params }: { params: Promise<{ b
       replacedBy={data.replacedBy}
       changes={<InvoiceChangesCard changes={data.changes} />}
       cardCharge={
-        <Suspense fallback={<p className="text-sm text-foreground-muted">Loading card payments…</p>}>
+        <Suspense fallback={<section className={CARD}><p className="text-sm text-foreground-muted">Loading card payments…</p></section>}>
           <CardChargeSide
             bcInvoiceId={data.invoice.bc_invoice_id}
             invoiceNumber={data.invoice.external_document_number || data.invoice.bc_invoice_number || data.invoice.bc_invoice_id}

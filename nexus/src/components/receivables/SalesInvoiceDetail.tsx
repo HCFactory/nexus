@@ -4,7 +4,7 @@ import { formatDate, formatMoney } from '@/lib/format';
 import type { BusinessCentralSalesInvoice, BusinessCentralSalesInvoiceLine } from '@/types/database';
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-black dark:text-white';
-const CARD = 'glass-card rounded-xl border border-border p-4';
+export const CARD = 'glass-card rounded-xl border border-border p-4';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -86,7 +86,8 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
 
       {billcom && <section className={CARD}>{billcom}</section>}
 
-      {cardCharge && <section className={CARD}>{cardCharge}</section>}
+      {/* The card-charge slot draws its own card, so a hidden panel leaves no empty box. */}
+      {cardCharge}
 
       {changes}
 
