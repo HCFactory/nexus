@@ -224,6 +224,8 @@ describe('order number taken up front', () => {
         orderRow('o1', { bc_order_number: 'W-100534', created_at: '2026-11-01T00:00:00.000Z' }),
         orderRow('o2', { bc_order_number: 'W-100535', created_at: '2026-11-02T00:00:00.000Z' }),
         orderRow('o3', { bc_order_number: null, created_at: '2026-11-03T00:00:00.000Z' }),
+        // Created with a number Nexus took: BC leaves its series blank, so it can't tell the series.
+        orderRow('o4', { bc_order_number: 'W-100536', reserved_order_number: 'W-100536', created_at: '2026-11-04T00:00:00.000Z' }),
       ],
       sales_order_number_reservations: [],
     });

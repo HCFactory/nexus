@@ -51,3 +51,15 @@ A new order has no number until Save. The background sync creates the BC order a
 - A reservation belongs to the user who opened the page. Another user can't save with it.
 - Opening New twice (two tabs, or a reload) takes two numbers. Each is a gap if not saved.
 - Migration 068 (the user applies it): table `sales_order_number_reservations` and column `sales_orders.reserved_order_number`.
+
+## Live check (TEST BC, 2026-11-17)
+
+Setup: migration 068 applied, and Manual Nos. ticked on WHSL by the user.
+
+- **New page:** opening New showed "New sales order W-100536" and Invoice # "W-100536". Typing PO ZZNUM-1 made it "W-100536 / ZZNUM-1".
+- **Save:** order on TEST1 Zaha Mart with P-1001 × 1. After Save, the page showed W-100536, then "In BC".
+- **BC:** order W-100536, sell-to TEST1, External Doc No. "W-100536 / ZZNUM-1", total 2.80. WHSL `Last_No_Used` = W-100536, so one page open took exactly one number (no double take from React's dev double effects).
+- **Next New:** opening New again showed W-100537. It wasn't saved, so W-100537 is a gap, as agreed.
+- **List:** W-100536 shows with Invoice # "W-100536 / ZZNUM-1".
+- **Found while testing:** BC leaves `numberSeries` blank on an order created with its own number. The series is therefore now read from the latest order BC numbered itself (`reserved_order_number` null), not just the latest order.
+- **Test data:** order W-100536 (Customer PO ZZNUM-1) is open in TEST BC. Delete it when it's no longer useful.

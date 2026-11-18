@@ -708,6 +708,8 @@ export async function reserveSalesOrderNumber(): Promise<{ ok: true; number: str
         .eq('organization_id', scope.orgId)
         .eq('bc_connection_id', scope.bcConnectionId)
         .not('bc_order_number', 'is', null)
+        // An order created with a number Nexus took has a blank series in BC; use one BC numbered.
+        .is('reserved_order_number', null)
         .order('created_at', { ascending: false })
         .limit(1),
       'Could not read the latest order',
