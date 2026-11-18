@@ -36,6 +36,7 @@ vi.mock('@/lib/stripe/chargeInvoice', () => ({
   markNotCharged: mocks.notCharged,
   checkChargeStatus: mocks.check,
   invoiceChargeView: mocks.view,
+  invoiceChargeStatus: vi.fn(() => 'live'),
 }));
 
 import {
@@ -109,6 +110,7 @@ it('chargeInvoiceCard passes the current user and the default Stripe connection'
     invoiceNumbers: ['W-1', 'INV-1'],
     salesOrderId: 'so-1',
     billcomInvoiceId: '00e1',
+    status: 'live',
   });
 });
 

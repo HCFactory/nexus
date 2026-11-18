@@ -6,6 +6,7 @@ import type Stripe from 'stripe';
 import type { BillcomClient } from '@/lib/billcom/client';
 import { recordBillcomCardPayment } from '@/lib/billcom/recordPayment';
 import type { BillcomPanelInput } from '@/lib/receivables/salesInvoicePage';
+import { isChangeOpen, type ChangeState } from '@/types/invoiceChanges';
 import type {
   BillcomLookup,
   CardLabel,
@@ -40,7 +41,21 @@ const REASONS = {
   ambiguous: 'More than one Bill.com invoice matches this number.',
   nothingDue: 'Nothing is due on this invoice.',
   notPastDue: "This invoice isn't past due yet.",
+  replaced: 'This invoice was cancelled and replaced — charge the corrected invoice.',
+  changing: 'This invoice is being changed — try again once the change is done.',
 } as const;
+
+/** 'replaced' = a finished invoice change cancelled it; 'changing' = its order has a change still open. */
+export type InvoiceChargeStatus = 'live' | 'replaced' | 'changing';
+
+/**
+ * Whether the invoice can be charged at all, from its invoice changes. Mid-change
+ * the Bill.com invoice still has the old total and is about to be rewritten.
+ */
+export function invoiceChargeStatus(p: { replacedBy: unknown; changes: { state: ChangeState }[] }): InvoiceChargeStatus {
+  if (p.replacedBy) return 'replaced';
+  return p.changes.some((c) => isChangeOpen(c.state)) ? 'changing' : 'live';
+}
 
 export const MARKED_NOT_CHARGED_MESSAGE = 'Marked as not charged by staff after checking Stripe.';
 export const CHARGE_CHANGED_MESSAGE =
@@ -87,6 +102,8 @@ export interface ChargeInvoiceContext {
   salesOrderId: string | null;
   /** Set when Nexus created the Bill.com invoice. */
   billcomInvoiceId: string | null;
+  /** From the order's invoice changes; missing = 'live'. */
+  status?: InvoiceChargeStatus;
 }
 
 /** Everything with side effects, injected so tests need no network. */
@@ -119,6 +136,8 @@ const toCents = (amount: number) => Math.round(amount * 100);
 
 export function chargeEligibility(a: {
   canCharge: boolean;
+  /** Defaults to 'live'. */
+  invoice?: InvoiceChargeStatus;
   /** 'off' = no enabled default Stripe connection. Defaults to 'ready'. */
   stripe?: 'off' | 'ready';
   card: CardLabel | null;
@@ -128,6 +147,8 @@ export function chargeEligibility(a: {
 }): ChargeEligibility {
   const no = (reason: string): ChargeEligibility => ({ ok: false, reason });
   if (!a.canCharge) return no(REASONS.noPermission);
+  if (a.invoice === 'replaced') return no(REASONS.replaced);
+  if (a.invoice === 'changing') return no(REASONS.changing);
   if (a.stripe === 'off') return no(REASONS.stripeOff);
   if (!a.card) return no(REASONS.noCard);
   if (a.billcom.kind === 'ambiguous') return no(REASONS.ambiguous);
@@ -388,16 +409,17 @@ async function assess(deps: ChargeDeps, bcInvoiceId: string) {
   if (!invoice) throw new Error('Invoice not found.');
   const card = await activeCard(deps, invoice.customerNumber);
   const stripe = deps.stripeConnectionId ? ('ready' as const) : ('off' as const);
+  const status = invoice.status ?? 'live';
   // Bill.com is only asked when nothing before it already rules the charge out.
   const billcom: BillcomLookup =
-    deps.canCharge && stripe === 'ready' && card
+    deps.canCharge && status === 'live' && stripe === 'ready' && card
       ? await deps.findBillcomInvoice({
           customerNumber: invoice.customerNumber,
           invoiceNumbers: invoice.invoiceNumbers,
           billcomInvoiceId: invoice.billcomInvoiceId,
         })
       : { kind: 'off' };
-  const eligibility = chargeEligibility({ canCharge: deps.canCharge, stripe, card, billcom, today: businessDate(deps.now()) });
+  const eligibility = chargeEligibility({ canCharge: deps.canCharge, invoice: status, stripe, card, billcom, today: businessDate(deps.now()) });
   return { invoice, card, billcom, eligibility };
 }
 

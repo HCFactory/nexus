@@ -13,6 +13,7 @@ import {
   markNotCharged,
   markRecordedManually,
   retryBillcomRecord,
+  invoiceChargeStatus,
   type ChargeDeps,
 } from '@/lib/stripe/chargeInvoice';
 import { createStripeForConnection, resolveDefaultStripeConnection } from '@/lib/stripe/connection';
@@ -60,6 +61,7 @@ async function scope(requireCharge: boolean): Promise<{ deps: ChargeDeps; userId
         invoiceNumbers: [inv.external_document_number ?? '', inv.bc_invoice_number ?? ''],
         salesOrderId: page.salesOrder?.id ?? null,
         billcomInvoiceId: page.salesOrder?.billcomInvoiceId ?? null,
+        status: invoiceChargeStatus(page),
       };
     },
     findBillcomInvoice: findBillcomInvoiceForCharge,

@@ -21,6 +21,7 @@ import {
   markRecordedManually,
   retryBillcomRecord,
   invoiceChargeView,
+  invoiceChargeStatus,
   type ChargeDeps,
 } from './chargeInvoice';
 
@@ -78,6 +79,8 @@ describe('chargeEligibility', () => {
     ['due today', { billcom: found({ dueDate: '2026-11-17' }) }, "This invoice isn't past due yet."],
     ['due later', { billcom: found({ dueDate: '2026-12-01' }) }, "This invoice isn't past due yet."],
     ['no due date', { billcom: found({ dueDate: null }) }, "This invoice isn't past due yet."],
+    ['cancelled and replaced', { invoice: 'replaced' as const }, 'This invoice was cancelled and replaced — charge the corrected invoice.'],
+    ['being changed', { invoice: 'changing' as const }, 'This invoice is being changed — try again once the change is done.'],
   ])('%s', (_name, over, reason) => {
     expect(chargeEligibility({ ...base, ...over })).toEqual({ ok: false, reason });
   });
@@ -173,7 +176,25 @@ beforeEach(() => {
   mocks.record.mockReset();
 });
 
+describe('invoiceChargeStatus', () => {
+  it('replaced when a finished change replaced it, changing while a change is open, else live', () => {
+    expect(invoiceChargeStatus({ replacedBy: { id: 'x', number: 'INV-2' }, changes: [] })).toBe('replaced');
+    expect(invoiceChargeStatus({ replacedBy: null, changes: [{ state: 'billcom_failed' }] })).toBe('changing');
+    expect(invoiceChargeStatus({ replacedBy: null, changes: [{ state: 'done' }, { state: 'discarded' }] })).toBe('live');
+  });
+});
+
 describe('chargeInvoice', () => {
+  it('refuses while the invoice is being changed, before asking Bill.com or Stripe', async () => {
+    const s = setup();
+    const load = vi.mocked(s.deps.loadInvoice);
+    const ctx = await load(INV);
+    load.mockResolvedValue(ctx && { ...ctx, status: 'changing' });
+    await expect(chargeInvoice(s.deps, { bcInvoiceId: INV, userId: 'u1', expectedAmountCents: 10000, cardId: 'card-1' })).rejects.toThrow('This invoice is being changed — try again once the change is done.');
+    expect(s.findBillcomInvoice).not.toHaveBeenCalled();
+    expect(s.create).not.toHaveBeenCalled();
+  });
+
   it('charges the fresh Bill.com due amount when it matches what staff confirmed', async () => {
     const s = setup({ lookup: found({ dueAmount: 60 }) });
     const row = await chargeInvoice(s.deps, { ...ARGS, expectedAmountCents: 6000 });
