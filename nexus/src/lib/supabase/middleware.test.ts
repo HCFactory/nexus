@@ -35,30 +35,29 @@ describe('the card setup address (CARD_SETUP_BASE_URL on its own host)', () => {
     vi.stubEnv('CARD_SETUP_BASE_URL', 'https://payment.example.com');
   };
 
-  it('serves card setup pages and the Stripe webhook there', async () => {
+  it('serves card setup pages there', async () => {
     stub();
-    for (const path of ['/card-setup/abc', '/card-setup/abc/done?session_id=cs_1', '/api/stripe/webhook/11111111-2222-4333-8444-555555555555']) {
-      expect((await on('payment.example.com', path)).headers.get('location')).toBeNull();
+    for (const path of ['/card-setup/abc', '/card-setup/abc/done?session_id=cs_1']) {
+      const res = await on('payment.example.com', path);
+      expect(res.status).not.toBe(404);
+      expect(res.headers.get('location')).toBeNull();
     }
   });
 
-  it('sends every other page to the same path on the main address', async () => {
+  it('every other page is a plain 404 that never mentions or points to the main address', async () => {
     stub();
-    for (const [path, to] of [
-      ['/', 'https://nexus.example.com/'],
-      ['/login', 'https://nexus.example.com/login'],
-      ['/admin?tab=x', 'https://nexus.example.com/admin?tab=x'],
-      ['/card-setup', 'https://nexus.example.com/card-setup'],
-    ]) {
+    for (const path of ['/', '/login', '/admin?tab=x', '/card-setup', '/api/stripe/webhook/11111111-2222-4333-8444-555555555555']) {
       const res = await on('payment.example.com', path);
-      expect(res.status).toBe(308);
-      expect(res.headers.get('location')).toBe(to);
+      expect(res.status).toBe(404);
+      expect(res.headers.get('location')).toBeNull();
+      const body = await res.text();
+      expect(body).toBe('Not found');
     }
   });
 
   it('the host match ignores letter case', async () => {
     stub();
-    expect((await on('PAYMENT.example.com', '/admin')).headers.get('location')).toBe('https://nexus.example.com/admin');
+    expect((await on('PAYMENT.example.com', '/admin')).status).toBe(404);
   });
 
   it('leaves the main address alone', async () => {

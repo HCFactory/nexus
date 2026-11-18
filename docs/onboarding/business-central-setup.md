@@ -97,7 +97,7 @@ Payment terms, shipment methods, tax areas, customers, invoices and sales docume
 6. **Optional: card links on the company's own address** (e.g. `payment.hawaiicandyfactory.com`):
    - **Vercel → Settings → Domains → Add:** add the address, then add the DNS record Vercel shows (usually CNAME `payment` → `cname.vercel-dns.com`).
    - **Vercel → Environment Variables:** set `CARD_SETUP_BASE_URL` = `https://payment.hawaiicandyfactory.com` and redeploy.
-   - **What it does:** on that address only the card setup pages are served. Anything else goes to the main app address.
+   - **What it does:** on that address only the card setup pages are served. Anything else is a plain "Not found": no redirect, no login page, nothing that names Nexus. The card pages' tab title is "Save your card".
    - **What stays the same:** links already sent on the old address keep working, and the Stripe webhook stays on the main address.
 
 ## 7b. Email (Resend), for card links and the "card saved" notice

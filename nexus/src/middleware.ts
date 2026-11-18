@@ -6,7 +6,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Node.js, not the edge: the card-address redirect reads CARD_SETUP_BASE_URL
+  // Node.js, not the edge: the card-address check reads CARD_SETUP_BASE_URL
   // at runtime, which the edge runtime didn't see on Vercel.
   runtime: 'nodejs',
   matcher: [
