@@ -36,6 +36,10 @@ Match the page by its **name**. The number is what BC uses in the standard versi
 
 Payment terms, shipment methods, tax areas, customers, invoices and sales documents come through BC's standard API and need no publishing.
 
+**Watch out:**
+- `CustomerTemplates` must be page **1382 "Customer Templ. Card"**. In HCF production it was first published on a different page, which has only Code/Template_Name/Enabled. The sync then "succeeded" with no templates.
+- After you add or change a web service, BC can take a minute before it answers. A 404 right after a change usually clears on its own. Changing the Object ID can also untick **Published**.
+
 **How to check:** compare BC's Web Services list in the new environment with the one in TEST. Every Service Name above should be there, published, and pointing at a page with the same **Object Name** as in TEST.
 
 ## 3. BC settings
