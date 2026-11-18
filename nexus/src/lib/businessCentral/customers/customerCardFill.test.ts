@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fillCustomerCardFields, mapCardToCustomerColumns } from './customerCardFill';
+import {
+  CARD_SELECT_FIELDS,
+  fillCustomerCardFields,
+  fillCustomerCardFieldsInChunks,
+  mapCardToCustomerColumns,
+} from './customerCardFill';
 
 const card = {
   No: 'W00010', Name: 'Acme', E_Mail: 'a@x.com', EMailCCHCABG: 'cc@x.com', Phone_No: '555',
@@ -91,5 +96,81 @@ describe('fillCustomerCardFields', () => {
       update,
     );
     expect(n).toBe(2);
+  });
+});
+
+describe('CARD_SELECT_FIELDS', () => {
+  it('asks BC for exactly the fields the fill reads (plus the key), no calculated fields', () => {
+    const read = new Set<string>();
+    const fields = new Proxy({} as Record<string, unknown>, {
+      get: (_t, k) => {
+        read.add(String(k));
+        return undefined;
+      },
+    });
+    mapCardToCustomerColumns({ etag: '', fields });
+    expect(new Set(CARD_SELECT_FIELDS)).toEqual(new Set(['No', ...read]));
+  });
+});
+
+describe('fillCustomerCardFieldsInChunks', () => {
+  const rec = (no: string) => ({ key: { values: { No: no } }, etag: `e-${no}`, fields: { ...card, No: no } });
+  const nums = (from: number, n: number) => Array.from({ length: n }, (_, i) => `C${String(from + i).padStart(4, '0')}`);
+
+  function run(opts: { all: string[]; startAfter?: string | null; chunks?: number; fail?: (after: string | null) => boolean }) {
+    const fetchChunk = vi.fn(async (after: string | null, size: number) => {
+      if (opts.fail?.(after)) throw new Error('The operation was aborted due to timeout');
+      return opts.all.filter((n) => after === null || n > after).slice(0, size).map(rec);
+    });
+    const update = vi.fn<(no: string, patch: Record<string, unknown>) => Promise<void>>(async () => {});
+    let left = opts.chunks ?? Infinity;
+    const hasTime = () => left-- > 0;
+    const known = new Map(opts.all.map((n) => [n, null] as [string, null]));
+    const done = fillCustomerCardFieldsInChunks({ fetchChunk, known, update, startAfter: opts.startAfter ?? null, hasTime, chunkSize: 3 });
+    return { done, fetchChunk, update };
+  }
+
+  it('reads batch after batch from where the last one ended, then reports complete with no cursor', async () => {
+    const { done, fetchChunk, update } = run({ all: nums(1, 7) });
+    expect(await done).toEqual({ filled: 7, cursor: null, complete: true });
+    expect(fetchChunk.mock.calls).toEqual([[null, 3], ['C0003', 3], ['C0006', 3]]);
+    expect(update).toHaveBeenCalledTimes(7);
+  });
+
+  it('an exact multiple of the batch size ends with one empty batch, then complete', async () => {
+    const { done, fetchChunk } = run({ all: nums(1, 6) });
+    expect(await done).toMatchObject({ complete: true, cursor: null });
+    expect(fetchChunk).toHaveBeenCalledTimes(3);
+  });
+
+  it('out of time: stops before the next batch and returns the last customer filled as the cursor', async () => {
+    const { done, fetchChunk } = run({ all: nums(1, 7), chunks: 2 });
+    expect(await done).toEqual({ filled: 6, cursor: 'C0006', complete: false });
+    expect(fetchChunk).toHaveBeenCalledTimes(2);
+  });
+
+  it('continues after a saved cursor', async () => {
+    const { done, fetchChunk } = run({ all: nums(1, 7), startAfter: 'C0006' });
+    expect(await done).toEqual({ filled: 1, cursor: null, complete: true });
+    expect(fetchChunk.mock.calls[0]).toEqual(['C0006', 3]);
+  });
+
+  it('a batch that fails keeps the progress so far and returns the error', async () => {
+    const { done } = run({ all: nums(1, 7), fail: (after) => after === 'C0003' });
+    expect(await done).toEqual({ filled: 3, cursor: 'C0003', complete: false, error: 'The operation was aborted due to timeout' });
+  });
+
+  it('a failed save keeps the cursor at the batch before it', async () => {
+    const { done, update } = run({ all: nums(1, 7) });
+    update.mockImplementation(async (no: string) => {
+      if (no === 'C0005') throw new Error('db down');
+    });
+    expect(await done).toMatchObject({ cursor: 'C0003', complete: false, error: 'db down' });
+  });
+
+  it('no time at all: reads nothing and keeps the cursor it was given', async () => {
+    const { done, fetchChunk } = run({ all: nums(1, 7), startAfter: 'C0003', chunks: 0 });
+    expect(await done).toEqual({ filled: 0, cursor: 'C0003', complete: false });
+    expect(fetchChunk).not.toHaveBeenCalled();
   });
 });

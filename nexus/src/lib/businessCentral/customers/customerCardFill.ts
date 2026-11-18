@@ -8,6 +8,34 @@ export const CUSTOMER_CARD_SOURCE: ReferenceSource = {
   keyFields: ['No'],
 };
 
+/**
+ * The only Customer Card fields Nexus reads. Asking BC for just these skips the
+ * card's calculated fields (Balance, Sales, …), which BC otherwise works out for
+ * every customer and which made the full read time out on large companies.
+ * Keep in step with mapCardToCustomerColumns (a test checks).
+ */
+export const CARD_SELECT_FIELDS = [
+  'No',
+  'EMailCCHCABG',
+  'Payment_Terms_Code',
+  'Tax_Area_Code',
+  'Tax_Identification_Type',
+  'Customer_Price_Group',
+  'Customer_Posting_Group',
+  'Gen_Bus_Posting_Group',
+  'Application_Method',
+  'Location_Code',
+  'Credit_Limit_LCY',
+  'Primary_Contact_No',
+  'MobilePhoneNo',
+  'Ship_to_Code',
+  'Shipment_Method_Code',
+  'Blocked',
+];
+
+/** Customers read from BC per request. */
+export const CARD_CHUNK_SIZE = 500;
+
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
 /**
@@ -67,4 +95,44 @@ export async function fillCustomerCardFields(
     );
   }
   return matched.length;
+}
+
+export interface CardChunkResult {
+  filled: number;
+  /** The last customer number filled when not complete; null once a full pass finished. */
+  cursor: string | null;
+  complete: boolean;
+  error?: string;
+}
+
+/**
+ * Fills card columns batch by batch, in customer-number order, starting after
+ * `startAfter`. Starts a new batch only while `hasTime()` says so. Never throws:
+ * a failed batch returns the progress so far with its error, so the next sync
+ * continues from `cursor`.
+ */
+export async function fillCustomerCardFieldsInChunks(o: {
+  fetchChunk: (after: string | null, size: number) => Promise<BcRecord[]>;
+  known: Map<string, string | null>;
+  update: (customerNumber: string, patch: Record<string, unknown>) => Promise<void>;
+  startAfter: string | null;
+  hasTime: () => boolean;
+  chunkSize?: number;
+}): Promise<CardChunkResult> {
+  const size = o.chunkSize ?? CARD_CHUNK_SIZE;
+  let cursor = o.startAfter;
+  let filled = 0;
+  while (o.hasTime()) {
+    let chunk: BcRecord[];
+    try {
+      chunk = await o.fetchChunk(cursor, size);
+      filled += await fillCustomerCardFields(chunk, o.known, o.update);
+    } catch (e) {
+      return { filled, cursor, complete: false, error: e instanceof Error ? e.message : String(e) };
+    }
+    if (chunk.length < size) return { filled, cursor: null, complete: true };
+    const last = chunk[chunk.length - 1].key;
+    cursor = 'values' in last ? last.values.No : cursor;
+  }
+  return { filled, cursor, complete: false };
 }

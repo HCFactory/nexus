@@ -1372,7 +1372,9 @@ export type SyncEntityType =
   | 'customer'
   | 'sales_invoice'
   | 'sales_invoice_line'
-  | 'customer_ledger_entry';
+  | 'customer_ledger_entry'
+  /** Progress of the Customer_Card_Excel fill (cursor = last customer number filled). */
+  | 'customer_card';
 
 export interface BusinessCentralCustomer {
   id: string;
