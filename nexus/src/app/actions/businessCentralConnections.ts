@@ -46,6 +46,7 @@ export interface UpdateBcConnectionInput {
   environment?: string;
   apiBaseUrl?: string | null;
   timeZone?: string | null;
+  billcomViaConnector?: boolean;
 }
 
 function canManageBusinessCentralConnection(access: ResolvedUserAccess): boolean {
@@ -264,6 +265,9 @@ export async function updateBcConnection(
   }
   if (input.timeZone !== undefined) {
     updates.time_zone = validateTimeZone(input.timeZone);
+  }
+  if (input.billcomViaConnector !== undefined) {
+    updates.billcom_via_connector = input.billcomViaConnector === true;
   }
 
   const { data, error } = await supabase

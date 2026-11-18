@@ -11,7 +11,7 @@ function row(over: Partial<SalesOrderListRow>): SalesOrderListRow {
   return {
     id: 'o1', status: 'draft', customer_id: 'c1', customer_number: 'C1', customer_name: 'Acme',
     order_date: '2026-11-01', requested_delivery_date: null, invoice_number: null, bc_order_number: null, reserved_order_number: null,
-    customer_po: 'PO-1', total_incl_tax: null, sync_state: 'synced', sync_error: null, invoice_state: 'none', invoice_error: null, ...over,
+    customer_po: 'PO-1', total_incl_tax: null, sync_state: 'synced', sync_error: null, invoice_state: 'none', invoice_error: null, billcom_invoice_id: null, ...over,
   };
 }
 
@@ -88,5 +88,10 @@ describe('SalesOrdersList', () => {
     render(<SalesOrdersList orders={[row({ id: 'o8', bc_order_number: null, reserved_order_number: 'W-100536', invoice_number: null, customer_po: 'PO-5' })]} canEdit={false} />);
     expect(screen.getByText('W-100536')).toBeTruthy();
     expect(screen.getByText('W-100536 / PO-5')).toBeTruthy();
+  });
+  it('an invoiced order without a Bill.com invoice shows Invoiced; with one, In Bill.com', () => {
+    render(<SalesOrdersList orders={[row({ id: 'a', invoice_state: 'done' }), row({ id: 'b', invoice_state: 'done', billcom_invoice_id: 'bill-1' })]} canEdit={false} />);
+    expect(screen.getByText('Invoiced')).toBeTruthy();
+    expect(screen.getByText('Invoiced · In Bill.com')).toBeTruthy();
   });
 });

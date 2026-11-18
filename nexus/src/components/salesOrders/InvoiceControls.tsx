@@ -14,11 +14,12 @@ import type { InvoiceState, SalesOrderRow } from '@/types/salesOrders';
 import { GlassButton as Button } from './GlassButton';
 
 /** The one-line invoice status (header status line and list Sync column); null before an invoice starts. */
-export function invoiceStatusText(state: InvoiceState): string | null {
+export function invoiceStatusText(state: InvoiceState, billcomInvoiceId: string | null = null): string | null {
   if (isInvoiceResumable(state)) return 'Invoicing…';
   if (state === 'post_failed') return "Couldn't post";
   if (state === 'billcom_failed') return 'Invoiced · Not in Bill.com';
-  if (state === 'done') return 'Invoiced · In Bill.com';
+  // No Bill.com invoice from Nexus: Bill.com is off, or Bill.com's own connector copies it.
+  if (state === 'done') return billcomInvoiceId ? 'Invoiced · In Bill.com' : 'Invoiced';
   if (state === 'changing') return 'Changing invoice…';
   return null;
 }
@@ -61,14 +62,14 @@ export function InvoiceStatus({
   className,
   onError,
 }: {
-  order: Pick<SalesOrderRow, 'id' | 'invoice_state' | 'invoice_error' | 'bc_posted_invoice_number' | 'bc_posted_invoice_id'>;
+  order: Pick<SalesOrderRow, 'id' | 'invoice_state' | 'invoice_error' | 'bc_posted_invoice_number' | 'bc_posted_invoice_id' | 'billcom_invoice_id'>;
   canEdit: boolean;
   className?: string;
   onError?: (message: string | null) => void;
 }) {
   const router = useRouter();
   const [retrying, setRetrying] = useState(false);
-  const text = invoiceStatusText(order.invoice_state);
+  const text = invoiceStatusText(order.invoice_state, order.billcom_invoice_id);
   if (!text) return null;
   const failed = order.invoice_state === 'post_failed' || order.invoice_state === 'billcom_failed';
   const number = order.bc_posted_invoice_number;

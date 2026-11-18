@@ -72,6 +72,19 @@ describe('buildInvoiceDeps: Bill.com client', () => {
   })
 })
 
+describe('buildInvoiceDeps: Bill.com via its BC connector', () => {
+  it("never builds a Bill.com client for an environment whose invoices come through Bill.com's connector", async () => {
+    const via = { ...scope, connection: { time_zone: 'America/Chicago', billcom_via_connector: true } } as unknown as Scope
+    const deps = await buildInvoiceDeps(via)
+    expect(deps).toMatchObject({ billcom: null, billcomConnectionId: null, billcomUnavailable: false, billcomViaConnector: true })
+    expect(mocks.createBillcomClient).not.toHaveBeenCalled()
+  })
+
+  it('is off by default', async () => {
+    expect((await buildInvoiceDeps(scope)).billcomViaConnector).toBe(false)
+  })
+})
+
 describe('buildInvoiceDeps: mirrorPostedInvoice', () => {
   it('copies the posted invoice and its lines into Receivables', async () => {
     const upserts: Array<[string, unknown]> = []

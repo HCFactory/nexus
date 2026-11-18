@@ -24,6 +24,7 @@ vi.mock('@/lib/supabase/server', () => ({
 import {
   createBcConnection,
   deleteBcConnection,
+  updateBcConnection,
   upsertBcCredentials,
 } from './businessCentralConnections';
 
@@ -38,7 +39,7 @@ interface QueryChain {
   select: () => QueryChain;
   insert: () => QueryChain;
   upsert: () => QueryChain;
-  update: () => QueryChain;
+  update: (payload?: unknown) => QueryChain;
   delete: () => QueryChain;
   eq: () => QueryChain;
   order: () => QueryChain;
@@ -54,6 +55,8 @@ interface SupabaseMock {
   client: { from: ReturnType<typeof vi.fn>; rpc: ReturnType<typeof vi.fn> };
   /** `${table}:${op}` recorded each time a query is actually awaited. */
   ops: string[];
+  /** Payloads passed to update(), in order. */
+  updates: unknown[];
   rpc: ReturnType<typeof vi.fn>;
 }
 
@@ -61,6 +64,7 @@ function createSupabaseMock(
   resolve: (table: string, op: string) => QueryResult,
 ): SupabaseMock {
   const ops: string[] = [];
+  const updates: unknown[] = [];
   const rpc = vi.fn();
 
   function makeChain(table: string): QueryChain {
@@ -73,7 +77,7 @@ function createSupabaseMock(
     chain.select = () => ((op = 'select'), chain);
     chain.insert = () => ((op = 'insert'), chain);
     chain.upsert = () => ((op = 'upsert'), chain);
-    chain.update = () => ((op = 'update'), chain);
+    chain.update = (payload?: unknown) => ((op = 'update'), updates.push(payload), chain);
     chain.delete = () => ((op = 'delete'), chain);
     chain.eq = () => chain;
     chain.order = () => chain;
@@ -85,7 +89,7 @@ function createSupabaseMock(
   }
 
   const from = vi.fn((table: string) => makeChain(table));
-  return { client: { from, rpc }, ops, rpc };
+  return { client: { from, rpc }, ops, updates, rpc };
 }
 
 beforeEach(() => {
@@ -235,6 +239,17 @@ describe('createBcConnection', () => {
 // ---------------------------------------------------------------------------
 // deleteBcConnection — deleting the org's only environment is blocked
 // ---------------------------------------------------------------------------
+describe('updateBcConnection: Bill.com via its BC connector', () => {
+  it('saves the switch when given and leaves it alone when not', async () => {
+    const supa = createSupabaseMock(() => ({ data: { id: 'c1' }, error: null }));
+    mocks.createServiceClient.mockReturnValue(supa.client);
+    await updateBcConnection('c1', { billcomViaConnector: true });
+    await updateBcConnection('c1', { displayName: 'Production' });
+    expect(supa.updates[0]).toMatchObject({ billcom_via_connector: true });
+    expect(supa.updates[1]).not.toHaveProperty('billcom_via_connector');
+  });
+});
+
 describe('deleteBcConnection', () => {
   it('refuses to delete the only environment and never issues a delete', async () => {
     const supa = createSupabaseMock((_table, op) => {

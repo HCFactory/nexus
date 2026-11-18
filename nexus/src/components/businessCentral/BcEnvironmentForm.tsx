@@ -9,6 +9,7 @@ export interface BcEnvironmentFormValues {
   environment: string;
   apiBaseUrl: string;
   timeZone: string;
+  billcomViaConnector: boolean;
 }
 
 interface BcEnvironmentFormProps {
@@ -25,6 +26,7 @@ export function BcEnvironmentForm({ connection, onSubmit, onCancel }: BcEnvironm
   const [environment, setEnvironment] = useState(connection?.environment ?? '');
   const [apiBaseUrl, setApiBaseUrl] = useState(connection?.api_base_url ?? '');
   const [timeZone, setTimeZone] = useState(connection?.time_zone ?? '');
+  const [billcomViaConnector, setBillcomViaConnector] = useState(connection?.billcom_via_connector ?? false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -44,6 +46,7 @@ export function BcEnvironmentForm({ connection, onSubmit, onCancel }: BcEnvironm
         environment: environment.trim(),
         apiBaseUrl: apiBaseUrl.trim(),
         timeZone: timeZone.trim(),
+        billcomViaConnector,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -122,6 +125,21 @@ export function BcEnvironmentForm({ connection, onSubmit, onCancel }: BcEnvironm
               />
               <p className="mt-1 text-xs text-foreground-subtle">
                 IANA time zone for date stamping; leave blank for UTC.
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-start gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={billcomViaConnector}
+                  onChange={(e) => setBillcomViaConnector(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>Bill.com invoices come from Bill.com&apos;s own BC connector</span>
+              </label>
+              <p className="mt-1 text-xs text-foreground-subtle">
+                When ticked, Create invoice and Change invoice post in Business Central only; Bill.com&apos;s connector copies the invoice to Bill.com.
               </p>
             </div>
 

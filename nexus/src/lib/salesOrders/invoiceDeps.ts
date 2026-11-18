@@ -22,7 +22,10 @@ export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } =
   const company = await bc.getCompany(bc.config.companyId)
   const supabase = createServiceClient()
 
-  const conn = await resolveBillcomConnection(supabase, scope.orgId)
+  // Invoices of this BC environment reach Bill.com through Bill.com's own BC
+  // connector: no Bill.com client at all, so invoicing here never touches Bill.com.
+  const billcomViaConnector = (scope.connection as { billcom_via_connector?: boolean } | null)?.billcom_via_connector === true
+  const conn = billcomViaConnector ? null : await resolveBillcomConnection(supabase, scope.orgId)
   let billcom: BillcomClient | null = null
   let billcomUnavailable = false
   if (conn?.enabled) {
@@ -48,6 +51,7 @@ export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } =
     billcom,
     billcomConnectionId: conn?.id ?? null,
     billcomUnavailable,
+    billcomViaConnector,
     timeZone: (scope.connection as { time_zone?: string | null } | null)?.time_zone ?? null,
     userId: opts.userId,
     // The posted invoice and its lines, so it shows in Receivables (and its page) at once.

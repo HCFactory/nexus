@@ -112,9 +112,9 @@ export function SalesOrdersList({ orders, canEdit }: Props) {
                       </span>
                     </td>
                     <td className="px-4 py-2.5">
-                      {invoiceStatusText(o.invoice_state) ? (
+                      {invoiceStatusText(o.invoice_state, o.billcom_invoice_id) ? (
                         <span className="text-foreground" title={o.invoice_error ?? undefined}>
-                          {invoiceStatusText(o.invoice_state)}
+                          {invoiceStatusText(o.invoice_state, o.billcom_invoice_id)}
                         </span>
                       ) : (
                         <SyncBadge state={o.sync_state} error={o.sync_error} canAct={false} onRetry={noop} onOverwrite={noop} />

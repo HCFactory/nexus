@@ -130,7 +130,7 @@ describe('status line', () => {
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
   });
   it('done shows Invoiced · In Bill.com and View invoice opens the invoice page', () => {
-    status({ invoice_state: 'done', bc_posted_invoice_number: 'SI 1/2', bc_posted_invoice_id: 'inv-guid' });
+    status({ invoice_state: 'done', bc_posted_invoice_number: 'SI 1/2', bc_posted_invoice_id: 'inv-guid', billcom_invoice_id: 'bill-1' });
     expect(screen.getByRole('status')).toHaveTextContent('Invoiced · In Bill.com');
     expect(screen.getByRole('link', { name: 'View invoice' })).toHaveAttribute('href', '/receivables/invoices/inv-guid');
     expect(screen.getByText('Invoice SI 1/2 ·')).toBeInTheDocument();
@@ -141,6 +141,10 @@ describe('status line', () => {
 describe('invoiceStatusText', () => {
   it("shows 'Changing invoice…' while a change is open", () => {
     expect(invoiceStatusText('changing')).toBe('Changing invoice…');
+  });
+  it("an invoice with no Bill.com invoice (Bill.com's connector copies it) is just 'Invoiced'", () => {
+    expect(invoiceStatusText('done', null)).toBe('Invoiced');
+    expect(invoiceStatusText('done', 'bill-1')).toBe('Invoiced · In Bill.com');
   });
 });
 

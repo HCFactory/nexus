@@ -86,6 +86,7 @@ export function BcEnvironmentsCard() {
       environment: values.environment,
       apiBaseUrl: values.apiBaseUrl || null,
       timeZone: values.timeZone || null,
+      billcomViaConnector: values.billcomViaConnector,
     });
     await reload();
     setEditingConnection(null);

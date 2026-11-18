@@ -162,6 +162,13 @@ describe('resumeInvoiceIfStuck', () => {
 });
 
 describe('getInvoiceReadiness', () => {
+  it("is ready without any Bill.com link when this environment's invoices come through Bill.com's connector", async () => {
+    mocks.requireScope.mockResolvedValue({ ...scope(), connection: { billcom_via_connector: true } });
+    mocks.resolveConn.mockResolvedValue(null);
+    setup({ billcom_customer_links: [] });
+    expect(await getInvoiceReadiness('C1')).toEqual({ blockedReason: null });
+  });
+
   it('is ready for a synced link', async () => {
     expect(await getInvoiceReadiness('C1')).toEqual({ blockedReason: null });
   });

@@ -218,6 +218,8 @@ export interface BusinessCentralConnection {
   company_name: string | null;
   api_base_url: string;
   time_zone: string | null;
+  /** Invoices reach Bill.com through Bill.com's own BC connector: Nexus posts in BC only. */
+  billcom_via_connector: boolean;
   sync_enabled: boolean;
   is_default: boolean;
   last_verified_at: string | null;

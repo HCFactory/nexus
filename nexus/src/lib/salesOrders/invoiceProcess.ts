@@ -40,6 +40,11 @@ export interface InvoiceDeps extends BcInvoicingDeps {
   billcomConnectionId: string | null
   /** Bill.com is turned on but its client couldn't be built: Bill.com work fails visibly, never skipped as "off". */
   billcomUnavailable?: boolean
+  /**
+   * This BC environment's invoices reach Bill.com through Bill.com's own BC
+   * connector: Nexus posts in BC only and never creates or checks Bill.com invoices.
+   */
+  billcomViaConnector?: boolean
   /** The BC connection's time zone; invoice date = today there. */
   timeZone: string | null
   userId?: string
@@ -297,6 +302,9 @@ async function runSteps(deps: InvoiceDeps, orderId: string, lease: OrderLease): 
     if (step > 0) await renewOrStop(lease, orderId, LEASE_MS)
     if (state === 'posting') {
       await postingStep(deps, order, lease)
+    } else if ((state === 'posted' || state === 'billcom_sending') && deps.billcomViaConnector) {
+      // Bill.com's connector copies the posted invoice; there is no Bill.com step.
+      await updateInvoice(deps, orderId, state, { invoice_state: 'done', invoice_error: null })
     } else if (state === 'posted') {
       await updateInvoice(deps, orderId, 'posted', { invoice_state: 'billcom_sending' })
     } else {
@@ -315,8 +323,10 @@ export async function startInvoiceProcess(deps: InvoiceDeps, orderId: string): P
     const order = await findOrder(deps, orderId)
     if (!order) return { ok: false, error: NOT_FOUND }
     if (!canStartInvoice(order)) return { ok: false, error: NOT_STARTABLE }
-    const block = await customerBlock(deps, order)
-    if (block.reason !== null) return { ok: false, error: block.reason }
+    if (!deps.billcomViaConnector) {
+      const block = await customerBlock(deps, order)
+      if (block.reason !== null) return { ok: false, error: block.reason }
+    }
     try {
       await updateInvoice(deps, orderId, 'none', {
         invoice_state: 'posting',

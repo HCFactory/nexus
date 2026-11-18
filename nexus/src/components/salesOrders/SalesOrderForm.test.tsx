@@ -784,7 +784,7 @@ describe('invoicing in the header', () => {
     expect(screen.queryByRole('button', { name: 'Create invoice' })).toBeNull();
   });
   it('past posting hides Save and Delete and shows the status instead of the BC sync state', () => {
-    renderForm({ order: final({ status: 'invoiced', invoice_state: 'done', bc_posted_invoice_number: 'SI-1', bc_posted_invoice_id: 'inv-guid' }), lines: [lineRow] });
+    renderForm({ order: final({ status: 'invoiced', invoice_state: 'done', bc_posted_invoice_number: 'SI-1', bc_posted_invoice_id: 'inv-guid', billcom_invoice_id: 'bill-1' }), lines: [lineRow] });
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete order' })).toBeNull();
     expect(screen.getByRole('status')).toHaveTextContent('Invoiced · In Bill.com');

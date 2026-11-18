@@ -471,6 +471,38 @@ describe('runInvoiceProcess', () => {
   })
 })
 
+describe('Bill.com via its own BC connector (BC only)', () => {
+  const viaConnector = () => makeDeps({ billcom: null, billcomConnectionId: null, billcomViaConnector: true })
+
+  it('starts without any Bill.com link or client', async () => {
+    setup({}, null)
+    expect(await startInvoiceProcess(viaConnector(), 'o1')).toEqual({ ok: true })
+    expect(order().invoice_state).toBe('posting')
+  })
+
+  it('posts in BC once and ends Invoiced with nothing sent to Bill.com', async () => {
+    setup({}, null)
+    await startInvoiceProcess(viaConnector(), 'o1')
+    expect(await runInvoiceProcess(viaConnector(), 'o1')).toBe('done')
+    expect(bc.invokeAction).toHaveBeenCalledTimes(1)
+    expect(bill.request).not.toHaveBeenCalled()
+    expect(order()).toMatchObject({ invoice_state: 'done', status: 'invoiced', invoice_error: null, bc_posted_invoice_id: 'inv-guid' })
+    expect(order().billcom_invoice_id ?? null).toBeNull()
+  })
+
+  it('an order mid Bill.com step when the switch is turned on finishes without Bill.com', async () => {
+    setup({ invoice_state: 'billcom_sending', status: 'invoiced' }, null)
+    expect(await runInvoiceProcess(viaConnector(), 'o1')).toBe('done')
+    expect(bill.request).not.toHaveBeenCalled()
+  })
+
+  it('an order stopped in posted finishes without Bill.com', async () => {
+    setup({ invoice_state: 'posted', status: 'invoiced' }, null)
+    expect(await runInvoiceProcess(viaConnector(), 'o1')).toBe('done')
+    expect(bill.request).not.toHaveBeenCalled()
+  })
+})
+
 describe('lease and ownership', () => {
   it('holds the lease past BC\'s post timeout during the post, and releases it after', async () => {
     setup({ invoice_state: 'posting' })

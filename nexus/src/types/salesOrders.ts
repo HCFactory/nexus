@@ -274,6 +274,7 @@ export interface SalesOrderListRow {
   sync_error: string | null
   invoice_state: InvoiceState
   invoice_error: string | null
+  billcom_invoice_id: string | null
 }
 
 /** A copy of one BC sales price list line (read-only). */
