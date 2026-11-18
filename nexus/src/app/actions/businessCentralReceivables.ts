@@ -13,6 +13,7 @@ import type { AgingRow } from '@/lib/businessCentral/agingSummary';
 import { buildArSyncAdapters } from '@/lib/businessCentral/arSyncAdapters';
 import { createBcClientForOrg, type BcClient } from '@/lib/businessCentral/client';
 import { createReferenceTransportForOrg } from '@/lib/businessCentral/customerReferences/transport';
+import { CUSTOMER_FIELDS } from '@/lib/businessCentral/customers/customerFields';
 import {
   CARD_SELECT_FIELDS,
   CUSTOMER_CARD_SOURCE,
@@ -338,9 +339,9 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
       })
       .eq('id', connection.id);
 
-    revalidatePath('/customers');
-    revalidatePath('/receivables');
-    revalidatePath('/receivables/invoices');
+    // 'layout' also refreshes customer profiles and invoice pages under these.
+    revalidatePath('/customers', 'layout');
+    revalidatePath('/receivables', 'layout');
     return results;
   } catch (error) {
     await supabase
@@ -375,6 +376,10 @@ export async function getReceivablesSyncStatus(): Promise<BusinessCentralSyncChe
 }
 
 const CUSTOMER_PAGE_SIZE = 1000;
+// What the customers list and its edit form read; never bc_raw_payload.
+const CUSTOMER_LIST_COLUMNS = [
+  ...new Set(['id', 'bc_customer_number', 'display_name', 'email', 'city', 'currency_code', 'balance', ...CUSTOMER_FIELDS.map((f) => f.name)]),
+].join(',');
 
 export async function getCustomersPageData(): Promise<{
   customers: BusinessCentralCustomer[];
@@ -388,21 +393,24 @@ export async function getCustomersPageData(): Promise<{
   const connection = await resolveActiveBcConnection(orgId, user.id);
   if (!connection) return { customers: [], canSync: false };
 
-  // Supabase caps a single response at 1,000 rows, so page through everything.
-  const customers: BusinessCentralCustomer[] = [];
-  for (let from = 0; ; from += CUSTOMER_PAGE_SIZE) {
-    const { data } = await supabase
+  // Supabase caps a single response at 1,000 rows: read the first page with
+  // the total, then the remaining pages at the same time. Only the columns the
+  // list and edit form use (never the raw BC record, the bulk of each row).
+  const page = (from: number, count = false) =>
+    supabase
       .from('business_central_customers')
-      .select('*')
+      .select(CUSTOMER_LIST_COLUMNS, count ? { count: 'exact' } : undefined)
       .eq('organization_id', orgId)
       .eq('bc_connection_id', connection.id)
       .order('display_name', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + CUSTOMER_PAGE_SIZE - 1);
-    const page = (data ?? []) as BusinessCentralCustomer[];
-    customers.push(...page);
-    if (page.length < CUSTOMER_PAGE_SIZE) break;
-  }
+  const first = await page(0, true);
+  const total = first.count ?? 0;
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(Math.ceil(total / CUSTOMER_PAGE_SIZE) - 1, 0) }, (_, i) => page((i + 1) * CUSTOMER_PAGE_SIZE)),
+  );
+  const customers = [first, ...rest].flatMap((r) => (r.data ?? []) as unknown as BusinessCentralCustomer[]);
 
   return {
     customers,

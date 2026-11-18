@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   pullShipTos: vi.fn(),
   pullPriceLists: vi.fn(),
   calls: [] as string[],
+  revalidate: vi.fn(),
   syncLines: vi.fn(),
   list: vi.fn(),
   checkpoint: null as null | { cursor_value: string | null; records_synced: number },
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('server-only', () => ({}));
-vi.mock('next/cache', () => ({ revalidatePath: vi.fn() }));
+vi.mock('next/cache', () => ({ revalidatePath: (...a: unknown[]) => mocks.revalidate(...a) }));
 vi.mock('@/lib/auth/currentUserAccess', () => ({
   requirePermission: vi.fn().mockResolvedValue({ orgId: 'org-1', user: { id: 'u1' } }),
 }));
@@ -174,5 +175,14 @@ describe('invoice lines get their own time window', () => {
   it('passes 40 seconds, not what the other syncs left over', async () => {
     await syncBusinessCentralReceivables();
     expect(mocks.syncLines.mock.calls[0][2]).toBe(40_000);
+  });
+});
+
+describe('sync refreshes the pages that show synced data', () => {
+  it('revalidates customers (and their profiles) and receivables', async () => {
+    mocks.revalidate.mockReset();
+    await syncBusinessCentralReceivables();
+    expect(mocks.revalidate).toHaveBeenCalledWith('/customers', 'layout');
+    expect(mocks.revalidate).toHaveBeenCalledWith('/receivables', 'layout');
   });
 });

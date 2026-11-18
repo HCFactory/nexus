@@ -32,6 +32,9 @@ interface CustomersClientProps {
 
 export const DELETE_CONFIRM = "Delete this customer? This can't be undone.";
 
+/** Customers drawn at a time; "Show more" adds another page. */
+const ROWS_PER_PAGE = 200;
+
 /** Safety cap on automatic rounds; each round is one sync (about 1–2 minutes). */
 const MAX_SYNC_ROUNDS = 200;
 
@@ -57,6 +60,8 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
   const [notice, setNotice] = useState<{ text: string; href?: string } | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [search, setSearch] = useState(initialSearch ?? "");
+  // Drawing thousands of rows is slow: show a page of them; search still covers all.
+  const [shown, setShown] = useState(ROWS_PER_PAGE);
   const [isDeleting, startDeleteTransition] = useTransition();
   const [syncResults, setSyncResults] = useState<SyncEntityResult[] | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -272,14 +277,20 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
                 <Input
                   value={search}
-                  onChange={(event) => setSearch(event.target.value)}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setShown(ROWS_PER_PAGE);
+                  }}
                   placeholder="Search by name, number, or email"
                   className="pl-9 pr-9"
                 />
                 {search && (
                   <button
                     type="button"
-                    onClick={() => setSearch("")}
+                    onClick={() => {
+                      setSearch("");
+                      setShown(ROWS_PER_PAGE);
+                    }}
                     className="absolute right-2 top-1/2 rounded-md p-1 -translate-y-1/2 text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground"
                     aria-label="Clear search"
                   >
@@ -312,7 +323,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
-                    {filtered.map((customer) => (
+                    {filtered.slice(0, shown).map((customer) => (
                       <tr
                         key={customer.id}
                         className="cursor-pointer transition-colors hover:bg-surface"
@@ -395,6 +406,13 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
                     ))}
                   </tbody>
                 </table>
+              )}
+              {filtered.length > shown && (
+                <div className="flex justify-center p-3">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setShown((n) => n + ROWS_PER_PAGE)}>
+                    Show more ({filtered.length - shown} more)
+                  </Button>
+                </div>
               )}
             </div>
           </div>

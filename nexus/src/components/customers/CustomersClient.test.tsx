@@ -199,3 +199,27 @@ describe('Sync keeps going until everything is complete', () => {
     expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('long customer lists', () => {
+  const many = Array.from({ length: 450 }, (_, i) => ({
+    id: `c${i}`, display_name: `Customer ${String(i).padStart(3, '0')}`, bc_customer_number: `N${i}`, email: null, city: null, currency_code: null, balance: 0,
+  })) as unknown as BusinessCentralCustomer[];
+  const rows = () => screen.getAllByRole('row').length - 1; // minus the header row
+
+  it('draws the first 200 and adds 200 more per "Show more" until all are shown', () => {
+    render(<CustomersClient customers={many} canSync={false} />);
+    expect(rows()).toBe(200);
+    fireEvent.click(screen.getByRole('button', { name: /show more/i }));
+    expect(rows()).toBe(400);
+    fireEvent.click(screen.getByRole('button', { name: /show more/i }));
+    expect(rows()).toBe(450);
+    expect(screen.queryByRole('button', { name: /show more/i })).toBeNull();
+  });
+
+  it('search looks through every customer, not just the ones drawn', () => {
+    render(<CustomersClient customers={many} canSync={false} />);
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'Customer 449' } });
+    expect(screen.getByText('Customer 449')).toBeInTheDocument();
+    expect(rows()).toBe(1);
+  });
+});
