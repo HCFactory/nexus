@@ -12,6 +12,7 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
    - Stripe stays off until its pre-live fixes are done (see #12) and Charge saved cards stays off for everyone.
 2. **Send invoice** (#5.3): a button that has Bill.com email the invoice to the customer. Small, low risk.
 3. **Stripe pre-live fixes** (#12): **built 2026-11-18** on branch `fix/stripe-prelive` (spec `docs/superpowers/specs/2026-11-18-stripe-prelive-fixes-design.md`; 1664 tests; reviewed). Covers the failed→charged duplicate-charge guard, Retry fixes (a)–(d), and Bill.com writes guarded by attempt.
+   - **Still to do — push and merge** `fix/stripe-prelive` (local only; not pushed). The user asked to do this later. Safe to merge any time: Stripe charging is off for everyone, and Production has no Stripe connection.
    - **Still to do — live check in TEST** (Stripe test mode + Bill.com sandbox), the user asked to do it later:
      1. Switch to TEST and turn on Charge saved cards for the tester.
      2. Briefly disable the Bill.com sandbox connection.
