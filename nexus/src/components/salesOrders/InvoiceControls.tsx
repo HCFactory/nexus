@@ -5,11 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { createInvoice, retryInvoice } from '@/app/actions/salesOrderInvoicing';
-import { discardChangeInvoice, retryChangeInvoice } from '@/app/actions/salesInvoiceChanges';
+import { deleteExtraInvoiceDrafts, discardChangeInvoice, getExtraInvoiceDrafts, retryChangeInvoice } from '@/app/actions/salesInvoiceChanges';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { formatMoney } from '@/lib/format';
 import { canStartInvoice, isInvoiceResumable, isPastPosting } from '@/lib/salesOrders/orderRules';
-import { DISCARDABLE_CHANGE_STATES, FAILED_CHANGE_STATES, type InvoiceChangeRow } from '@/types/invoiceChanges';
+import { DISCARDABLE_CHANGE_STATES, DUPLICATE_DRAFTS_PREFIX, FAILED_CHANGE_STATES, type DraftSummary, type InvoiceChangeRow } from '@/types/invoiceChanges';
 import type { InvoiceState, SalesOrderRow } from '@/types/salesOrders';
 import { GlassButton as Button } from './GlassButton';
 
@@ -261,6 +261,82 @@ export function InvoiceChangeStatus({
           Discard change
         </Button>
       )}
+      {canEdit && change.state === 'post_failed' && change.error?.startsWith(DUPLICATE_DRAFTS_PREFIX) && <DeleteExtraDrafts orderId={orderId} />}
     </div>
+  );
+}
+
+type DraftPreview = { keep: DraftSummary | null; extra: DraftSummary[] };
+
+/** "Delete extra drafts" and its confirm box: lists the draft kept and the drafts deleted; deletes only on confirm. */
+function DeleteExtraDrafts({ orderId }: { orderId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<DraftPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const show = async () => {
+    setOpen(true);
+    setPreview(null);
+    setError(null);
+    try {
+      const res = await getExtraInvoiceDrafts(orderId);
+      if (res.ok) setPreview({ keep: res.keep, extra: res.extra });
+      else setError(res.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read BC's drafts.");
+    }
+  };
+
+  const confirm = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await deleteExtraInvoiceDrafts(orderId, preview.extra.map((d) => d.id));
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete the drafts.');
+    } finally {
+      router.refresh();
+      setBusy(false);
+    }
+  };
+
+  const n = preview?.extra.length ?? 0;
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" onClick={show}>Delete extra drafts</Button>
+      <Dialog open={open} onOpenChange={(o) => { if (!busy) setOpen(o); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete extra drafts in BC?</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1">
+                {!preview && !error && <p>Reading BC&apos;s drafts…</p>}
+                {preview?.keep && <p>Keep {preview.keep.no} ({formatMoney(preview.keep.totalExclTax, null)} before tax). Retry posts this one.</p>}
+                {preview?.extra.map((d) => (
+                  <p key={d.id} className="font-medium text-foreground">Delete {d.no} ({formatMoney(d.totalExclTax, null)} before tax)</p>
+                ))}
+                {preview && n === 0 && <p>There are no extra drafts now.</p>}
+                <p className="pt-1">Only unposted drafts are deleted. This can&apos;t be undone.</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="button" size="sm" variant="blue-glass" disabled={busy || n === 0} onClick={confirm}>
+              {busy ? 'Deleting…' : `Delete ${n} draft${n === 1 ? '' : 's'}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

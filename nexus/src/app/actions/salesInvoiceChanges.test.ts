@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   discard: vi.fn(),
   loadOpen: vi.fn(),
   readBlock: vi.fn(),
+  findExtra: vi.fn(),
+  deleteExtra: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -28,10 +30,14 @@ vi.mock('@/lib/salesOrders/invoiceChangeProcess', () => ({
   retryInvoiceChange: mocks.retry,
   discardInvoiceChange: mocks.discard,
   loadOpenChange: mocks.loadOpen,
+  findExtraDrafts: mocks.findExtra,
+  deleteExtraDrafts: mocks.deleteExtra,
 }));
 
 import {
+  deleteExtraInvoiceDrafts,
   discardChangeInvoice,
+  getExtraInvoiceDrafts,
   getInvoiceChangeState,
   resumeInvoiceChangeIfStuck,
   retryChangeInvoice,
@@ -180,5 +186,39 @@ describe('resumeInvoiceChangeIfStuck', () => {
     setup({ invoice_state: 'changing' });
     await resumeInvoiceChangeIfStuck('o1');
     expect(mocks.after).not.toHaveBeenCalled();
+  });
+});
+
+describe('extra drafts', () => {
+  it('both need edit permission', async () => {
+    setup();
+    mocks.requireScope.mockResolvedValue(scope(false));
+    expect(await getExtraInvoiceDrafts('o1')).toEqual({ ok: false, error: NO_PERMISSION });
+    expect(await deleteExtraInvoiceDrafts('o1', ['d2'])).toEqual({ ok: false, error: NO_PERMISSION });
+    expect(mocks.deleteExtra).not.toHaveBeenCalled();
+  });
+
+  it("the preview is the open change's keep and extras", async () => {
+    setup();
+    mocks.loadOpen.mockResolvedValue(openChange());
+    const preview = { ok: true, keep: { id: 'd1', no: 'S-INV102028', totalExclTax: 58 }, extra: [{ id: 'd2', no: 'S-INV102029', totalExclTax: 0 }] };
+    mocks.findExtra.mockResolvedValue(preview);
+    expect(await getExtraInvoiceDrafts('o1')).toEqual(preview);
+    expect(mocks.findExtra).toHaveBeenCalledWith(deps, 'ch1');
+  });
+
+  it('delete passes the confirmed ids and refreshes the pages', async () => {
+    setup();
+    mocks.loadOpen.mockResolvedValue(openChange());
+    mocks.deleteExtra.mockResolvedValue({ ok: true });
+    expect(await deleteExtraInvoiceDrafts('o1', ['d2'])).toEqual({ ok: true });
+    expect(mocks.deleteExtra).toHaveBeenCalledWith(deps, 'ch1', ['d2']);
+    expect(mocks.revalidatePath).toHaveBeenCalled();
+  });
+
+  it('no open change → nothing to clean up', async () => {
+    setup();
+    mocks.loadOpen.mockResolvedValue(null);
+    expect(await deleteExtraInvoiceDrafts('o1', ['d2'])).toEqual({ ok: false, error: 'Nothing to clean up.' });
   });
 });

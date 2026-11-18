@@ -7,7 +7,7 @@
 // location, posting groups, terms, dates, ship-to), which API v2 can't set.
 // Lines go through API v2 `salesInvoiceLines`: they take the header's
 // location and tax, so the header is completed before lines are added.
-import type { BcRecord, ReferenceSource } from '@/lib/businessCentral/customerReferences/transport'
+import type { BcKey, BcRecord, ReferenceSource } from '@/lib/businessCentral/customerReferences/transport'
 import type { ChangeLine } from '@/types/invoiceChanges'
 import type { SalesOrderRow } from '@/types/salesOrders'
 import { SALES_DOCUMENT_SOURCE, toSalesDocShipToAddress } from './bcOrderMapping'
@@ -81,6 +81,35 @@ export async function findDraftInvoice(
     filter: `externalDocumentNumber eq ${quote(q.externalDocumentNumber)} and customerNumber eq ${quote(q.customerNumber)} and status eq 'Draft'`,
   })
   return found[0] ? { id: String(found[0].fields.id), no: String(found[0].fields.number) } : null
+}
+
+/** A draft as listed for the duplicate check: enough to show it and to delete it. */
+export interface ListedDraft extends DraftInvoice {
+  totalExclTax: number
+  key: BcKey
+  etag: string
+}
+
+/** Every draft with this Invoice # and customer (more than one = duplicates; nothing may be posted). */
+export async function listChangeDrafts(
+  deps: BcInvoicingDeps,
+  q: { externalDocumentNumber: string; customerNumber: string },
+): Promise<ListedDraft[]> {
+  const found = await deps.transport.list(INVOICES, {
+    filter: `externalDocumentNumber eq ${quote(q.externalDocumentNumber)} and customerNumber eq ${quote(q.customerNumber)} and status eq 'Draft'`,
+  })
+  return found.map((r) => ({
+    id: String(r.fields.id),
+    no: String(r.fields.number),
+    totalExclTax: Number(r.fields.totalAmountExcludingTax ?? 0),
+    key: r.key,
+    etag: r.etag,
+  }))
+}
+
+/** Deletes a draft invoice (never a posted one: BC refuses that). */
+export async function deleteDraftInvoice(deps: BcInvoicingDeps, draft: ListedDraft): Promise<void> {
+  await deps.transport.remove(INVOICES, draft.key, draft.etag)
 }
 
 /**

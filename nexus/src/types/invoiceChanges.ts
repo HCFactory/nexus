@@ -50,3 +50,13 @@ export interface InvoiceChangeRow {
   lines_before: ChangeLine[]
   lines_after: ChangeLine[]
 }
+
+/** Start of the post step's error when BC has several drafts with the Invoice # (the page offers "Delete extra drafts"). */
+export const DUPLICATE_DRAFTS_PREFIX = 'BC has more than one draft'
+
+/** A BC draft invoice as the "Delete extra drafts" box shows it. */
+export interface DraftSummary {
+  id: string
+  no: string
+  totalExclTax: number
+}

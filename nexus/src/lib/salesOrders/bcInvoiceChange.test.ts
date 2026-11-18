@@ -9,6 +9,8 @@ import {
   checkDraft,
   applyDraftHeader,
   createDraftInvoice,
+  deleteDraftInvoice,
+  listChangeDrafts,
   findDraftInvoice,
   findReplacementInvoice,
   postDraftInvoice,
@@ -217,5 +219,29 @@ describe('postDraftInvoice', () => {
     await expect(postDraftInvoice(refused.deps, { id: 'draft-id', no: 'S-INV1' })).rejects.toEqual(
       new BcPostRefusedError('Posting Date is not within your range of allowed posting dates.'),
     )
+  })
+})
+
+describe('listChangeDrafts', () => {
+  it('lists every draft with this Invoice # and customer, with number and subtotal', async () => {
+    const { deps, list } = makeDeps({
+      list: () => [
+        rec({ id: 'd1', number: 'S-INV102028', status: 'Draft', totalAmountExcludingTax: 58 }, 'W/"a"'),
+        rec({ id: 'd2', number: 'S-INV102029', status: 'Draft', totalAmountExcludingTax: 0 }, 'W/"b"'),
+      ],
+    })
+    expect(await listChangeDrafts(deps, { externalDocumentNumber: 'W-100532', customerNumber: 'W00389' })).toEqual([
+      { id: 'd1', no: 'S-INV102028', totalExclTax: 58, key: { bcId: 'd1' }, etag: 'W/"a"' },
+      { id: 'd2', no: 'S-INV102029', totalExclTax: 0, key: { bcId: 'd2' }, etag: 'W/"b"' },
+    ])
+    expect(list.mock.calls[0][1]?.filter).toBe("externalDocumentNumber eq 'W-100532' and customerNumber eq 'W00389' and status eq 'Draft'")
+  })
+})
+
+describe('deleteDraftInvoice', () => {
+  it('deletes the draft invoice with its etag', async () => {
+    const { deps, remove } = makeDeps()
+    await deleteDraftInvoice(deps, { id: 'd2', no: 'S-INV102029', totalExclTax: 0, key: { bcId: 'd2' }, etag: 'W/"b"' })
+    expect(remove).toHaveBeenCalledWith({ kind: 'api', resource: 'salesInvoices' }, { bcId: 'd2' }, 'W/"b"')
   })
 })

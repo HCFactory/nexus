@@ -28,7 +28,9 @@ import {
   isChangeOpen,
   RESUMABLE_CHANGE_STATES,
   CHANGE_STATES,
+  DUPLICATE_DRAFTS_PREFIX,
   type ChangeLine,
+  type DraftSummary,
   type ChangeState,
   type InvoiceChangeRow,
 } from '@/types/invoiceChanges'
@@ -39,12 +41,15 @@ import {
   cancelBcInvoice,
   checkDraft,
   createDraftInvoice,
+  deleteDraftInvoice,
   findDraftInvoice,
   findReplacementInvoice,
+  listChangeDrafts,
   postDraftInvoice,
   readBcInvoice,
   setDraftLines,
   type BcInvoiceState,
+  type ListedDraft,
 } from './bcInvoiceChange'
 import { BcPostRefusedError } from './bcInvoicing'
 import { toChangeLines, toInvoiceSourceLines, validateChange } from './invoiceChangeLines'
@@ -65,6 +70,7 @@ const BUSY = 'This order is busy. Try again in a moment.'
 const NOT_FOUND = 'Sales order not found.'
 const CHANGE_NOT_FOUND = 'Invoice change not found.'
 const NOTHING_TO_RETRY = 'Nothing to retry.'
+const NOTHING_TO_CLEAN = 'Nothing to clean up.'
 
 export type ChangeResult = { ok: true } | { ok: false; error: string }
 
@@ -283,6 +289,13 @@ async function recordPosted(deps: InvoiceDeps, c: InvoiceChangeRow, inv: BcInvoi
   await mirror(deps, inv, inv.number)
 }
 
+/** The duplicate-drafts message when BC has more than one draft with this Invoice # and customer, else null. */
+async function duplicateDrafts(deps: InvoiceDeps, q: { externalDocumentNumber: string; customerNumber: string }): Promise<string | null> {
+  const drafts = await listChangeDrafts(deps, q)
+  if (drafts.length < 2) return null
+  return `${DUPLICATE_DRAFTS_PREFIX} with Invoice # ${q.externalDocumentNumber} (${drafts.map((d) => d.no).join(', ')}). Delete the extra drafts, then Retry.`
+}
+
 async function postStep(deps: InvoiceDeps, c: InvoiceChangeRow, lease: OrderLease): Promise<ChangeState | void> {
   const oldInv = await readOld(deps, c)
   if (!oldInv) return fail(deps, c, 'post_failed', `BC has no invoice ${c.old_bc_invoice_number}.`)
@@ -291,6 +304,10 @@ async function postStep(deps: InvoiceDeps, c: InvoiceChangeRow, lease: OrderLeas
   // Posted already (a crash or lost response after the post)? Record it, never post again.
   const posted = await findReplacementInvoice(deps, { ...q, excludeId: c.old_bc_invoice_id })
   if (posted) return recordPosted(deps, c, posted)
+
+  // Several drafts with this Invoice #: never pick one; the rep deletes the extras first.
+  const dupes = await duplicateDrafts(deps, q)
+  if (dupes) return fail(deps, c, 'post_failed', dupes)
 
   const order = await loadOrder(deps, c.sales_order_id)
   let draft = await findDraftInvoice(deps, { draftId: c.draft_bc_invoice_id, ...q })
@@ -301,6 +318,8 @@ async function postStep(deps: InvoiceDeps, c: InvoiceChangeRow, lease: OrderLeas
   await setDraftLines(deps, draft, c.lines_after)
   const mismatch = await checkDraft(deps, draft, c.lines_after)
   if (mismatch) return fail(deps, c, 'post_failed', mismatch)
+  const dupesNow = await duplicateDrafts(deps, q)
+  if (dupesNow) return fail(deps, c, 'post_failed', dupesNow)
 
   await renewOrStop(lease, POST_LEASE_MS)
   try {
@@ -562,4 +581,59 @@ export async function sweepInvoiceChanges(deps: InvoiceDeps, limit = SWEEP_BATCH
     }
   }
   return handled
+}
+
+// ---------- duplicate drafts ----------
+
+const summary = (d: ListedDraft): DraftSummary => ({ id: d.id, no: d.no, totalExclTax: d.totalExclTax })
+
+/** The drafts with the change's Invoice #: the one kept (the saved draft, else the first) and the extras. */
+async function splitDrafts(deps: InvoiceDeps, c: InvoiceChangeRow): Promise<{ keep: ListedDraft | null; extra: ListedDraft[] } | null> {
+  const oldInv = await readOld(deps, c)
+  if (!oldInv) return null
+  const drafts = await listChangeDrafts(deps, { externalDocumentNumber: oldInv.externalDocumentNumber, customerNumber: oldInv.customerNumber })
+  const keep = drafts.find((d) => d.id === c.draft_bc_invoice_id) ?? drafts[0] ?? null
+  return { keep, extra: drafts.filter((d) => d !== keep) }
+}
+
+/** What "Delete extra drafts" would keep and delete (only for a change stopped at the post). */
+export async function findExtraDrafts(
+  deps: InvoiceDeps,
+  changeId: string,
+): Promise<{ ok: true; keep: DraftSummary | null; extra: DraftSummary[] } | { ok: false; error: string }> {
+  const c = await loadChange(deps, changeId)
+  if (!c) return { ok: false, error: CHANGE_NOT_FOUND }
+  if (c.state !== 'post_failed') return { ok: false, error: NOTHING_TO_CLEAN }
+  const split = await splitDrafts(deps, c)
+  if (!split) return { ok: false, error: `BC has no invoice ${c.old_bc_invoice_number}.` }
+  return { ok: true, keep: split.keep && summary(split.keep), extra: split.extra.map(summary) }
+}
+
+/**
+ * Deletes the extra drafts the rep confirmed (`ids`), re-read from BC under the
+ * order's lease: still drafts with the Invoice #, never the kept one. The change
+ * stays post_failed; Retry then posts the kept draft.
+ */
+export async function deleteExtraDrafts(deps: InvoiceDeps, changeId: string, ids: string[]): Promise<ChangeResult> {
+  const c = await loadChange(deps, changeId)
+  if (!c) return { ok: false, error: CHANGE_NOT_FOUND }
+  if (c.state !== 'post_failed') return { ok: false, error: NOTHING_TO_CLEAN }
+  const res = await withOrderLease(deps, c.sales_order_id, async (): Promise<ChangeResult> => {
+    const now = await loadChange(deps, changeId)
+    if (!now || now.state !== 'post_failed') return { ok: false, error: NOTHING_TO_CLEAN }
+    const split = await splitDrafts(deps, now)
+    if (!split) return { ok: false, error: `BC has no invoice ${now.old_bc_invoice_number}.` }
+    const confirmed = split.extra.filter((d) => ids.includes(d.id))
+    if (confirmed.length === 0) return { ok: false, error: NOTHING_TO_CLEAN }
+    for (const d of confirmed) await deleteDraftInvoice(deps, d)
+    try {
+      await updateChange(deps, now.id, 'post_failed', {
+        error: `Deleted ${confirmed.map((d) => d.no).join(', ')}. Retry to post the corrected invoice.`,
+      })
+    } catch (e) {
+      if (!isOwnershipLost(e)) throw e
+    }
+    return { ok: true }
+  })
+  return res.claimed ? res.value : { ok: false, error: BUSY }
 }

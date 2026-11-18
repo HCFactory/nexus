@@ -10,7 +10,9 @@ import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environ
 import { editScope, NO_PERMISSION, type Fail, type Scope } from '@/lib/salesOrders/editScope';
 import { changeLinesFromDrafts } from '@/lib/salesOrders/invoiceChangeLines';
 import {
+  deleteExtraDrafts,
   discardInvoiceChange,
+  findExtraDrafts,
   loadOpenChange,
   retryInvoiceChange,
   runInvoiceChange,
@@ -18,7 +20,7 @@ import {
 } from '@/lib/salesOrders/invoiceChangeProcess';
 import { buildInvoiceDeps } from '@/lib/salesOrders/invoiceDeps';
 import { createServiceClient } from '@/lib/supabase/server';
-import { FAILED_CHANGE_STATES, RESUMABLE_CHANGE_STATES, type InvoiceChangeRow } from '@/types/invoiceChanges';
+import { FAILED_CHANGE_STATES, RESUMABLE_CHANGE_STATES, type DraftSummary, type InvoiceChangeRow } from '@/types/invoiceChanges';
 import type { LineDraft } from '@/types/salesOrders';
 
 type Deps = Awaited<ReturnType<typeof buildInvoiceDeps>>;
@@ -26,6 +28,7 @@ type OrderFields = { id: string; invoice_state: string; claimed_until: string | 
 
 const ORDER_NOT_FOUND = 'Sales order not found.';
 const NOTHING_TO_RETRY = 'Nothing to retry.';
+const NOTHING_TO_CLEAN = 'Nothing to clean up.';
 const CHECK_FAILED = "Couldn't check this invoice right now. Try again.";
 
 const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -158,6 +161,38 @@ export async function discardChangeInvoice(orderId: string): Promise<{ ok: true 
     return res;
   } catch (e) {
     return { ok: false, error: `Could not discard the change: ${errorMessage(e)}` };
+  }
+}
+
+/** What "Delete extra drafts" would keep and delete in BC, for the confirm box. */
+export async function getExtraInvoiceDrafts(
+  orderId: string,
+): Promise<{ ok: true; keep: DraftSummary | null; extra: DraftSummary[] } | Fail> {
+  try {
+    const scope = await editScope();
+    if (!scope) return { ok: false, error: NO_PERMISSION };
+    const deps = await buildInvoiceDeps(scope);
+    const change = await loadOpenChange(deps, orderId);
+    if (!change) return { ok: false, error: NOTHING_TO_CLEAN };
+    return await findExtraDrafts(deps, change.id);
+  } catch (e) {
+    return { ok: false, error: `Could not read BC's drafts: ${errorMessage(e)}` };
+  }
+}
+
+/** Delete the extra drafts the rep confirmed in the box (by id); the kept draft is never deleted. */
+export async function deleteExtraInvoiceDrafts(orderId: string, draftIds: string[]): Promise<{ ok: true } | Fail> {
+  try {
+    const scope = await editScope();
+    if (!scope) return { ok: false, error: NO_PERMISSION };
+    const deps = await buildInvoiceDeps(scope, { userId: scope.user.id });
+    const change = await loadOpenChange(deps, orderId);
+    if (!change) return { ok: false, error: NOTHING_TO_CLEAN };
+    const res = await deleteExtraDrafts(deps, change.id, draftIds);
+    refresh();
+    return res;
+  } catch (e) {
+    return { ok: false, error: `Could not delete the drafts: ${errorMessage(e)}` };
   }
 }
 

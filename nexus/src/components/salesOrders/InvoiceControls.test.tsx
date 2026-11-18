@@ -8,7 +8,9 @@ import { ChangeInvoiceButton, InvoiceChangeStatus, InvoiceControls, InvoiceStatu
 const actions = vi.hoisted(() => ({ createInvoice: vi.fn(), retryInvoice: vi.fn() }));
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/app/actions/salesOrderInvoicing', () => actions);
-const changeActions = vi.hoisted(() => ({ retryChangeInvoice: vi.fn(), discardChangeInvoice: vi.fn() }));
+const changeActions = vi.hoisted(() => ({
+  retryChangeInvoice: vi.fn(), discardChangeInvoice: vi.fn(), getExtraInvoiceDrafts: vi.fn(), deleteExtraInvoiceDrafts: vi.fn(),
+}));
 vi.mock('@/app/actions/salesInvoiceChanges', () => changeActions);
 vi.mock('next/navigation', () => ({ useRouter: () => nav }));
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
@@ -178,6 +180,34 @@ describe('Invoice change status', () => {
     expect(screen.queryByRole('button', { name: 'Discard change' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(changeActions.retryChangeInvoice).toHaveBeenCalledWith('so-1'));
+  });
+  it('other failures offer no Delete extra drafts', () => {
+    render(<InvoiceChangeStatus orderId="so-1" change={change('post_failed', 'Posting Date is not within your range.')} canEdit />);
+    expect(screen.queryByRole('button', { name: 'Delete extra drafts' })).toBeNull();
+  });
+  it('duplicate drafts: the confirm box shows what is kept and deleted; nothing is deleted until confirmed', async () => {
+    changeActions.getExtraInvoiceDrafts.mockResolvedValue({
+      ok: true,
+      keep: { id: 'd1', no: 'S-INV102028', totalExclTax: 58 },
+      extra: [{ id: 'd2', no: 'S-INV102029', totalExclTax: 0 }],
+    });
+    changeActions.deleteExtraInvoiceDrafts.mockResolvedValue({ ok: true });
+    const msg = 'BC has more than one draft with Invoice # W-100532 (S-INV102028, S-INV102029). Delete the extra drafts, then Retry.';
+    render(<InvoiceChangeStatus orderId="so-1" change={change('post_failed', msg)} canEdit />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete extra drafts' }));
+    expect(await screen.findByText(/Keep S-INV102028/)).toBeInTheDocument();
+    expect(screen.getByText(/Delete S-INV102029/)).toBeInTheDocument();
+    expect(changeActions.deleteExtraInvoiceDrafts).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 1 draft' }));
+    await waitFor(() => expect(changeActions.deleteExtraInvoiceDrafts).toHaveBeenCalledWith('so-1', ['d2']));
+  });
+  it('duplicate drafts: Cancel deletes nothing', async () => {
+    changeActions.getExtraInvoiceDrafts.mockResolvedValue({ ok: true, keep: { id: 'd1', no: 'S-INV1', totalExclTax: 58 }, extra: [{ id: 'd2', no: 'S-INV2', totalExclTax: 0 }] });
+    render(<InvoiceChangeStatus orderId="so-1" change={change('post_failed', 'BC has more than one draft with Invoice # X (S-INV1, S-INV2). Delete the extra drafts, then Retry.')} canEdit />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete extra drafts' }));
+    await screen.findByText(/Keep S-INV1/);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(changeActions.deleteExtraInvoiceDrafts).not.toHaveBeenCalled();
   });
   it('a running change shows no buttons', () => {
     render(<InvoiceChangeStatus orderId="so-1" change={change('posting')} canEdit />);

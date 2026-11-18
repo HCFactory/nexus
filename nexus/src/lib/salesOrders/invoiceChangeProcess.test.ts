@@ -18,6 +18,8 @@ vi.mock('./bcInvoiceChange', () => ({
   setDraftLines: vi.fn(),
   checkDraft: vi.fn(),
   postDraftInvoice: vi.fn(),
+  listChangeDrafts: vi.fn(),
+  deleteDraftInvoice: vi.fn(),
 }))
 vi.mock('@/lib/billcom/invoicePush', async (orig) => ({
   ...(await orig<typeof import('@/lib/billcom/invoicePush')>()),
@@ -29,7 +31,9 @@ vi.mock('@/lib/billcom/invoicePush', async (orig) => ({
 import * as bc from './bcInvoiceChange'
 import * as push from '@/lib/billcom/invoicePush'
 import {
+  deleteExtraDrafts,
   discardInvoiceChange,
+  findExtraDrafts,
   loadOpenChange,
   retryInvoiceChange,
   runInvoiceChange,
@@ -113,6 +117,8 @@ beforeEach(() => {
   vi.mocked(bc.applyDraftHeader).mockResolvedValue(undefined)
   vi.mocked(bc.setDraftLines).mockResolvedValue(undefined)
   vi.mocked(bc.checkDraft).mockResolvedValue(null)
+  vi.mocked(bc.listChangeDrafts).mockResolvedValue([])
+  vi.mocked(bc.deleteDraftInvoice).mockResolvedValue(undefined)
   vi.mocked(bc.postDraftInvoice).mockImplementation(async () => { bcState.replacement = neu() })
   vi.mocked(push.findBillcomInvoice).mockResolvedValue(null)
   vi.mocked(push.replaceBillcomInvoice).mockImplementation(async (_c, id) => ({ id, totalAmount: 49.24, lineCount: 2 }))
@@ -414,5 +420,73 @@ describe('retry, discard, sweep, open change', () => {
     expect((await loadOpenChange(deps, 'o1'))?.id).toBe('ch1')
     change().state = 'discarded'
     expect(await loadOpenChange(deps, 'o1')).toBeNull()
+  })
+})
+
+const listed = (id: string, no: string, totalExclTax = 0) => ({ id, no, totalExclTax, key: { bcId: id }, etag: `W/"${id}"` })
+const DUPES = 'BC has more than one draft with Invoice # W-100528 (S-INV102028, S-INV102029). Delete the extra drafts, then Retry.'
+
+describe('duplicate drafts', () => {
+  it('more than one draft with the Invoice # → post_failed naming them, nothing set up or posted', async () => {
+    setup({ change: changeRow({ state: 'posting', cancelled_at: T0 }) })
+    bcState.oldStatus = 'Canceled'
+    vi.mocked(bc.listChangeDrafts).mockResolvedValue([listed('d1', 'S-INV102028', 58), listed('d2', 'S-INV102029')])
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('post_failed')
+    expect(change()).toMatchObject({ state: 'post_failed', error: DUPES })
+    expect(bc.listChangeDrafts).toHaveBeenCalledWith(deps, { externalDocumentNumber: 'W-100528', customerNumber: 'W00389' })
+    expect(bc.createDraftInvoice).not.toHaveBeenCalled()
+    expect(bc.setDraftLines).not.toHaveBeenCalled()
+    expect(bc.postDraftInvoice).not.toHaveBeenCalled()
+  })
+
+  it('a second draft appearing while the draft was set up → post_failed, not posted', async () => {
+    setup({ change: changeRow({ state: 'posting', cancelled_at: T0 }) })
+    bcState.oldStatus = 'Canceled'
+    vi.mocked(bc.listChangeDrafts)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([listed('d1', 'S-INV102028', 58), listed('d2', 'S-INV102029')])
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('post_failed')
+    expect(change().error).toBe(DUPES)
+    expect(bc.postDraftInvoice).not.toHaveBeenCalled()
+  })
+
+  it('findExtraDrafts keeps the saved draft and lists the others', async () => {
+    setup({ change: changeRow({ state: 'post_failed', cancelled_at: T0, draft_bc_invoice_id: 'd2', error: DUPES }) })
+    bcState.oldStatus = 'Canceled'
+    vi.mocked(bc.listChangeDrafts).mockResolvedValue([listed('d1', 'S-INV102028', 0), listed('d2', 'S-INV102029', 58)])
+    expect(await findExtraDrafts(deps, 'ch1')).toEqual({
+      ok: true,
+      keep: { id: 'd2', no: 'S-INV102029', totalExclTax: 58 },
+      extra: [{ id: 'd1', no: 'S-INV102028', totalExclTax: 0 }],
+    })
+  })
+
+  it('findExtraDrafts without a saved draft keeps the first; refuses a change not stopped at the post', async () => {
+    setup({ change: changeRow({ state: 'post_failed', cancelled_at: T0, error: DUPES }) })
+    bcState.oldStatus = 'Canceled'
+    vi.mocked(bc.listChangeDrafts).mockResolvedValue([listed('d1', 'S-INV102028'), listed('d2', 'S-INV102029')])
+    expect(await findExtraDrafts(deps, 'ch1')).toMatchObject({ ok: true, keep: { id: 'd1' }, extra: [{ id: 'd2' }] })
+    change().state = 'billcom_failed'
+    expect(await findExtraDrafts(deps, 'ch1')).toEqual({ ok: false, error: 'Nothing to clean up.' })
+  })
+
+  it('deleteExtraDrafts deletes only the confirmed extras, never the kept draft, and says to Retry', async () => {
+    setup({ change: changeRow({ state: 'post_failed', cancelled_at: T0, draft_bc_invoice_id: 'd1', error: DUPES }) })
+    bcState.oldStatus = 'Canceled'
+    vi.mocked(bc.listChangeDrafts).mockResolvedValue([listed('d1', 'S-INV102028', 58), listed('d2', 'S-INV102029'), listed('d3', 'S-INV102031')])
+    expect(await deleteExtraDrafts(deps, 'ch1', ['d1', 'd2'])).toEqual({ ok: true })
+    expect(bc.deleteDraftInvoice).toHaveBeenCalledTimes(1)
+    expect(bc.deleteDraftInvoice).toHaveBeenCalledWith(deps, listed('d2', 'S-INV102029'))
+    expect(change()).toMatchObject({ state: 'post_failed', error: 'Deleted S-INV102029. Retry to post the corrected invoice.' })
+  })
+
+  it('deleteExtraDrafts does nothing unless the change is stopped at the post, or when the order is busy', async () => {
+    setup({ change: changeRow({ state: 'posting', cancelled_at: T0, draft_bc_invoice_id: 'd1' }) })
+    vi.mocked(bc.listChangeDrafts).mockResolvedValue([listed('d1', 'S-INV102028'), listed('d2', 'S-INV102029')])
+    expect(await deleteExtraDrafts(deps, 'ch1', ['d2'])).toEqual({ ok: false, error: 'Nothing to clean up.' })
+    change().state = 'post_failed'
+    order().claimed_until = '2026-11-17T11:00:00.000Z'
+    expect(await deleteExtraDrafts(deps, 'ch1', ['d2'])).toMatchObject({ ok: false })
+    expect(bc.deleteDraftInvoice).not.toHaveBeenCalled()
   })
 })
