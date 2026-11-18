@@ -31,10 +31,16 @@ export function changeBlockedReason(
 
 /**
  * Reads the order's Bill.com invoice and says why it can't be changed, or
- * null. `client` null = Bill.com is off. No saved Bill.com invoice = allowed
- * (the change creates or finds it).
+ * null. `client` null = Bill.com is off, unless `unavailable` (turned on but
+ * the client couldn't be built: payment can't be checked, so try again).
+ * No saved Bill.com invoice = allowed (the change creates or finds it).
  */
-export async function readChangeBlock(client: BillcomClient | null, billcomInvoiceId: string | null): Promise<string | null> {
+export async function readChangeBlock(
+  client: BillcomClient | null,
+  billcomInvoiceId: string | null,
+  opts: { unavailable?: boolean } = {},
+): Promise<string | null> {
+  if (opts.unavailable) return CHANGE_UNREACHABLE;
   if (!client) return changeBlockedReason(null, { billcomOn: false, hasBillcomInvoice: false });
   if (!billcomInvoiceId) return changeBlockedReason(null, { billcomOn: true, hasBillcomInvoice: false });
   let found: BillcomInvoiceStatus | 'ambiguous' | null | Error;

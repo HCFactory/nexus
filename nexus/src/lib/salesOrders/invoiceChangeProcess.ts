@@ -43,7 +43,6 @@ import {
   createDraftInvoice,
   deleteDraftInvoice,
   findDraftInvoice,
-  findReplacementInvoice,
   listChangeDrafts,
   postDraftInvoice,
   readBcInvoice,
@@ -65,7 +64,8 @@ const LINKS = 'billcom_customer_links'
 
 export const NOT_CHANGEABLE = "This invoice can't be changed right now."
 export const ALREADY_OPEN = 'A change is already open for this invoice.'
-export const CANCEL_NOT_CONFIRMED = "BC didn't confirm the cancel. Retry checks BC first, so it won't cancel twice."
+export const BILLCOM_UNAVAILABLE = "Couldn't reach Bill.com. Retry once it's back."
+const CANCEL_NOT_CONFIRMED = "BC didn't confirm the cancel. Retry checks BC first, so it won't cancel twice."
 const BUSY = 'This order is busy. Try again in a moment.'
 const NOT_FOUND = 'Sales order not found.'
 const CHANGE_NOT_FOUND = 'Invoice change not found.'
@@ -289,6 +289,17 @@ async function recordPosted(deps: InvoiceDeps, c: InvoiceChangeRow, inv: BcInvoi
   await mirror(deps, inv, inv.number)
 }
 
+/**
+ * The corrected invoice, if BC already posted this change's draft. BC keeps a
+ * draft's id when it posts it, so the saved draft id is the only lookup: an
+ * Invoice # search could find another order's invoice (Invoice # is free text).
+ */
+async function postedDraft(deps: InvoiceDeps, draftId: string | null): Promise<BcInvoiceState | null> {
+  if (!draftId) return null
+  const inv = await readBcInvoice(deps, draftId)
+  return inv && inv.status !== CANCELED && inv.status !== 'Draft' && inv.status !== 'In Review' ? inv : null
+}
+
 /** The duplicate-drafts message when BC has more than one draft with this Invoice # and customer, else null. */
 async function duplicateDrafts(deps: InvoiceDeps, q: { externalDocumentNumber: string; customerNumber: string }): Promise<string | null> {
   const drafts = await listChangeDrafts(deps, q)
@@ -302,7 +313,8 @@ async function postStep(deps: InvoiceDeps, c: InvoiceChangeRow, lease: OrderLeas
   const q = { externalDocumentNumber: oldInv.externalDocumentNumber, customerNumber: oldInv.customerNumber }
 
   // Posted already (a crash or lost response after the post)? Record it, never post again.
-  const posted = await findReplacementInvoice(deps, { ...q, excludeId: c.old_bc_invoice_id })
+  // The draft id is saved before any post, so no saved id means nothing was posted.
+  const posted = await postedDraft(deps, c.draft_bc_invoice_id)
   if (posted) return recordPosted(deps, c, posted)
 
   // Several drafts with this Invoice #: never pick one; the rep deletes the extras first.
@@ -310,12 +322,18 @@ async function postStep(deps: InvoiceDeps, c: InvoiceChangeRow, lease: OrderLeas
   if (dupes) return fail(deps, c, 'post_failed', dupes)
 
   const order = await loadOrder(deps, c.sales_order_id)
+  // Renewed before every draft write: a runner that lost the lease stops here,
+  // so it can never change the draft another runner is about to check and post.
+  await renewOrStop(lease, LEASE_MS)
   let draft = await findDraftInvoice(deps, { draftId: c.draft_bc_invoice_id, ...q })
   if (!draft) draft = await createDraftInvoice(deps, order, oldInv, q.externalDocumentNumber)
   if (draft.id !== c.draft_bc_invoice_id) await updateChange(deps, c.id, 'posting', { draft_bc_invoice_id: draft.id })
   // Every run: a draft from a run that crashed may still have BC's customer defaults.
+  await renewOrStop(lease, LEASE_MS)
   await applyDraftHeader(deps, draft, order, oldInv)
+  await renewOrStop(lease, LEASE_MS)
   await setDraftLines(deps, draft, c.lines_after)
+  await renewOrStop(lease, LEASE_MS)
   const mismatch = await checkDraft(deps, draft, c.lines_after)
   if (mismatch) return fail(deps, c, 'post_failed', mismatch)
   const dupesNow = await duplicateDrafts(deps, q)
@@ -327,12 +345,12 @@ async function postStep(deps: InvoiceDeps, c: InvoiceChangeRow, lease: OrderLeas
   } catch (e) {
     await renewOrStop(lease, LEASE_MS)
     if (e instanceof BcPostRefusedError) return fail(deps, c, 'post_failed', e.message)
-    const found = await findReplacementInvoice(deps, { ...q, excludeId: c.old_bc_invoice_id }).catch(() => null)
+    const found = await postedDraft(deps, draft.id).catch(() => null)
     if (found) return recordPosted(deps, c, found)
     return fail(deps, c, 'post_failed', POST_NOT_CONFIRMED)
   }
   await renewOrStop(lease, LEASE_MS)
-  const found = await findReplacementInvoice(deps, { ...q, excludeId: c.old_bc_invoice_id })
+  const found = await postedDraft(deps, draft.id)
   if (!found) return fail(deps, c, 'post_failed', POST_NOT_CONFIRMED)
   return recordPosted(deps, c, found)
 }
@@ -417,6 +435,8 @@ async function billcomStep(deps: InvoiceDeps, c: InvoiceChangeRow): Promise<Chan
   const inv = c.new_bc_invoice_id ? await readBcInvoice(deps, c.new_bc_invoice_id) : null
   if (!inv) return fail(deps, c, 'billcom_failed', `BC has no corrected invoice${c.new_bc_invoice_number ? ` ${c.new_bc_invoice_number}` : ''}.`)
 
+  // Turned on but unreachable is not "off": skipping would leave the old total in Bill.com.
+  if (!deps.billcom && deps.billcomUnavailable) return fail(deps, c, 'billcom_failed', BILLCOM_UNAVAILABLE)
   if (deps.billcom) {
     try {
       const order = await loadOrder(deps, c.sales_order_id)

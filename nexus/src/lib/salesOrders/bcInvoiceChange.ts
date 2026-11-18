@@ -17,8 +17,6 @@ import { changeSubtotalCents } from './invoiceChangeLines'
 const INVOICES: ReferenceSource = { kind: 'api', resource: 'salesInvoices' }
 const linesOf = (invoiceId: string): ReferenceSource => ({ kind: 'api', resource: `salesInvoices(${invoiceId})/salesInvoiceLines` })
 
-/** BC statuses of an invoice that isn't a live posted invoice. */
-const NOT_POSTED = new Set(['Draft', 'In Review'])
 export const CANCELED = 'Canceled'
 
 export interface BcInvoiceState extends PostedInvoice {
@@ -54,20 +52,6 @@ export async function cancelBcInvoice(deps: BcInvoicingDeps, id: string): Promis
   await invokePostingAction(deps, `/salesInvoices(${id})/Microsoft.NAV.cancel`)
 }
 
-/** A live posted invoice with this Invoice # and customer other than `excludeId` (the corrected one). */
-export async function findReplacementInvoice(
-  deps: BcInvoicingDeps,
-  q: { externalDocumentNumber: string; customerNumber: string; excludeId: string },
-): Promise<BcInvoiceState | null> {
-  const found = await deps.transport.list(INVOICES, {
-    filter: `externalDocumentNumber eq ${quote(q.externalDocumentNumber)} and customerNumber eq ${quote(q.customerNumber)}`,
-  })
-  const match = found
-    .map(toState)
-    .find((i) => i.id !== q.excludeId && i.status !== CANCELED && !NOT_POSTED.has(i.status))
-  return match ?? null
-}
-
 /** The change's draft: the saved id while it is still a draft, else a draft with this Invoice # and customer. */
 export async function findDraftInvoice(
   deps: BcInvoicingDeps,
@@ -77,6 +61,8 @@ export async function findDraftInvoice(
     const saved = await readBcInvoice(deps, q.draftId)
     if (saved && saved.status === 'Draft') return { id: saved.id, no: saved.number }
   }
+  // A blank Invoice # would match any blank-numbered draft of the customer.
+  if (!q.externalDocumentNumber.trim()) return null
   const found = await deps.transport.list(INVOICES, {
     filter: `externalDocumentNumber eq ${quote(q.externalDocumentNumber)} and customerNumber eq ${quote(q.customerNumber)} and status eq 'Draft'`,
   })
@@ -95,6 +81,7 @@ export async function listChangeDrafts(
   deps: BcInvoicingDeps,
   q: { externalDocumentNumber: string; customerNumber: string },
 ): Promise<ListedDraft[]> {
+  if (!q.externalDocumentNumber.trim()) return []
   const found = await deps.transport.list(INVOICES, {
     filter: `externalDocumentNumber eq ${quote(q.externalDocumentNumber)} and customerNumber eq ${quote(q.customerNumber)} and status eq 'Draft'`,
   })

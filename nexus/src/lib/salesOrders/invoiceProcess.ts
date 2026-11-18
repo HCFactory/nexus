@@ -38,6 +38,8 @@ export interface InvoiceDeps extends BcInvoicingDeps {
   /** null = Bill.com is off or not set up. */
   billcom: BillcomClient | null
   billcomConnectionId: string | null
+  /** Bill.com is turned on but its client couldn't be built: Bill.com work fails visibly, never skipped as "off". */
+  billcomUnavailable?: boolean
   /** The BC connection's time zone; invoice date = today there. */
   timeZone: string | null
   userId?: string

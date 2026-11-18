@@ -38,14 +38,14 @@ beforeEach(() => {
 describe('buildInvoiceDeps: Bill.com client', () => {
   it('uses the Bill.com client when it can be created', async () => {
     const deps = await buildInvoiceDeps(scope)
-    expect(deps).toMatchObject({ billcom: client, billcomConnectionId: 'bcom-1', timeZone: 'America/Chicago' })
+    expect(deps).toMatchObject({ billcom: client, billcomConnectionId: 'bcom-1', timeZone: 'America/Chicago', billcomUnavailable: false })
   })
 
   it('a disabled connection gives billcom = null, quietly', async () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     mocks.createBillcomClient.mockRejectedValue(new BillcomConnectionDisabledError('bcom-1'))
     const deps = await buildInvoiceDeps(scope)
-    expect(deps).toMatchObject({ billcom: null, billcomConnectionId: 'bcom-1' })
+    expect(deps).toMatchObject({ billcom: null, billcomConnectionId: 'bcom-1', billcomUnavailable: false })
     expect(logged).not.toHaveBeenCalled()
     logged.mockRestore()
   })
@@ -57,7 +57,8 @@ describe('buildInvoiceDeps: Bill.com client', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     mocks.createBillcomClient.mockRejectedValue(err)
     const deps = await buildInvoiceDeps(scope)
-    expect(deps).toMatchObject({ billcom: null, billcomConnectionId: 'bcom-1', connectionId: 'conn-1' })
+    // Turned on but broken is not 'off': Bill.com work must fail visibly, never be skipped.
+    expect(deps).toMatchObject({ billcom: null, billcomConnectionId: 'bcom-1', connectionId: 'conn-1', billcomUnavailable: true })
     expect(typeof deps.invokeAction).toBe('function')
     expect(logged).toHaveBeenCalledTimes(1)
     logged.mockRestore()
@@ -66,7 +67,7 @@ describe('buildInvoiceDeps: Bill.com client', () => {
   it('Bill.com off: billcom = null without trying to create a client', async () => {
     mocks.resolveConn.mockResolvedValue({ id: 'bcom-1', enabled: false })
     const deps = await buildInvoiceDeps(scope)
-    expect(deps).toMatchObject({ billcom: null, billcomConnectionId: 'bcom-1' })
+    expect(deps).toMatchObject({ billcom: null, billcomConnectionId: 'bcom-1', billcomUnavailable: false })
     expect(mocks.createBillcomClient).not.toHaveBeenCalled()
   })
 })

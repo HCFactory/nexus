@@ -12,7 +12,6 @@ import {
   deleteDraftInvoice,
   listChangeDrafts,
   findDraftInvoice,
-  findReplacementInvoice,
   postDraftInvoice,
   readBcInvoice,
   setDraftLines,
@@ -88,27 +87,6 @@ describe('cancelBcInvoice', () => {
   })
 })
 
-describe('findReplacementInvoice', () => {
-  it('ignores the old invoice, a Canceled one and a Draft; returns the posted open one', async () => {
-    const { deps, list } = makeDeps({
-      list: () => [
-        rec(inv()),
-        rec(inv({ id: 'c1', status: 'Canceled' })),
-        rec(inv({ id: 'd1', status: 'Draft' })),
-        rec(inv({ id: 'new', number: 'INV-100415', totalAmountIncludingTax: 49.24 })),
-      ],
-    })
-    const found = await findReplacementInvoice(deps, { externalDocumentNumber: "W-100528'x", customerNumber: 'W00389', excludeId: OLD_ID })
-    expect(found).toMatchObject({ id: 'new', number: 'INV-100415', totalInclTax: 49.24 })
-    expect(list.mock.calls[0][1]?.filter).toBe("externalDocumentNumber eq 'W-100528''x' and customerNumber eq 'W00389'")
-  })
-
-  it('returns null when only the old and cancelled invoices exist', async () => {
-    const { deps } = makeDeps({ list: () => [rec(inv()), rec(inv({ id: 'c1', status: 'Canceled' }))] })
-    expect(await findReplacementInvoice(deps, { externalDocumentNumber: 'W-100528', customerNumber: 'W00389', excludeId: OLD_ID })).toBeNull()
-  })
-})
-
 describe('findDraftInvoice', () => {
   it('prefers the saved draft id while it is still a draft', async () => {
     const { deps, list } = makeDeps({ list: (_s, o) => (o?.filter === 'id eq draft-id' ? [rec(inv({ id: 'draft-id', number: 'S-INV1', status: 'Draft' }))] : []) })
@@ -122,6 +100,12 @@ describe('findDraftInvoice', () => {
     })
     expect(await findDraftInvoice(deps, { draftId: null, externalDocumentNumber: 'W-100528', customerNumber: 'W00389' })).toEqual({ id: 'orphan', no: 'S-INV2' })
     expect(list.mock.calls[0][1]?.filter).toBe("externalDocumentNumber eq 'W-100528' and customerNumber eq 'W00389' and status eq 'Draft'")
+  })
+
+  it('a blank Invoice # never falls back to a search (it would match any blank-numbered draft of the customer)', async () => {
+    const { deps, list } = makeDeps({ list: () => [rec(inv({ id: 'other', number: 'S-INV9', status: 'Draft', externalDocumentNumber: '' }))] })
+    expect(await findDraftInvoice(deps, { draftId: null, externalDocumentNumber: '  ', customerNumber: 'W00389' })).toBeNull()
+    expect(list).not.toHaveBeenCalled()
   })
 
   it('returns null when there is no draft', async () => {
@@ -235,6 +219,14 @@ describe('listChangeDrafts', () => {
       { id: 'd2', no: 'S-INV102029', totalExclTax: 0, key: { bcId: 'd2' }, etag: 'W/"b"' },
     ])
     expect(list.mock.calls[0][1]?.filter).toBe("externalDocumentNumber eq 'W-100532' and customerNumber eq 'W00389' and status eq 'Draft'")
+  })
+})
+
+describe('listChangeDrafts with a blank Invoice #', () => {
+  it('lists nothing and asks BC nothing', async () => {
+    const { deps, list } = makeDeps({ list: () => [rec({ id: 'd1', number: 'S-INV1', status: 'Draft' })] })
+    expect(await listChangeDrafts(deps, { externalDocumentNumber: '', customerNumber: 'W00389' })).toEqual([])
+    expect(list).not.toHaveBeenCalled()
   })
 })
 

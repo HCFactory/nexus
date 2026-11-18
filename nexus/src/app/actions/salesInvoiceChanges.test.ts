@@ -99,7 +99,7 @@ describe('startChangeInvoice', () => {
   it('a server-side Bill.com block is returned and the process is not started', async () => {
     mocks.readBlock.mockResolvedValue(PAID);
     expect(await startChangeInvoice('o1', [draft()], 'why')).toEqual({ ok: false, error: PAID });
-    expect(mocks.readBlock).toHaveBeenCalledWith(deps.billcom, '00eX');
+    expect(mocks.readBlock).toHaveBeenCalledWith(deps.billcom, '00eX', { unavailable: deps.billcomUnavailable });
     expect(mocks.start).not.toHaveBeenCalled();
   });
 

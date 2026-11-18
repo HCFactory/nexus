@@ -845,6 +845,21 @@ describe('changing an invoice', () => {
     await waitFor(() => expect(nav.refresh).toHaveBeenCalled());
   });
 
+  it('a line added during the change carries the price-list estimate the table shows, not the item base price', async () => {
+    changeActions.startChangeInvoice.mockResolvedValue({ ok: true });
+    const ctx = { ...context, priceListLines: [priceLine({ unit_price: 10 })] };
+    renderForm({ order: invoiced(), lines: [priced], context: ctx });
+    fireEvent.click(screen.getByRole('button', { name: 'Change invoice' }));
+    addItem('P100 – Pesto sauce');
+    expect(priceInputs()[1]).toBe('10.00');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes to invoice' }));
+    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'More' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(changeActions.startChangeInvoice).toHaveBeenCalled());
+    const [, drafts] = changeActions.startChangeInvoice.mock.calls[0];
+    expect(drafts[1]).toEqual(expect.objectContaining({ item_number: 'P100', estimate_price: 10 }));
+  });
+
   it('Change invoice is disabled with the Bill.com reason', () => {
     renderForm({ order: invoiced(), lines: [priced], changeBlockedReason: "Paid or partly paid in Bill.com — can't change" });
     expect(screen.getByRole('button', { name: 'Change invoice' })).toBeDisabled();

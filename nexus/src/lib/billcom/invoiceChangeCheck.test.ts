@@ -51,6 +51,9 @@ describe('readChangeBlock', () => {
     expect(await readChangeBlock(client(() => RAW), '00eX')).toBeNull();
     expect(await readChangeBlock(client(() => ({ ...RAW, dueAmount: 0, status: 'PAID_IN_FULL' })), '00eX')).toBe(PAID);
   });
+  it('Bill.com on but its client could not be built: try again, never allowed unchecked', async () => {
+    expect(await readChangeBlock(null, '00eX', { unavailable: true })).toBe("Couldn't reach Bill.com — try again");
+  });
   it('a failed read means try again', async () => {
     expect(await readChangeBlock(client(() => { throw new Error('down'); }), '00eX')).toBe("Couldn't reach Bill.com — try again");
   });

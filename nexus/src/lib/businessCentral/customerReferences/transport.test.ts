@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createReferenceTransport } from './transport';
+import { createReferenceTransport, TRANSPORT_TIMEOUT_MS } from './transport';
+import { LEASE_MS } from '@/lib/salesOrders/orderClaim';
 import { BcConflictError, BcReferenceError, ReferencePageUnavailableError } from './errors';
 import type { BcClient } from '../client';
 
@@ -45,6 +46,15 @@ describe('reference transport', () => {
     expect(seen[0]).toBeInstanceOf(AbortSignal);
     expect(seen[1]).toBeInstanceOf(AbortSignal);
     expect(seen[0]).not.toBe(seen[1]);
+  });
+
+  it('every request times out (shorter than the order lease), so a stuck call never outlives its lease', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fetchImpl = vi.fn(async () => json({ value: [] }));
+    await createReferenceTransport(fakeBcClient(), 'My Co', fetchImpl as unknown as typeof fetch).list(apiSource);
+    expect(timeout).toHaveBeenCalledWith(TRANSPORT_TIMEOUT_MS);
+    expect(TRANSPORT_TIMEOUT_MS).toBeLessThan(LEASE_MS / 2);
+    timeout.mockRestore();
   });
 
   it('list follows nextLink across pages', async () => {

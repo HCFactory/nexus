@@ -11,7 +11,6 @@ vi.mock('./bcInvoiceChange', () => ({
   CANCELED: 'Canceled',
   readBcInvoice: vi.fn(),
   cancelBcInvoice: vi.fn(),
-  findReplacementInvoice: vi.fn(),
   findDraftInvoice: vi.fn(),
   createDraftInvoice: vi.fn(),
   applyDraftHeader: vi.fn(),
@@ -85,7 +84,7 @@ let fake: FakeSupabase
 let deps: InvoiceDeps
 let mirror: ReturnType<typeof vi.fn>
 /** BC's view of the invoices for the fakes below. */
-let bcState: { oldStatus: string; replacement: BcInvoiceState | null }
+let bcState: { oldStatus: string; posted: Set<string> }
 
 function setup(tables: { order?: Row; change?: Row | null; billcom?: boolean } = {}) {
   fake = fakeSupabase({
@@ -108,10 +107,12 @@ const order = () => fake.tables.sales_orders[0]
 
 beforeEach(() => {
   vi.clearAllMocks()
-  bcState = { oldStatus: 'Open', replacement: null }
-  vi.mocked(bc.readBcInvoice).mockImplementation(async (_d, id) => (id === OLD ? old({ status: bcState.oldStatus }) : id === NEW ? neu() : null))
+  bcState = { oldStatus: 'Open', posted: new Set() }
+  // BC keeps a draft's id when it posts it: a posted draft reads back as the corrected invoice.
+  vi.mocked(bc.readBcInvoice).mockImplementation(async (_d, id) =>
+    id === OLD ? old({ status: bcState.oldStatus }) : id === NEW || bcState.posted.has(id) ? neu() : id.startsWith('draft') ? neu({ id, number: 'S-INV1', status: 'Draft' }) : null,
+  )
   vi.mocked(bc.cancelBcInvoice).mockImplementation(async () => { bcState.oldStatus = 'Canceled' })
-  vi.mocked(bc.findReplacementInvoice).mockImplementation(async () => bcState.replacement)
   vi.mocked(bc.findDraftInvoice).mockResolvedValue(null)
   vi.mocked(bc.createDraftInvoice).mockResolvedValue({ id: 'draft-1', no: 'S-INV1' })
   vi.mocked(bc.applyDraftHeader).mockResolvedValue(undefined)
@@ -119,7 +120,7 @@ beforeEach(() => {
   vi.mocked(bc.checkDraft).mockResolvedValue(null)
   vi.mocked(bc.listChangeDrafts).mockResolvedValue([])
   vi.mocked(bc.deleteDraftInvoice).mockResolvedValue(undefined)
-  vi.mocked(bc.postDraftInvoice).mockImplementation(async () => { bcState.replacement = neu() })
+  vi.mocked(bc.postDraftInvoice).mockImplementation(async (_d, draft) => { bcState.posted.add(draft.id) })
   vi.mocked(push.findBillcomInvoice).mockResolvedValue(null)
   vi.mocked(push.replaceBillcomInvoice).mockImplementation(async (_c, id) => ({ id, totalAmount: 49.24, lineCount: 2 }))
   vi.mocked(push.findOrCreateBillcomInvoice).mockResolvedValue({ id: '00eNEW', totalAmount: 49.24, lineCount: 2 })
@@ -238,13 +239,21 @@ describe('runInvoiceChange', () => {
   })
 
   it('posted replacement already in BC → recorded, no draft, no post', async () => {
-    setup({ change: changeRow({ state: 'posting', cancelled_at: T0 }) })
+    setup({ change: changeRow({ state: 'posting', cancelled_at: T0, draft_bc_invoice_id: 'draft-0' }) })
     bcState.oldStatus = 'Canceled'
-    bcState.replacement = neu()
+    bcState.posted.add('draft-0')
     expect(await runInvoiceChange(deps, 'ch1')).toBe('done')
     expect(bc.createDraftInvoice).not.toHaveBeenCalled()
     expect(bc.postDraftInvoice).not.toHaveBeenCalled()
     expect(change().new_bc_invoice_id).toBe(NEW)
+  })
+
+  it('no saved draft means nothing was posted: no Invoice # search (it could find another order\'s invoice)', async () => {
+    setup({ change: changeRow({ state: 'posting', cancelled_at: T0 }) })
+    bcState.oldStatus = 'Canceled'
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('done')
+    expect(bc.postDraftInvoice).toHaveBeenCalledTimes(1)
+    expect(change()).toMatchObject({ new_bc_invoice_id: NEW, new_bc_invoice_number: 'INV-100415' })
   })
 
   it('draft saved earlier is reused, not created again', async () => {
@@ -278,8 +287,8 @@ describe('runInvoiceChange', () => {
 
   it('post outcome unknown and replacement found → posted', async () => {
     setup({ change: changeRow() })
-    vi.mocked(bc.postDraftInvoice).mockImplementation(async () => {
-      bcState.replacement = neu()
+    vi.mocked(bc.postDraftInvoice).mockImplementation(async (_d, draft) => {
+      bcState.posted.add(draft.id)
       throw new BcPostOutcomeUnknownError('timeout')
     })
     expect(await runInvoiceChange(deps, 'ch1')).toBe('done')
@@ -328,6 +337,14 @@ describe('runInvoiceChange', () => {
     expect(push.replaceBillcomInvoice).not.toHaveBeenCalled()
   })
 
+  it('Bill.com on but unavailable → billcom_failed, never done with the old total left in Bill.com', async () => {
+    setup({ change: changeRow(), billcom: false })
+    ;(deps as { billcomUnavailable?: boolean }).billcomUnavailable = true
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('billcom_failed')
+    expect(change()).toMatchObject({ state: 'billcom_failed', error: "Couldn't reach Bill.com. Retry once it's back." })
+    expect(order().invoice_state).toBe('changing')
+  })
+
   it('lost lease mid-step → stops without writing', async () => {
     setup({ change: changeRow() })
     vi.mocked(bc.cancelBcInvoice).mockImplementation(async () => {
@@ -338,6 +355,26 @@ describe('runInvoiceChange', () => {
     expect(await runInvoiceChange(deps, 'ch1')).toBeNull()
     expect(change().state).toBe('cancelling')
     expect(order().claimed_until).toBe('2099-01-01T00:00:00.000Z')
+  })
+
+  it('lease lost while the draft header is written → stops before touching the lines or posting', async () => {
+    setup({ change: changeRow() })
+    vi.mocked(bc.applyDraftHeader).mockImplementation(async () => {
+      order().claimed_until = '2099-01-01T00:00:00.000Z'
+    })
+    expect(await runInvoiceChange(deps, 'ch1')).toBeNull()
+    expect(bc.setDraftLines).not.toHaveBeenCalled()
+    expect(bc.postDraftInvoice).not.toHaveBeenCalled()
+  })
+
+  it('lease lost while the lines are written → stops before the check and the post', async () => {
+    setup({ change: changeRow() })
+    vi.mocked(bc.setDraftLines).mockImplementation(async () => {
+      order().claimed_until = '2099-01-01T00:00:00.000Z'
+    })
+    expect(await runInvoiceChange(deps, 'ch1')).toBeNull()
+    expect(bc.checkDraft).not.toHaveBeenCalled()
+    expect(bc.postDraftInvoice).not.toHaveBeenCalled()
   })
 
   it('returns null when another runner holds the order', async () => {

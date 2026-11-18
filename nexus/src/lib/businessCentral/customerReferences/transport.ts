@@ -71,6 +71,12 @@ function mapRecord(source: ReferenceSource, row: Record<string, unknown>): BcRec
   return { key: { values }, etag, fields };
 }
 
+/**
+ * Each BC request gives up after this long. Shorter than half an order lease, so
+ * work renewed before each write never outlives its lease mid-request.
+ */
+export const TRANSPORT_TIMEOUT_MS = 50_000;
+
 export function createReferenceTransport(
   bc: BcClient,
   companyName: string,
@@ -121,6 +127,7 @@ export function createReferenceTransport(
       method: init.method ?? 'GET',
       headers,
       body: init.body ? JSON.stringify(init.body) : undefined,
+      signal: AbortSignal.timeout(TRANSPORT_TIMEOUT_MS),
     });
     if (res.ok) return res;
     if (res.status === 412) throw new BcConflictError();

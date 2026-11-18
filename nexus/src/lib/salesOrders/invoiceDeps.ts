@@ -24,6 +24,7 @@ export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } =
 
   const conn = await resolveBillcomConnection(supabase, scope.orgId)
   let billcom: BillcomClient | null = null
+  let billcomUnavailable = false
   if (conn?.enabled) {
     try {
       billcom = await createBillcomClientForConnection(conn.id, scope.orgId, { supabase })
@@ -32,6 +33,7 @@ export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } =
       // post): the Bill.com step then fails with the "turned off" message.
       if (!(e instanceof BillcomConnectionDisabledError)) {
         console.error('[invoice] could not create the Bill.com client:', e)
+        billcomUnavailable = true
       }
     }
   }
@@ -45,6 +47,7 @@ export async function buildInvoiceDeps(scope: Scope, opts: { userId?: string } =
     invokeAction: (path) => bc.invokeAction(path),
     billcom,
     billcomConnectionId: conn?.id ?? null,
+    billcomUnavailable,
     timeZone: (scope.connection as { time_zone?: string | null } | null)?.time_zone ?? null,
     userId: opts.userId,
     // The posted invoice and its lines, so it shows in Receivables (and its page) at once.

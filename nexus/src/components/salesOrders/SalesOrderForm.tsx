@@ -574,7 +574,8 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
     ? orderTotals(changeLines.map((l) => lineAmounts(l, taxRate(l))))
     : bcTotals ?? orderTotals(shownLines.map((l) => lineAmounts(l, taxRate(l))));
   // In change mode: the edits as change lines, and whether they differ from what was invoiced.
-  const changeResult = changeMode ? changeLinesFromDrafts(draftLines, lines) : null;
+  // From the shown lines: a new line without a typed price uses the estimate the table shows.
+  const changeResult = changeMode ? changeLinesFromDrafts(shownLines, lines) : null;
   const changeEdited = !!changeResult && (!changeResult.ok || !sameLines(toChangeLines(lines), changeResult.lines));
   const linesLocked = changeMode ? busy : locked || busy;
 
@@ -585,7 +586,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   };
   const confirmChange = async (reason: string): Promise<string | null> => {
     if (!order) return null;
-    const res = await startChangeInvoice(order.id, draftLines, reason);
+    const res = await startChangeInvoice(order.id, shownLines, reason);
     if (!res.ok) return res.error;
     setChangeDialog(false);
     setChangeMode(false);

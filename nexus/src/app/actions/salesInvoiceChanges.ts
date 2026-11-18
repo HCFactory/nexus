@@ -97,7 +97,7 @@ export async function getInvoiceChangeState(orderId: string): Promise<{ change: 
     if (change) return { change, blockedReason: null };
     const order = await loadOrderFields(deps, orderId);
     if (!order || order.invoice_state !== 'done') return { change: null, blockedReason: null };
-    return { change: null, blockedReason: await readChangeBlock(deps.billcom, order.billcom_invoice_id) };
+    return { change: null, blockedReason: await readChangeBlock(deps.billcom, order.billcom_invoice_id, { unavailable: deps.billcomUnavailable }) };
   } catch (e) {
     console.error(`[sales-orders] could not read the invoice change state of ${orderId}:`, e);
     return { change: null, blockedReason: CHECK_FAILED };
@@ -114,7 +114,7 @@ export async function startChangeInvoice(orderId: string, drafts: LineDraft[], r
     if (!order) return { ok: false, error: ORDER_NOT_FOUND };
     const lines = changeLinesFromDrafts(drafts, (await loadLineRows(deps, orderId)) as Parameters<typeof changeLinesFromDrafts>[1]);
     if (!lines.ok) return { ok: false, error: lines.error };
-    const blockedReason = await readChangeBlock(deps.billcom, order.billcom_invoice_id);
+    const blockedReason = await readChangeBlock(deps.billcom, order.billcom_invoice_id, { unavailable: deps.billcomUnavailable });
     if (blockedReason) return { ok: false, error: blockedReason };
     const started = await startInvoiceChange(deps, {
       orderId,
