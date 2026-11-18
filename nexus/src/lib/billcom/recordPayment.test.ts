@@ -25,6 +25,7 @@ describe('recordBillcomCardPayment', () => {
     expect(path).toBe('/v3/invoices/record-payment');
     expect(init?.method).toBe('POST');
     expect(JSON.parse(init?.body as string)).toEqual({
+      amount: 12.34,
       customerId: 'cu1',
       paymentDate: '2026-11-17',
       paymentType: 'CREDIT_CARD',
@@ -38,6 +39,7 @@ describe('recordBillcomCardPayment', () => {
     await recordBillcomCardPayment(client, { ...input, amount: 10.005 + 0.1 });
     const body = JSON.parse(request.mock.calls[0][1]?.body as string);
     expect(body.invoices[0].amount).toBe(10.11);
+    expect(body.amount).toBe(10.11);
   });
 
   it('returns the payment id', async () => {
