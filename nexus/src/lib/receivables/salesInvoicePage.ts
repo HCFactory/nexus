@@ -192,7 +192,7 @@ export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Pro
   const ctx = await context();
   if (!ctx) return { kind: 'not_found' };
 
-  const conn = await resolveBillcomConnection(ctx.supabase, ctx.orgId);
+  const conn = await resolveBillcomConnection(ctx.supabase, ctx.orgId, ctx.connection.id);
   if (!conn?.enabled) return { kind: 'off' };
   let client;
   try {

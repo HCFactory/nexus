@@ -12,7 +12,9 @@ import {
 } from '@/app/actions/businessCentralConnections';
 import { BusinessCentralConnection } from '@/types/database';
 
-import { BcEnvironmentForm, BcEnvironmentFormValues } from './BcEnvironmentForm';
+import { listBillcomConnections } from '@/app/actions/billcom';
+import { listStripeConnections } from '@/app/actions/stripe';
+import { BcEnvironmentForm, BcEnvironmentFormValues, type ConnectionOption } from './BcEnvironmentForm';
 
 const RECENT_VERIFY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -42,6 +44,21 @@ export function BcEnvironmentsCard() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingConnection, setEditingConnection] = useState<BusinessCentralConnection | null>(null);
+  const [billcomOptions, setBillcomOptions] = useState<ConnectionOption[]>([]);
+  const [stripeOptions, setStripeOptions] = useState<ConnectionOption[]>([]);
+
+  // The Bill.com and Stripe connections an environment can pick (admin-only lists).
+  useEffect(() => {
+    let active = true;
+    Promise.all([listBillcomConnections().catch(() => []), listStripeConnections().catch(() => [])]).then(([bill, stripe]) => {
+      if (!active) return;
+      setBillcomOptions(bill.map((c) => ({ id: c.id, label: `${c.displayName} (${c.environment})` })));
+      setStripeOptions(stripe.map((c) => ({ id: c.id, label: `${c.displayName} (${c.livemode ? 'live' : 'test'})` })));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -87,6 +104,8 @@ export function BcEnvironmentsCard() {
       apiBaseUrl: values.apiBaseUrl || null,
       timeZone: values.timeZone || null,
       billcomViaConnector: values.billcomViaConnector,
+      billcomConnectionId: values.billcomConnectionId,
+      stripeConnectionId: values.stripeConnectionId,
     });
     await reload();
     setEditingConnection(null);
@@ -259,6 +278,8 @@ export function BcEnvironmentsCard() {
       {editingConnection && (
         <BcEnvironmentForm
           connection={editingConnection}
+          billcomOptions={billcomOptions}
+          stripeOptions={stripeOptions}
           onSubmit={handleUpdate}
           onCancel={() => setEditingConnection(null)}
         />

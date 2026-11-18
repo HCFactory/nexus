@@ -111,7 +111,7 @@ export async function getInvoiceReadiness(customerNumber: string): Promise<{ blo
     // Bill.com's own connector copies this environment's invoices: nothing to check in Bill.com.
     if ((scope.connection as { billcom_via_connector?: boolean } | null)?.billcom_via_connector === true) return { blockedReason: null };
     const supabase = createServiceClient();
-    const conn = await resolveBillcomConnection(supabase, scope.orgId);
+    const conn = await resolveBillcomConnection(supabase, scope.orgId, scope.bcConnectionId);
     if (!conn?.enabled) return { blockedReason: invoiceBlockReason(null, false) };
     const { data, error } = await supabase
       .from('billcom_customer_links')

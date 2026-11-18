@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   updates: [] as Array<{ table: string; values: Row }>,
   access: { canViewCustomers: true, canEditCustomers: true },
   resolveConn: vi.fn(),
+  activeEnv: vi.fn(),
   createLink: vi.fn(),
   cancelLinks: vi.fn(),
   sendEmail: vi.fn(),
@@ -24,9 +25,10 @@ vi.mock('@/lib/auth/currentUserAccess', () => ({
   }),
 }));
 vi.mock('@/lib/stripe/connection', () => ({
-  resolveDefaultStripeConnection: mocks.resolveConn,
+  resolveStripeConnection: mocks.resolveConn,
   createStripeForConnection: async () => ({ paymentMethods: { detach: mocks.detach }, checkout: { sessions: { expire: mocks.expire } } }),
 }));
+vi.mock('@/lib/businessCentral/activeConnection', () => ({ resolveActiveBcConnection: mocks.activeEnv }));
 vi.mock('@/lib/stripe/setupLinks', () => ({
   createSetupLink: mocks.createLink,
   cancelSetupLinks: mocks.cancelLinks,
@@ -91,12 +93,20 @@ beforeEach(() => {
     ],
   };
   mocks.resolveConn.mockResolvedValue({ id: 'conn-1', enabled: true, livemode: false });
+  mocks.activeEnv.mockResolvedValue({ id: 'bc-1' });
   mocks.createLink.mockResolvedValue({ id: 'link-1', url: 'https://app/card-setup/tok', expiresAt: future });
   mocks.sendEmail.mockResolvedValue(undefined);
   mocks.detach.mockResolvedValue({});
 });
 
 describe('getCustomerCardView', () => {
+  it("uses the active BC environment's Stripe connection; no environment means off", async () => {
+    await getCustomerCardView('C1');
+    expect(mocks.resolveConn).toHaveBeenCalledWith(expect.anything(), 'org-1', 'bc-1');
+    mocks.activeEnv.mockResolvedValue(null);
+    expect((await getCustomerCardView('C1')).stripe).toBe('off');
+  });
+
   it('stripe off when no enabled default connection', async () => {
     mocks.resolveConn.mockResolvedValue(null);
     expect((await getCustomerCardView('C1')).stripe).toBe('off');

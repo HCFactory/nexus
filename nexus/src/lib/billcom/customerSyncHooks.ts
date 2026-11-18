@@ -31,21 +31,34 @@ export const PENDING_MESSAGE = "Bill.com didn't finish in time — this customer
 
 
 /** The org's Bill.com connection: enabled ones first (default, else the only one). */
+/**
+ * The Bill.com connection picked for this BC environment (Admin → Business
+ * Central Environments → Edit), with whether it is enabled. Nothing picked is
+ * null: Bill.com is off for that environment, whatever the org default is.
+ */
 export async function resolveBillcomConnection(
   supabase: SupabaseClient,
   orgId: string,
+  bcConnectionId: string,
 ): Promise<{ id: string; enabled: boolean } | null> {
+  const { data: env, error: envError } = await supabase
+    .from('business_central_connections')
+    .select('billcom_connection_id')
+    .eq('id', bcConnectionId)
+    .eq('organization_id', orgId)
+    .maybeSingle();
+  if (envError) throw new Error(`Could not read the BC environment: ${envError.message}`);
+  const picked = (env as { billcom_connection_id: string | null } | null)?.billcom_connection_id ?? null;
+  if (!picked) return null;
   const { data, error } = await supabase
     .from('billcom_connections')
-    .select('id, is_enabled, is_default')
-    .eq('organization_id', orgId);
+    .select('id, is_enabled')
+    .eq('id', picked)
+    .eq('organization_id', orgId)
+    .maybeSingle();
   if (error) throw new Error(`Could not read the Bill.com connection: ${error.message}`);
-  const rows = (data ?? []) as Array<{ id: string; is_enabled: boolean; is_default: boolean }>;
-  const pick = (list: typeof rows) => list.find((r) => r.is_default) ?? (list.length === 1 ? list[0] : undefined);
-  const enabled = pick(rows.filter((r) => r.is_enabled));
-  if (enabled) return { id: enabled.id, enabled: true };
-  const disabled = pick(rows);
-  return disabled ? { id: disabled.id, enabled: false } : null;
+  const row = data as { id: string; is_enabled: boolean } | null;
+  return row ? { id: row.id, enabled: row.is_enabled } : null;
 }
 
 /** Never used for Bill.com calls: markPending only touches Supabase. */
@@ -59,7 +72,7 @@ function deps(scope: BillcomScope, billcomConnectionId: string, billcom: Billcom
 
 /** Push deps for an enabled connection, or null when Bill.com is off. */
 export async function openPushDeps(scope: BillcomScope): Promise<PushDeps | null> {
-  const conn = await resolveBillcomConnection(scope.supabase, scope.orgId);
+  const conn = await resolveBillcomConnection(scope.supabase, scope.orgId, scope.bcConnectionId);
   if (!conn?.enabled) return null;
   try {
     const billcom = await createBillcomClientForConnection(conn.id, scope.orgId, { supabase: scope.supabase });
@@ -107,7 +120,7 @@ async function linkError(d: PushDeps, number: string): Promise<string | undefine
  */
 export async function pushCustomerAfterSave(scope: BillcomScope, number: string): Promise<BillcomSaveStatus> {
   try {
-    const conn = await resolveBillcomConnection(scope.supabase, scope.orgId);
+    const conn = await resolveBillcomConnection(scope.supabase, scope.orgId, scope.bcConnectionId);
     if (!conn) return { status: 'off', message: OFF_MESSAGE };
     await markPending(deps(scope, conn.id), [number]);
     if (!conn.enabled) return { status: 'off', message: OFF_MESSAGE };
@@ -140,7 +153,7 @@ export async function pushCustomerAfterSave(scope: BillcomScope, number: string)
  * number queued, or null when Bill.com is off.
  */
 export async function queueChangedCustomers(scope: BillcomScope): Promise<number | null> {
-  const conn = await resolveBillcomConnection(scope.supabase, scope.orgId);
+  const conn = await resolveBillcomConnection(scope.supabase, scope.orgId, scope.bcConnectionId);
   if (!conn?.enabled) return null;
   const [rows, links] = await Promise.all([
     fetchAll<BusinessCentralCustomer>(() =>

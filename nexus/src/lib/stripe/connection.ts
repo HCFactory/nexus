@@ -11,31 +11,33 @@ export interface StripeScope {
 }
 
 /**
- * The org's default Stripe connection: the enabled default, else the only
- * enabled one; failing that the disabled default/only one so callers can say
- * "disabled" rather than "missing". Mirrors resolveBillcomConnection.
+ * The Stripe connection picked for this BC environment (Admin → Business
+ * Central Environments → Edit), with whether it is enabled and live. Nothing
+ * picked is null: Stripe is off for that environment.
  */
-export async function resolveDefaultStripeConnection(
+export async function resolveStripeConnection(
   supabase: SupabaseClient,
   orgId: string,
+  bcConnectionId: string,
 ): Promise<{ id: string; enabled: boolean; livemode: boolean } | null> {
+  const { data: env, error: envError } = await supabase
+    .from('business_central_connections')
+    .select('stripe_connection_id')
+    .eq('id', bcConnectionId)
+    .eq('organization_id', orgId)
+    .maybeSingle();
+  if (envError) throw new Error(`Could not read the BC environment: ${envError.message}`);
+  const picked = (env as { stripe_connection_id: string | null } | null)?.stripe_connection_id ?? null;
+  if (!picked) return null;
   const { data, error } = await supabase
     .from('stripe_connections')
-    .select('id, is_enabled, is_default, livemode')
-    .eq('organization_id', orgId);
+    .select('id, is_enabled, livemode')
+    .eq('id', picked)
+    .eq('organization_id', orgId)
+    .maybeSingle();
   if (error) throw new Error(`Could not read the Stripe connection: ${error.message}`);
-  const rows = (data ?? []) as Array<{
-    id: string;
-    is_enabled: boolean;
-    is_default: boolean;
-    livemode: boolean | null;
-  }>;
-  const pick = (list: typeof rows) =>
-    list.find((r) => r.is_default) ?? (list.length === 1 ? list[0] : undefined);
-  const enabled = pick(rows.filter((r) => r.is_enabled));
-  if (enabled) return { id: enabled.id, enabled: true, livemode: Boolean(enabled.livemode) };
-  const disabled = pick(rows);
-  return disabled ? { id: disabled.id, enabled: false, livemode: Boolean(disabled.livemode) } : null;
+  const row = data as { id: string; is_enabled: boolean; livemode: boolean | null } | null;
+  return row ? { id: row.id, enabled: row.is_enabled, livemode: Boolean(row.livemode) } : null;
 }
 
 /** A Stripe client for a key an admin just typed (to check it before it is stored). */

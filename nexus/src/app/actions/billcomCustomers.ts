@@ -120,7 +120,7 @@ export async function getBillcomPushStatus(): Promise<
     if (!scope.access.canViewCustomers) return { ok: false, error: "You don't have permission to view customers" };
     const counts: Record<BillcomCustomerLinkStatus, number> = { pending: 0, synced: 0, failed: 0, needs_attention: 0 };
     const supabase = createServiceClient();
-    const conn = await resolveBillcomConnection(supabase, scope.orgId);
+    const conn = await resolveBillcomConnection(supabase, scope.orgId, scope.bcConnectionId);
     if (!conn) return { ok: true, on: false, counts };
     const links = await fetchAll<{ status: BillcomCustomerLinkStatus }>(() =>
       supabase
@@ -158,7 +158,7 @@ export async function getBillcomCustomerView(customerNumber?: string): Promise<B
     const scope = await requireActiveBusinessCentralScope();
     if (!scope.access.canViewCustomers) return VIEW_OFF;
     const supabase = createServiceClient();
-    const conn = await resolveBillcomConnection(supabase, scope.orgId);
+    const conn = await resolveBillcomConnection(supabase, scope.orgId, scope.bcConnectionId);
     if (!conn || !conn.enabled) return VIEW_OFF;
     const rows = await fetchAll<{ bc_customer_number: string; status: BillcomCustomerLinkStatus; last_error: string | null }>(
       () => {

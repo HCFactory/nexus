@@ -10,10 +10,19 @@ export interface BcEnvironmentFormValues {
   apiBaseUrl: string;
   timeZone: string;
   billcomViaConnector: boolean;
+  billcomConnectionId: string | null;
+  stripeConnectionId: string | null;
+}
+
+export interface ConnectionOption {
+  id: string;
+  label: string;
 }
 
 interface BcEnvironmentFormProps {
   connection?: BusinessCentralConnection;
+  billcomOptions?: ConnectionOption[];
+  stripeOptions?: ConnectionOption[];
   onSubmit: (values: BcEnvironmentFormValues) => Promise<void>;
   onCancel: () => void;
 }
@@ -21,12 +30,14 @@ interface BcEnvironmentFormProps {
 const INPUT_CLASS =
   'w-full px-3 py-2 border border-border bg-surface text-foreground placeholder:text-foreground-subtle rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent';
 
-export function BcEnvironmentForm({ connection, onSubmit, onCancel }: BcEnvironmentFormProps) {
+export function BcEnvironmentForm({ connection, billcomOptions = [], stripeOptions = [], onSubmit, onCancel }: BcEnvironmentFormProps) {
   const [displayName, setDisplayName] = useState(connection?.display_name ?? '');
   const [environment, setEnvironment] = useState(connection?.environment ?? '');
   const [apiBaseUrl, setApiBaseUrl] = useState(connection?.api_base_url ?? '');
   const [timeZone, setTimeZone] = useState(connection?.time_zone ?? '');
   const [billcomViaConnector, setBillcomViaConnector] = useState(connection?.billcom_via_connector ?? false);
+  const [billcomConnectionId, setBillcomConnectionId] = useState(connection?.billcom_connection_id ?? '');
+  const [stripeConnectionId, setStripeConnectionId] = useState(connection?.stripe_connection_id ?? '');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -47,6 +58,8 @@ export function BcEnvironmentForm({ connection, onSubmit, onCancel }: BcEnvironm
         apiBaseUrl: apiBaseUrl.trim(),
         timeZone: timeZone.trim(),
         billcomViaConnector,
+        billcomConnectionId: billcomConnectionId || null,
+        stripeConnectionId: stripeConnectionId || null,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
@@ -125,6 +138,33 @@ export function BcEnvironmentForm({ connection, onSubmit, onCancel }: BcEnvironm
               />
               <p className="mt-1 text-xs text-foreground-subtle">
                 IANA time zone for date stamping; leave blank for UTC.
+              </p>
+            </div>
+
+            <div>
+              <label htmlFor="bcEnvBillcom" className="block text-sm font-medium text-foreground mb-1">
+                Bill.com connection
+              </label>
+              <select id="bcEnvBillcom" value={billcomConnectionId} onChange={(e) => setBillcomConnectionId(e.target.value)} className={INPUT_CLASS}>
+                <option value="">None</option>
+                {billcomOptions.map((o) => (
+                  <option key={o.id} value={o.id}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="bcEnvStripe" className="block text-sm font-medium text-foreground mb-1">
+                Stripe connection
+              </label>
+              <select id="bcEnvStripe" value={stripeConnectionId} onChange={(e) => setStripeConnectionId(e.target.value)} className={INPUT_CLASS}>
+                <option value="">None</option>
+                {stripeOptions.map((o) => (
+                  <option key={o.id} value={o.id}>{o.label}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-foreground-subtle">
+                Bill.com and Stripe work only in environments where a connection is picked.
               </p>
             </div>
 

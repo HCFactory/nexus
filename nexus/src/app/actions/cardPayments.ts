@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { requireOrganizationContext } from '@/lib/auth/currentUserAccess';
+import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnection';
 import { createBillcomClientForConnection } from '@/lib/billcom/connection';
 import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
 import { findBillcomInvoiceForCharge, getSalesInvoicePage } from '@/lib/receivables/salesInvoicePage';
@@ -16,7 +17,7 @@ import {
   invoiceChargeStatus,
   type ChargeDeps,
 } from '@/lib/stripe/chargeInvoice';
-import { createStripeForConnection, resolveDefaultStripeConnection } from '@/lib/stripe/connection';
+import { createStripeForConnection, resolveStripeConnection } from '@/lib/stripe/connection';
 import { createServiceClient } from '@/lib/supabase/server';
 import type { CardLabel, CardPaymentRow, ChargeEligibility } from '@/types/stripe';
 
@@ -31,7 +32,9 @@ async function scope(requireCharge: boolean): Promise<{ deps: ChargeDeps; userId
   if (requireCharge && !canCharge) throw new Error(NO_PERMISSION);
   const supabase = createServiceClient();
   const orgId = ctx.orgId;
-  const connection = await resolveDefaultStripeConnection(supabase, orgId);
+  // Stripe and Bill.com are picked per BC environment; no active environment = both off.
+  const env = await resolveActiveBcConnection(orgId, ctx.user.id);
+  const connection = env ? await resolveStripeConnection(supabase, orgId, env.id) : null;
 
   const deps: ChargeDeps = {
     supabase,
@@ -40,7 +43,7 @@ async function scope(requireCharge: boolean): Promise<{ deps: ChargeDeps; userId
     stripeConnectionId: connection?.enabled ? connection.id : null,
     stripeClient: (connectionId) => createStripeForConnection(supabase, orgId, connectionId),
     billcom: async () => {
-      const conn = await resolveBillcomConnection(supabase, orgId);
+      const conn = env ? await resolveBillcomConnection(supabase, orgId, env.id) : null;
       if (!conn?.enabled) return null;
       try {
         return await createBillcomClientForConnection(conn.id, orgId, { supabase });

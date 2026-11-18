@@ -171,6 +171,7 @@ describe('getInvoiceReadiness', () => {
 
   it('is ready for a synced link', async () => {
     expect(await getInvoiceReadiness('C1')).toEqual({ blockedReason: null });
+    expect(mocks.resolveConn).toHaveBeenCalledWith(expect.anything(), 'org-1', 'conn-1');
   });
 
   it('reflects the link status', async () => {

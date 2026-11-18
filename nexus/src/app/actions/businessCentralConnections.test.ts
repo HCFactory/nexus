@@ -250,6 +250,34 @@ describe('updateBcConnection: Bill.com via its BC connector', () => {
   });
 });
 
+describe('updateBcConnection: Bill.com and Stripe connections per environment', () => {
+  it('saves the picked connections after checking they belong to the org; null clears a pick', async () => {
+    const supa = createSupabaseMock((table) =>
+      table === 'billcom_connections' ? { data: { id: 'bill-1' }, error: null }
+        : table === 'stripe_connections' ? { data: { id: 'str-1' }, error: null }
+        : { data: { id: 'c1' }, error: null });
+    mocks.createServiceClient.mockReturnValue(supa.client);
+    await updateBcConnection('c1', { billcomConnectionId: 'bill-1', stripeConnectionId: 'str-1' });
+    await updateBcConnection('c1', { billcomConnectionId: null, stripeConnectionId: null });
+    await updateBcConnection('c1', { displayName: 'TEST' });
+    expect(supa.updates[0]).toMatchObject({ billcom_connection_id: 'bill-1', stripe_connection_id: 'str-1' });
+    expect(supa.updates[1]).toMatchObject({ billcom_connection_id: null, stripe_connection_id: null });
+    expect(supa.updates[2]).not.toHaveProperty('billcom_connection_id');
+    expect(supa.updates[2]).not.toHaveProperty('stripe_connection_id');
+    expect(supa.ops).toContain('billcom_connections:select');
+    expect(supa.ops).toContain('stripe_connections:select');
+  });
+
+  it("refuses a connection that isn't in this organisation, without saving", async () => {
+    const supa = createSupabaseMock((table) =>
+      table === 'billcom_connections' || table === 'stripe_connections' ? { data: null, error: null } : { data: { id: 'c1' }, error: null });
+    mocks.createServiceClient.mockReturnValue(supa.client);
+    await expect(updateBcConnection('c1', { billcomConnectionId: 'foreign' })).rejects.toThrow('Bill.com connection not found');
+    await expect(updateBcConnection('c1', { stripeConnectionId: 'foreign' })).rejects.toThrow('Stripe connection not found');
+    expect(supa.updates).toEqual([]);
+  });
+});
+
 describe('deleteBcConnection', () => {
   it('refuses to delete the only environment and never issues a delete', async () => {
     const supa = createSupabaseMock((_table, op) => {

@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   view: vi.fn(),
   getPage: vi.fn(),
   resolveStripe: vi.fn(),
+  activeEnv: vi.fn(),
+  resolveBillcom: vi.fn(),
   revalidate: vi.fn(),
 }));
 
@@ -20,10 +22,11 @@ vi.mock('@/lib/auth/currentUserAccess', () => ({
 }));
 vi.mock('@/lib/supabase/server', () => ({ createServiceClient: () => ({}) }));
 vi.mock('@/lib/stripe/connection', () => ({
-  resolveDefaultStripeConnection: mocks.resolveStripe,
+  resolveStripeConnection: mocks.resolveStripe,
   createStripeForConnection: vi.fn(),
 }));
-vi.mock('@/lib/billcom/customerSyncHooks', () => ({ resolveBillcomConnection: vi.fn(async () => null) }));
+vi.mock('@/lib/billcom/customerSyncHooks', () => ({ resolveBillcomConnection: mocks.resolveBillcom }));
+vi.mock('@/lib/businessCentral/activeConnection', () => ({ resolveActiveBcConnection: mocks.activeEnv }));
 vi.mock('@/lib/billcom/connection', () => ({ createBillcomClientForConnection: vi.fn() }));
 vi.mock('@/lib/receivables/salesInvoicePage', () => ({
   getSalesInvoicePage: mocks.getPage,
@@ -58,6 +61,8 @@ beforeEach(() => {
   for (const m of [mocks.charge, mocks.retry, mocks.manual, mocks.check, mocks.notCharged]) m.mockReset().mockResolvedValue(ROW);
   mocks.view.mockReset().mockResolvedValue({ eligibility: { ok: false, reason: 'x' }, card: null, payments: [] });
   mocks.resolveStripe.mockReset().mockResolvedValue({ id: 'sc-1', enabled: true, livemode: false });
+  mocks.activeEnv.mockReset().mockResolvedValue({ id: 'bc-1' });
+  mocks.resolveBillcom.mockReset().mockResolvedValue(null);
   mocks.getPage.mockReset().mockResolvedValue({
     invoice: { bc_invoice_id: INV, customer_number: 'C1', bc_invoice_number: 'INV-1', external_document_number: 'W-1' },
     salesOrder: { id: 'so-1', bcOrderNumber: 'W-1', billcomInvoiceId: '00e1' },
@@ -118,6 +123,20 @@ it('chargeInvoiceCard refuses without the confirmed amount and card', async () =
   await expect(chargeInvoiceCard(INV, { expectedAmountCents: 1.5, cardId: 'card-1' })).rejects.toThrow('Refresh and review before charging.');
   await expect(chargeInvoiceCard(INV, undefined as never)).rejects.toThrow('Refresh and review before charging.');
   expect(mocks.charge).not.toHaveBeenCalled();
+});
+
+it("uses the active BC environment's Stripe and Bill.com connections", async () => {
+  await chargeInvoiceCard(INV, CONFIRMED);
+  expect(mocks.resolveStripe).toHaveBeenCalledWith(expect.anything(), 'org-1', 'bc-1');
+  await mocks.charge.mock.calls[0][0].billcom();
+  expect(mocks.resolveBillcom).toHaveBeenCalledWith(expect.anything(), 'org-1', 'bc-1');
+});
+
+it('with no active BC environment, Stripe is off', async () => {
+  mocks.activeEnv.mockResolvedValue(null);
+  await chargeInvoiceCard(INV, CONFIRMED);
+  expect(mocks.charge.mock.calls[0][0]).toMatchObject({ stripeConnectionId: null });
+  expect(mocks.resolveStripe).not.toHaveBeenCalled();
 });
 
 it('a disabled Stripe connection is passed as off', async () => {

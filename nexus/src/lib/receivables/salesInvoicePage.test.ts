@@ -216,6 +216,8 @@ describe('getSalesInvoiceBillcomPanel', () => {
     setup({});
     mocks.resolveBillcom.mockResolvedValue({ id: 'bcom-1', enabled: false });
     expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'off' });
+    // The active BC environment's own Bill.com connection.
+    expect(mocks.resolveBillcom).toHaveBeenCalledWith(expect.anything(), 'org-1', 'conn-1');
     mocks.resolveBillcom.mockResolvedValue({ id: 'bcom-1', enabled: true });
     mocks.createBillcom.mockRejectedValue(new Error('no creds'));
     expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'off' });

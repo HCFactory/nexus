@@ -138,6 +138,15 @@ describe('retryCustomerPush', () => {
   });
 });
 
+describe('per BC environment', () => {
+  it("asks for the active BC environment's Bill.com connection", async () => {
+    mocks.requireScope.mockResolvedValue(editor);
+    mocks.resolveConnection.mockResolvedValue(null);
+    await getBillcomPushStatus();
+    expect(mocks.resolveConnection).toHaveBeenCalledWith(expect.anything(), 'org-1', 'bc-1');
+  });
+});
+
 describe('getBillcomPushStatus', () => {
   it('counts links by status for the scoped connection', async () => {
     mocks.requireScope.mockResolvedValue(editor);
