@@ -6,15 +6,20 @@ import { getSelectOptions } from '@/app/actions/customerReferenceLists';
 import { getCustomerCardView } from '@/app/actions/customerCards';
 import { listShipTos } from '@/app/actions/shipToAddresses';
 import { CustomerDetail } from '@/components/customers/CustomerDetail';
+import { NOTE_PARAM } from '@/components/customers/createdCustomerHref';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CustomerDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ [NOTE_PARAM]?: string | string[] }>;
 }) {
   const { id } = await params;
+  const rawNote = (await searchParams)?.[NOTE_PARAM];
+  const initialNotice = (Array.isArray(rawNote) ? rawNote[0] : rawNote)?.slice(0, 500) || undefined;
   const [detail, edit] = await Promise.all([getCustomerDetail(id), getCustomerEditContext()]);
   if (!detail) notFound();
   const number = detail.customer.bc_customer_number;
@@ -36,6 +41,7 @@ export default async function CustomerDetailPage({
       cardView={cardView}
       shipTos={shipTos}
       shipToOptions={{ taxAreas, locations, shipmentMethods }}
+      initialNotice={initialNotice}
     />
   );
 }

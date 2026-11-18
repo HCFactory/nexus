@@ -12,6 +12,7 @@ import { syncBusinessCentralReceivables } from "@/app/actions/businessCentralRec
 import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
 import type { BillcomCustomerView } from "@/app/actions/billcomCustomers";
 import { CustomerForm, customerFormValues } from "./CustomerForm";
+import { createdCustomerHref } from "./createdCustomerHref";
 import { BillcomPushPanel, type BillcomPushPanelHandle } from "./BillcomPushPanel";
 import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
 import { formatMoney } from "@/lib/format";
@@ -195,8 +196,8 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
               const created = formFor === "new";
               const note = billcomSaveNote(saved);
               setFormFor(null);
-              if (created && !warning && !note) {
-                router.push(`/customers/${id}`);
+              if (created) {
+                router.push(createdCustomerHref(id, [warning, note]));
                 return;
               }
               const text = [warning, note].filter(Boolean).join(" ");
