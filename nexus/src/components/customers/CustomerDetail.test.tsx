@@ -63,3 +63,10 @@ describe('CustomerDetail billing address', () => {
     for (const l of ['Address', 'City / State / Postal', 'Country']) expect(within(card.parentElement!).getByText(l)).toBeInTheDocument();
   });
 });
+
+describe('CustomerDetail note after create', () => {
+  it('shows the note it was opened with', () => {
+    render(<CustomerDetail customer={customer} invoices={[]} ledgerEntries={[]} initialNotice="Bill.com is turned off." />);
+    expect(screen.getByText('Bill.com is turned off.')).toBeInTheDocument();
+  });
+});

@@ -1,3 +1,4 @@
+import type { BcClient } from './client';
 import { mapBcSalesInvoiceLineToDb, type BcSalesInvoiceLine } from './salesInvoiceLineMapper';
 import type { SyncContext, SyncEntityResult } from './syncRunner';
 
@@ -24,13 +25,17 @@ import type { SyncContext, SyncEntityResult } from './syncRunner';
  * requested count (invoices).
  */
 
-export const INVOICE_BATCH_SIZE = 25;
+// One BC request per batch: invoices filtered by id with their lines expanded
+// (production probe 2026-11-18: 50 invoices with 288 lines in ~0.6 s, versus
+// ~0.13 s per invoice one at a time).
+export const INVOICE_BATCH_SIZE = 50;
 
 export interface SalesInvoiceLineSyncDeps {
   // Invoice ids already mirrored in our own database, ordered ascending,
   // strictly after `cursor`. Returns at most `limit`.
   listInvoiceIdsAfter(cursor: string | null, limit: number): Promise<string[]>;
-  fetchLinesForInvoice(invoiceId: string): Promise<BcSalesInvoiceLine[]>;
+  /** All lines of these invoices, in one BC request. */
+  fetchLinesForInvoices(invoiceIds: string[]): Promise<BcSalesInvoiceLine[]>;
   upsertLines(rows: Record<string, unknown>[]): Promise<void>;
   readCheckpoint(): Promise<{ cursor_value: string | null; records_synced: number } | null>;
   writeCheckpoint(patch: {
@@ -74,22 +79,18 @@ export async function syncSalesInvoiceLines(
         break;
       }
 
-      const rows: Record<string, unknown>[] = [];
-      for (const invoiceId of invoiceIds) {
-        const lines = await deps.fetchLinesForInvoice(invoiceId);
-        for (const line of lines) {
-          rows.push(
-            mapBcSalesInvoiceLineToDb({
-              organizationId: ctx.organizationId,
-              connectionId: ctx.connectionId,
-              environment: ctx.environment,
-              companyId: ctx.companyId,
-              line,
-              now: ctx.now,
-            }) as Record<string, unknown>
-          );
-        }
-      }
+      const lines = await deps.fetchLinesForInvoices(invoiceIds);
+      const rows = lines.map(
+        (line) =>
+          mapBcSalesInvoiceLineToDb({
+            organizationId: ctx.organizationId,
+            connectionId: ctx.connectionId,
+            environment: ctx.environment,
+            companyId: ctx.companyId,
+            line,
+            now: ctx.now,
+          }) as Record<string, unknown>
+      );
 
       if (rows.length > 0) {
         await deps.upsertLines(rows);
@@ -146,4 +147,28 @@ export async function syncSalesInvoiceLines(
       error: message,
     };
   }
+}
+
+/**
+ * The lines of these invoices in one request: the invoices filtered by id,
+ * with `salesInvoiceLines` expanded. Ids are Edm.Guid literals (unquoted).
+ * Each line gets its invoice id from the parent when BC leaves it off.
+ */
+export async function fetchLinesForInvoicesFromBc(
+  bcClient: Pick<BcClient, 'listResourcePage'>,
+  invoiceIds: string[]
+): Promise<BcSalesInvoiceLine[]> {
+  if (invoiceIds.length === 0) return [];
+  const invoices = await bcClient.listResourcePage<{ id: string; salesInvoiceLines?: BcSalesInvoiceLine[] }>(
+    'salesInvoices',
+    {
+      filter: invoiceIds.map((id) => `id eq ${id}`).join(' or '),
+      top: invoiceIds.length,
+      select: 'id',
+      expand: 'salesInvoiceLines',
+    }
+  );
+  return invoices.flatMap((inv) =>
+    (inv.salesInvoiceLines ?? []).map((line) => ({ ...line, documentId: line.documentId ?? inv.id }))
+  );
 }

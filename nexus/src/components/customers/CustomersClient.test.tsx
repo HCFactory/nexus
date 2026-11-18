@@ -126,3 +126,100 @@ describe('CustomersClient Bill.com', () => {
     expect(await screen.findByText(/Bill.com said no/)).toBeInTheDocument();
   });
 });
+
+describe('Sync keeps going until everything is complete', () => {
+  const r = (entityType: string, recordsSynced: number, complete: boolean, cursor: string | null = null, error: string | null = null) => ({
+    entityType, recordsSynced, complete, cursor, error,
+  });
+  const clickSync = () => fireEvent.click(screen.getByRole('button', { name: /sync now/i }));
+
+  it('runs another round while something is incomplete and moving, then stops when all complete', async () => {
+    sync.syncBusinessCentralReceivables
+      .mockResolvedValueOnce([r('customer', 1, true), r('sales_invoice_line', 300, false, 'inv-50')])
+      .mockResolvedValueOnce([r('customer', 0, true), r('sales_invoice_line', 120, true, 'inv-80')]);
+    render(<CustomersClient customers={customers} canSync={true} />);
+    clickSync();
+    await waitFor(() => expect(screen.getAllByText('Complete')).toHaveLength(2));
+    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled();
+  });
+
+  it('shows the round while running, and Stop finishes the current round then stops', async () => {
+    let finishRound2: (v: unknown) => void = () => {};
+    sync.syncBusinessCentralReceivables
+      .mockResolvedValueOnce([r('sales_invoice_line', 300, false, 'inv-50')])
+      .mockImplementationOnce(() => new Promise((res) => { finishRound2 = res; }));
+    render(<CustomersClient customers={customers} canSync={true} />);
+    clickSync();
+    expect(await screen.findByText(/round 2/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    finishRound2([r('sales_invoice_line', 300, false, 'inv-100')]);
+    expect(await screen.findByText('Incomplete — click Sync again to continue')).toBeInTheDocument();
+    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops when a round makes no progress (nothing synced, same place)', async () => {
+    sync.syncBusinessCentralReceivables.mockResolvedValue([r('sales_invoice_line', 0, false, 'inv-50')]);
+    render(<CustomersClient customers={customers} canSync={true} />);
+    clickSync();
+    expect(await screen.findByText('Incomplete — click Sync again to continue')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled());
+    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not repeat for an error alone (e.g. a missing BC page), and shows it', async () => {
+    sync.syncBusinessCentralReceivables.mockResolvedValue([
+      r('customer', 0, false, null, 'Ship-to addresses: 404'),
+      r('sales_invoice_line', 10, true, 'inv-9'),
+    ]);
+    render(<CustomersClient customers={customers} canSync={true} />);
+    clickSync();
+    expect(await screen.findByText('Ship-to addresses: 404')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled());
+    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps going past an error while another part is still moving', async () => {
+    sync.syncBusinessCentralReceivables
+      .mockResolvedValueOnce([r('customer', 0, false, null, 'Ship-to addresses: 404'), r('customer_ledger_entry', 500, false, 'e500')])
+      .mockResolvedValueOnce([r('customer', 0, false, null, 'Ship-to addresses: 404'), r('customer_ledger_entry', 20, true, 'e520')]);
+    render(<CustomersClient customers={customers} canSync={true} />);
+    clickSync();
+    expect(await screen.findByText('Complete')).toBeInTheDocument();
+    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+  });
+
+  it('a failed round stops and shows the error', async () => {
+    sync.syncBusinessCentralReceivables
+      .mockResolvedValueOnce([r('sales_invoice_line', 300, false, 'inv-50')])
+      .mockRejectedValueOnce(new Error('Sync already in progress by someone'));
+    render(<CustomersClient customers={customers} canSync={true} />);
+    clickSync();
+    expect(await screen.findByText('Sync already in progress by someone')).toBeInTheDocument();
+    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('long customer lists', () => {
+  const many = Array.from({ length: 450 }, (_, i) => ({
+    id: `c${i}`, display_name: `Customer ${String(i).padStart(3, '0')}`, bc_customer_number: `N${i}`, email: null, city: null, currency_code: null, balance: 0,
+  })) as unknown as BusinessCentralCustomer[];
+  const rows = () => screen.getAllByRole('row').length - 1; // minus the header row
+
+  it('draws the first 200 and adds 200 more per "Show more" until all are shown', () => {
+    render(<CustomersClient customers={many} canSync={false} />);
+    expect(rows()).toBe(200);
+    fireEvent.click(screen.getByRole('button', { name: /show more/i }));
+    expect(rows()).toBe(400);
+    fireEvent.click(screen.getByRole('button', { name: /show more/i }));
+    expect(rows()).toBe(450);
+    expect(screen.queryByRole('button', { name: /show more/i })).toBeNull();
+  });
+
+  it('search looks through every customer, not just the ones drawn', () => {
+    render(<CustomersClient customers={many} canSync={false} />);
+    fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'Customer 449' } });
+    expect(screen.getByText('Customer 449')).toBeInTheDocument();
+    expect(rows()).toBe(1);
+  });
+});

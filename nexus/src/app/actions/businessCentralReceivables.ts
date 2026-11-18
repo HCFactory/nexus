@@ -13,6 +13,7 @@ import type { AgingRow } from '@/lib/businessCentral/agingSummary';
 import { buildArSyncAdapters } from '@/lib/businessCentral/arSyncAdapters';
 import { createBcClientForOrg, type BcClient } from '@/lib/businessCentral/client';
 import { createReferenceTransportForOrg } from '@/lib/businessCentral/customerReferences/transport';
+import { CUSTOMER_FIELDS } from '@/lib/businessCentral/customers/customerFields';
 import {
   CARD_SELECT_FIELDS,
   CUSTOMER_CARD_SOURCE,
@@ -27,10 +28,10 @@ import {
   type SyncEntityResult,
 } from '@/lib/businessCentral/syncRunner';
 import {
+  fetchLinesForInvoicesFromBc,
   syncSalesInvoiceLines,
   type SalesInvoiceLineSyncDeps,
 } from '@/lib/businessCentral/salesInvoiceLineSync';
-import type { BcSalesInvoiceLine } from '@/lib/businessCentral/salesInvoiceLineMapper';
 import { queueChangedCustomers } from '@/lib/billcom/customerSyncHooks';
 import { createServiceClient } from '@/lib/supabase/server';
 import {
@@ -50,6 +51,10 @@ const LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 // The card fill starts new batches for up to this long (each batch is one
 // short BC request), then stops and continues on the next sync.
 const CARD_BUDGET_MS = 30_000;
+// Invoice lines get their own window too: the AR budget above is usually spent,
+// which left lines one batch per sync. Worst case for the whole sync stays well
+// under the function timeout (~60s AR + ~30s cards + ~40s lines + page fetches).
+const LINES_BUDGET_MS = 40_000;
 // Sync checkpoint row that remembers where the card fill stopped.
 const CARD_CHECKPOINT = 'customer_card';
 
@@ -119,14 +124,7 @@ function salesInvoiceLineSyncDeps(
       if (error) throw error;
       return (data ?? []).map((row) => row.bc_invoice_id as string);
     },
-    async fetchLinesForInvoice(invoiceId) {
-      // Edm.Guid literals are unquoted in OData v4 filters; no $orderby —
-      // ordering within a single invoice's lines is not needed.
-      return bcClient.listResourcePage<BcSalesInvoiceLine>('salesInvoiceLines', {
-        filter: `documentId eq ${invoiceId}`,
-        top: 500,
-      });
-    },
+    fetchLinesForInvoices: (invoiceIds) => fetchLinesForInvoicesFromBc(bcClient, invoiceIds),
     async upsertLines(rows) {
       const { error } = await supabase
         .from('business_central_sales_invoice_lines')
@@ -176,7 +174,6 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
     const ledgerClient = await createCustomerLedgerClientForOrg(orgId, connection.id);
     const adapters = buildArSyncAdapters({ bcClient, ledgerClient });
 
-    const started = Date.now();
     const ctx = {
       organizationId: orgId,
       connectionId: connection.id,
@@ -322,11 +319,10 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
     // salesInvoiceLineSync.ts) — BC cannot query them as a flat collection,
     // so they are NOT one of the shared-runner adapters above. Give it
     // whatever time budget remains from the overall sync budget.
-    const linesRemaining = Math.max(SYNC_BUDGET_MS - (Date.now() - started), 0);
     const linesResult = await syncSalesInvoiceLines(
       salesInvoiceLineSyncDeps(supabase, orgId, connection.id, bcClient),
       ctx,
-      linesRemaining
+      LINES_BUDGET_MS
     );
     results.push(linesResult);
 
@@ -343,9 +339,9 @@ export async function syncBusinessCentralReceivables(): Promise<SyncEntityResult
       })
       .eq('id', connection.id);
 
-    revalidatePath('/customers');
-    revalidatePath('/receivables');
-    revalidatePath('/receivables/invoices');
+    // 'layout' also refreshes customer profiles and invoice pages under these.
+    revalidatePath('/customers', 'layout');
+    revalidatePath('/receivables', 'layout');
     return results;
   } catch (error) {
     await supabase
@@ -380,6 +376,10 @@ export async function getReceivablesSyncStatus(): Promise<BusinessCentralSyncChe
 }
 
 const CUSTOMER_PAGE_SIZE = 1000;
+// What the customers list and its edit form read; never bc_raw_payload.
+const CUSTOMER_LIST_COLUMNS = [
+  ...new Set(['id', 'bc_customer_number', 'display_name', 'email', 'city', 'currency_code', 'balance', ...CUSTOMER_FIELDS.map((f) => f.name)]),
+].join(',');
 
 export async function getCustomersPageData(): Promise<{
   customers: BusinessCentralCustomer[];
@@ -393,21 +393,24 @@ export async function getCustomersPageData(): Promise<{
   const connection = await resolveActiveBcConnection(orgId, user.id);
   if (!connection) return { customers: [], canSync: false };
 
-  // Supabase caps a single response at 1,000 rows, so page through everything.
-  const customers: BusinessCentralCustomer[] = [];
-  for (let from = 0; ; from += CUSTOMER_PAGE_SIZE) {
-    const { data } = await supabase
+  // Supabase caps a single response at 1,000 rows: read the first page with
+  // the total, then the remaining pages at the same time. Only the columns the
+  // list and edit form use (never the raw BC record, the bulk of each row).
+  const page = (from: number, count = false) =>
+    supabase
       .from('business_central_customers')
-      .select('*')
+      .select(CUSTOMER_LIST_COLUMNS, count ? { count: 'exact' } : undefined)
       .eq('organization_id', orgId)
       .eq('bc_connection_id', connection.id)
       .order('display_name', { ascending: true })
       .order('id', { ascending: true })
       .range(from, from + CUSTOMER_PAGE_SIZE - 1);
-    const page = (data ?? []) as BusinessCentralCustomer[];
-    customers.push(...page);
-    if (page.length < CUSTOMER_PAGE_SIZE) break;
-  }
+  const first = await page(0, true);
+  const total = first.count ?? 0;
+  const rest = await Promise.all(
+    Array.from({ length: Math.max(Math.ceil(total / CUSTOMER_PAGE_SIZE) - 1, 0) }, (_, i) => page((i + 1) * CUSTOMER_PAGE_SIZE)),
+  );
+  const customers = [first, ...rest].flatMap((r) => (r.data ?? []) as unknown as BusinessCentralCustomer[]);
 
   return {
     customers,

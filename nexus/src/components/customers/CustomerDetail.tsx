@@ -36,6 +36,8 @@ interface CustomerDetailProps {
   shipToOptions?: ShipToOptions;
   /** Card on file + setup link state; omitted hides the card. */
   cardView?: CustomerCardView;
+  /** A note to show on arrival, e.g. after the customer was just created. */
+  initialNotice?: string;
 }
 
 const NO_SHIP_TO_OPTIONS: ShipToOptions = { taxAreas: [], locations: [], shipmentMethods: [] };
@@ -68,12 +70,12 @@ function FieldCard({
   );
 }
 
-export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom, shipTos = [], shipToOptions = NO_SHIP_TO_OPTIONS, cardView }: CustomerDetailProps) {
+export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billcom, shipTos = [], shipToOptions = NO_SHIP_TO_OPTIONS, cardView, initialNotice }: CustomerDetailProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(initialNotice ?? null);
   const [isRetrying, startRetry] = useTransition();
   const number = customer.bc_customer_number ?? "";
   const link = billcom?.on && number ? billcom.links[number] : undefined;
