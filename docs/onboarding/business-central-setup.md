@@ -45,6 +45,7 @@ Payment terms, shipment methods, tax areas, customers, invoices and sales docume
 ## 3. BC settings
 
 - **Customer number series** used by your customer templates must be **Normal**, with "Allow Gaps in Nos." off. Otherwise Nexus refuses to create customers from that template. In HCF production, check CUST, WHSL-CUST, FUND-CUST, CUST-PERS and CUSTCONTR.
+- **Each template's series must be caught up:** its line's **Last No. Used** must be at or above the highest existing customer number with that prefix. In HCF production, FUND-CUST had never been used (blank) while customers ran up to F02090, so Nexus's first fundraiser became F00001, a free gap. Fix: set Last No. Used to the highest existing number.
 - **Default customer series** (Sales & Receivables Setup → Customer Nos.; CUST-PERS in HCF production, CUST in TEST): tick **Manual Nos.** BC checks this series whenever a customer is created with a number, whichever template is used. Without it, Nexus's New customer fails with "You may not enter numbers manually… No. Series CUST-PERS". BC still numbers its own new customers automatically.
 - **Sales order number series** (WHSL in HCF): tick **Manual Nos.** so Nexus can give a new order its number when the page opens. Without it, orders get their number on Save.
 - **General Ledger Setup → Allow Posting From/To** must cover today. Check any **User Setup** line for the Nexus app user too. Otherwise Create invoice can't post.
