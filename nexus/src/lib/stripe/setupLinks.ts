@@ -34,8 +34,13 @@ function appUrl(): string {
   return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 }
 
+/** Where customers open card setup links: CARD_SETUP_BASE_URL (e.g. a payment.<company> address), else the app's address. */
+function cardSetupBaseUrl(): string {
+  return (process.env.CARD_SETUP_BASE_URL?.trim() || appUrl()).replace(/\/+$/, '');
+}
+
 export function setupLinkUrl(token: string): string {
-  return `${appUrl()}/card-setup/${token}`;
+  return `${cardSetupBaseUrl()}/card-setup/${token}`;
 }
 
 /** Stripe refuses to expire a session that is already expired or complete: nothing left to do. */
