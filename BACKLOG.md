@@ -2,6 +2,19 @@
 
 A running list of things to do. Reference items by number, e.g. "do #2" or "add X to the backlog".
 
+## Up next (agreed order, 2026-11-17)
+
+1. **Go-live of `feat/sales-orders`** (sales orders, invoicing, change invoice, shipment methods, order number up front, Stripe saved cards). Do these in production **before** merging to `main`, or the live app will query tables/columns that don't exist:
+   - apply migrations **060–068** in production Supabase (059 if not already there);
+   - switch off the Bill.com connector's invoice copying from BC (otherwise invoices are created twice in Bill.com);
+   - BC production: check General Ledger Setup "Allow Posting From/To" covers today (and any User Setup line for the Nexus app user), and tick **Manual Nos.** on the sales order number series;
+   - after the merge deploys: switch Nexus to the production BC connection, run Customer Sync + Bill.com customer push, sync Shipment methods, invoice one real order and compare BC, Nexus and Bill.com.
+   - Stripe stays off until its pre-live fixes are done (see #12) and Charge saved cards stays off for everyone.
+2. **Send invoice** (#5.3): a button that has Bill.com email the invoice to the customer. Small, low risk.
+3. **Stripe pre-live fixes** (#12): the failed→charged duplicate-charge guard and the Retry fixes (a)–(d), before live Stripe keys.
+4. **Payments** (#5.4): Bill.com payments into Nexus, reviewed, then recorded in BC. Big, high risk (writes to the general ledger); needs its own design, including the Bill.com rounding difference.
+5. Older items still open: item-editing permission (#8), BC edit-conflict warning for items (#9), database can't be rebuilt from migrations (#11).
+
 ## To do
 
 1. **Go-live prep for customer sync** — settings to change in production BC and Bill.com before turning the sync on there. No code changes.
