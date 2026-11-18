@@ -4,6 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { after } from 'next/server';
 import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
+import { createNoSeriesClient } from '@/lib/businessCentral/noSeriesClient';
+import { findOrderSeries, requireManualNos, takeNextNumber } from '@/lib/salesOrders/orderNumberReservation';
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import { editScope, NO_PERMISSION, type Fail, type Scope } from '@/lib/salesOrders/editScope';
 import {
@@ -221,7 +223,7 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
         .from(ORDERS)
         .select(
           'id, status, customer_id, customer_number, bill_name, order_date, requested_delivery_date, invoice_number, ' +
-            'bc_order_number, customer_po, total_incl_tax, sync_state, sync_error, invoice_state, invoice_error, customer:business_central_customers(display_name)',
+            'bc_order_number, reserved_order_number, customer_po, total_incl_tax, sync_state, sync_error, invoice_state, invoice_error, customer:business_central_customers(display_name)',
         )
         .eq('organization_id', scope.orgId)
         .eq('bc_connection_id', scope.bcConnectionId)
@@ -243,6 +245,7 @@ export async function listSalesOrders(): Promise<SalesOrderListRow[]> {
       requested_delivery_date: (r.requested_delivery_date as string | null) ?? null,
       invoice_number: (r.invoice_number as string | null) ?? null,
       bc_order_number: (r.bc_order_number as string | null) ?? null,
+      reserved_order_number: (r.reserved_order_number as string | null) ?? null,
       customer_po: String(r.customer_po ?? ''),
       total_incl_tax: r.total_incl_tax === null || r.total_incl_tax === undefined ? null : Number(r.total_incl_tax),
       sync_state: r.sync_state as SyncState,
@@ -636,6 +639,7 @@ async function createOrder(scope: Scope, input: SalesOrderInput): Promise<string
         sync_state: 'pending',
         local_version: 1,
         created_by: scope.user.id,
+        reserved_order_number: input.reserved_order_number ?? null,
       })
       .select('id')
       .single(),
@@ -658,6 +662,68 @@ async function createOrder(scope: Scope, input: SalesOrderInput): Promise<string
 }
 
 /** Save a new order (no id) or changes to an existing one, then sync it to BC in the background. */
+const RESERVATIONS = 'sales_order_number_reservations';
+const RESERVATION_UNUSABLE = "This order number can't be used. Reload the page to get a new one.";
+
+/** The id of this user's unused reservation of `number`, or null. */
+async function usableReservation(scope: Scope, number: string): Promise<string | null> {
+  const rows = check(
+    await scoped(scope, createServiceClient().from(RESERVATIONS).select('id').eq('number', number))
+      .eq('reserved_by', scope.user.id)
+      .is('sales_order_id', null),
+    'Could not check the order number',
+  ) as { id: string }[] | null;
+  return rows?.[0]?.id ?? null;
+}
+
+/** Ties the reservation to the order; false if another order took it first. */
+async function claimReservation(scope: Scope, reservationId: string, orderId: string): Promise<boolean> {
+  const rows = check(
+    await scoped(scope, createServiceClient().from(RESERVATIONS).update({ sales_order_id: orderId }).eq('id', reservationId))
+      .is('sales_order_id', null)
+      .select('id'),
+    'Could not claim the order number',
+  ) as { id: string }[] | null;
+  return !!rows && rows.length > 0;
+}
+
+/**
+ * Takes BC's next sales order number for a new order (spec 2026-11-17 #3):
+ * the series of the latest order, which must allow manual numbers; the
+ * number is recorded as reserved by this user. A number nobody saves is a gap.
+ */
+export async function reserveSalesOrderNumber(): Promise<{ ok: true; number: string } | Fail> {
+  try {
+    const scope = await editScope();
+    if (!scope) return { ok: false, error: NO_PERMISSION };
+    const latest = check(
+      await scoped(scope, createServiceClient().from(ORDERS).select('bc_order_number'))
+        .not('bc_order_number', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1),
+      'Could not read the latest order',
+    ) as { bc_order_number: string }[] | null;
+    const bc = await createBcClientForOrg(scope.orgId, scope.bcConnectionId);
+    const company = await bc.getCompany(bc.config.companyId);
+    const transport = createReferenceTransport(bc, company.name);
+    const series = await findOrderSeries(transport, latest?.[0]?.bc_order_number ?? null);
+    await requireManualNos(transport, series);
+    const number = await takeNextNumber(createNoSeriesClient(bc, company.name), series, todayIn(timeZoneOf(scope)));
+    check(
+      await createServiceClient().from(RESERVATIONS).insert({
+        organization_id: scope.orgId,
+        bc_connection_id: scope.bcConnectionId,
+        number,
+        reserved_by: scope.user.id,
+      }),
+      'Could not record the order number',
+    );
+    return { ok: true, number };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
 export async function saveSalesOrder(
   input: SalesOrderInput & { id?: string },
 ): Promise<{ ok: true; id: string } | Fail> {
@@ -673,7 +739,14 @@ export async function saveSalesOrder(
       if (!input.customer_id) return { ok: false, error: 'Choose a customer.' };
       const customerNumber = await orderableCustomerNumber(scope, input.customer_id);
       if (!customerNumber) return { ok: false, error: CUSTOMER_BAD };
-      const id = await createOrder(scope, { ...input, customer_number: customerNumber });
+      const reserved = input.reserved_order_number?.trim() || null;
+      const reservationId = reserved ? await usableReservation(scope, reserved) : null;
+      if (reserved && !reservationId) return { ok: false, error: RESERVATION_UNUSABLE };
+      const id = await createOrder(scope, { ...input, customer_number: customerNumber, reserved_order_number: reserved });
+      if (reservationId && !(await claimReservation(scope, reservationId, id))) {
+        await scoped(scope, createServiceClient().from(ORDERS).delete().eq('id', id));
+        return { ok: false, error: RESERVATION_UNUSABLE };
+      }
       syncInBackground(scope, id);
       revalidateSalesOrders();
       return { ok: true, id };

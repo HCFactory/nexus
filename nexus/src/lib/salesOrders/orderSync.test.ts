@@ -246,7 +246,7 @@ function order(over: Partial<SalesOrderRow> = {}): SalesOrderRow {
     ship_to_contact: '', ship_to_phone: '',
     payment_terms_code: 'NET30', tax_area_code: 'TX', gen_bus_posting_group: 'DOM',
     customer_posting_group: 'CP', shipment_method_code: 'UPS', location_code: 'MAIN',
-    tax_liable: true, bc_order_number: null, bc_etag: null, bc_create_marker: null,
+    tax_liable: true, bc_order_number: null, reserved_order_number: null, bc_etag: null, bc_create_marker: null,
     bc_due_date: null, bc_document_date: null, bc_posting_date: null,
     total_excl_tax: null, total_tax: null, total_incl_tax: null,
     sync_state: 'pending', sync_error: null, sync_attempts: 0, claimed_until: null,

@@ -43,6 +43,8 @@ export function createMarker(orderId: string): string {
 export function toBcCreate(order: SalesOrderRow, marker: string): Record<string, unknown> {
   return {
     Document_Type: 'Order',
+    // The number taken when the New page opened (needs Manual Nos. on the series in BC).
+    ...(order.reserved_order_number ? { No: order.reserved_order_number } : {}),
     Sell_to_Customer_No: order.customer_number,
     External_Document_No: marker,
   }

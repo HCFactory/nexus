@@ -17,6 +17,10 @@ const mocks = vi.hoisted(() => ({
   getSelectOptions: vi.fn(),
   sweepInvoiceSteps: vi.fn(),
   buildInvoiceDeps: vi.fn(),
+  createNoSeriesClient: vi.fn(),
+  findOrderSeries: vi.fn(),
+  requireManualNos: vi.fn(),
+  takeNextNumber: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -33,6 +37,12 @@ vi.mock('@/lib/salesOrders/orderSync', () => ({
 }));
 vi.mock('@/lib/salesOrders/invoiceProcess', () => ({ sweepInvoiceSteps: mocks.sweepInvoiceSteps }));
 vi.mock('@/lib/salesOrders/invoiceDeps', () => ({ buildInvoiceDeps: mocks.buildInvoiceDeps }));
+vi.mock('@/lib/businessCentral/noSeriesClient', () => ({ createNoSeriesClient: mocks.createNoSeriesClient }));
+vi.mock('@/lib/salesOrders/orderNumberReservation', () => ({
+  findOrderSeries: mocks.findOrderSeries,
+  requireManualNos: mocks.requireManualNos,
+  takeNextNumber: mocks.takeNextNumber,
+}));
 vi.mock('./customerReferenceLists', () => ({ getSelectOptions: mocks.getSelectOptions }));
 
 import {
@@ -42,6 +52,7 @@ import {
   getSalesOrderPriceLines,
   listSalesOrders,
   overwriteBcWithNexus,
+  reserveSalesOrderNumber,
   retrySalesOrderSync,
   saveSalesOrder,
   setSalesOrderStatus,
@@ -190,6 +201,82 @@ describe('saveSalesOrder: create', () => {
 
   it('refuses to create a Shipped order', async () => {
     expect(await saveSalesOrder(input({ status: 'shipped' }))).toEqual({ ok: false, error: 'Shipped and Invoiced are set by the Ship and Create invoice buttons.' });
+  });
+});
+
+describe('order number taken up front', () => {
+  const CANT_USE = "This order number can't be used. Reload the page to get a new one.";
+  const reservation = (extra: Row = {}): Row => ({
+    id: 'r1', organization_id: 'org-1', bc_connection_id: 'conn-1', number: 'W-100536',
+    reserved_by: 'user-1', sales_order_id: null, ...extra,
+  });
+
+  beforeEach(() => {
+    mocks.createNoSeriesClient.mockReturnValue({ noSeries: true });
+    mocks.findOrderSeries.mockResolvedValue('WHSL');
+    mocks.requireManualNos.mockResolvedValue(undefined);
+    mocks.takeNextNumber.mockResolvedValue('W-100536');
+  });
+
+  it("reserve takes the next number of the latest order's series and records it for this user", async () => {
+    setup({
+      sales_orders: [
+        orderRow('o1', { bc_order_number: 'W-100534', created_at: '2026-11-01T00:00:00.000Z' }),
+        orderRow('o2', { bc_order_number: 'W-100535', created_at: '2026-11-02T00:00:00.000Z' }),
+        orderRow('o3', { bc_order_number: null, created_at: '2026-11-03T00:00:00.000Z' }),
+      ],
+      sales_order_number_reservations: [],
+    });
+    expect(await reserveSalesOrderNumber()).toEqual({ ok: true, number: 'W-100536' });
+    expect(mocks.findOrderSeries).toHaveBeenCalledWith({ transport: true }, 'W-100535');
+    expect(mocks.requireManualNos).toHaveBeenCalledWith({ transport: true }, 'WHSL');
+    expect(mocks.takeNextNumber.mock.calls[0].slice(0, 2)).toEqual([{ noSeries: true }, 'WHSL']);
+    expect(db.tables.sales_order_number_reservations).toEqual([
+      expect.objectContaining({ organization_id: 'org-1', bc_connection_id: 'conn-1', number: 'W-100536', reserved_by: 'user-1' }),
+    ]);
+  });
+
+  it('reserve without edit permission is refused and takes nothing', async () => {
+    mocks.requireScope.mockResolvedValue(scope(false));
+    expect(await reserveSalesOrderNumber()).toEqual({ ok: false, error: NO_PERMISSION });
+    expect(mocks.takeNextNumber).not.toHaveBeenCalled();
+  });
+
+  it('reserve reports why a number could not be taken (Manual Nos. off)', async () => {
+    setup({ sales_order_number_reservations: [] });
+    mocks.requireManualNos.mockRejectedValue(new Error('Turn on Manual Nos.'));
+    expect(await reserveSalesOrderNumber()).toEqual({ ok: false, error: 'Turn on Manual Nos.' });
+    expect(mocks.takeNextNumber).not.toHaveBeenCalled();
+    expect(db.tables.sales_order_number_reservations).toEqual([]);
+  });
+
+  it('a new order saved with its reservation keeps the number and claims it', async () => {
+    setup({ sales_order_number_reservations: [reservation()] });
+    const res = await saveSalesOrder(input({ reserved_order_number: 'W-100536' }));
+    expect(res).toMatchObject({ ok: true });
+    const id = (res as { id: string }).id;
+    expect(db.tables.sales_orders[0]).toMatchObject({ id, reserved_order_number: 'W-100536', invoice_number: null });
+    expect(db.tables.sales_order_number_reservations[0].sales_order_id).toBe(id);
+  });
+
+  it("refuses another user's, a used or an unknown reservation, writing nothing", async () => {
+    for (const rows of [[reservation({ reserved_by: 'user-2' })], [reservation({ sales_order_id: 'o9' })], []]) {
+      setup({ sales_order_number_reservations: rows });
+      expect(await saveSalesOrder(input({ reserved_order_number: 'W-100536' }))).toEqual({ ok: false, error: CANT_USE });
+      expect(db.tables.sales_orders).toEqual([]);
+    }
+  });
+
+  it('a new order without a reservation saves as before (BC assigns the number)', async () => {
+    const res = await saveSalesOrder(input());
+    expect(res).toMatchObject({ ok: true });
+    expect(db.tables.sales_orders[0].reserved_order_number ?? null).toBeNull();
+  });
+
+  it('the list carries the reserved number', async () => {
+    setup({ sales_orders: [orderRow('o1', { reserved_order_number: 'W-100536' })] });
+    const [row] = await listSalesOrders();
+    expect(row.reserved_order_number).toBe('W-100536');
   });
 });
 

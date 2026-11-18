@@ -110,6 +110,8 @@ export interface SalesOrderRow {
   location_code: string
   tax_liable: boolean
   bc_order_number: string | null
+  /** The number taken from BC when the New page opened; BC creates the order with it. */
+  reserved_order_number: string | null
   bc_etag: string | null
   bc_create_marker: string | null
   bc_due_date: string | null
@@ -250,6 +252,8 @@ export interface SalesOrderInput extends OrderHeaderDefaults {
   invoice_number: string | null
   customer_po: string
   lines: LineDraft[]
+  /** New orders only: the number reserved when the New page opened. */
+  reserved_order_number?: string | null
 }
 
 /** A row in the sales orders list. */
@@ -263,6 +267,7 @@ export interface SalesOrderListRow {
   requested_delivery_date: string | null
   invoice_number: string | null
   bc_order_number: string | null
+  reserved_order_number: string | null
   customer_po: string
   total_incl_tax: number | null
   sync_state: SyncState

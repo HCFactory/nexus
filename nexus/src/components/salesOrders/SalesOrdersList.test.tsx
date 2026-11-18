@@ -10,7 +10,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => nav }));
 function row(over: Partial<SalesOrderListRow>): SalesOrderListRow {
   return {
     id: 'o1', status: 'draft', customer_id: 'c1', customer_number: 'C1', customer_name: 'Acme',
-    order_date: '2026-11-01', requested_delivery_date: null, invoice_number: null, bc_order_number: null,
+    order_date: '2026-11-01', requested_delivery_date: null, invoice_number: null, bc_order_number: null, reserved_order_number: null,
     customer_po: 'PO-1', total_incl_tax: null, sync_state: 'synced', sync_error: null, invoice_state: 'none', invoice_error: null, ...over,
   };
 }

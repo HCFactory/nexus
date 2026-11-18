@@ -33,7 +33,7 @@ function order(over: Partial<SalesOrderRow> = {}): SalesOrderRow {
     ship_to_contact: 'sct', ship_to_phone: 'sph',
     payment_terms_code: 'NET30', tax_area_code: 'TX', gen_bus_posting_group: 'DOM',
     customer_posting_group: 'CP', shipment_method_code: 'UPS', location_code: 'MAIN',
-    tax_liable: true, bc_order_number: null, bc_etag: null, bc_create_marker: null,
+    tax_liable: true, bc_order_number: null, reserved_order_number: null, bc_etag: null, bc_create_marker: null,
     bc_due_date: null, bc_document_date: null, bc_posting_date: null,
     total_excl_tax: null, total_tax: null, total_incl_tax: null,
     sync_state: 'pending', sync_error: null, sync_attempts: 0, claimed_until: null,
@@ -72,6 +72,11 @@ describe('toBcCreate / toSalesDocShipToAddress', () => {
   it('creates with marker', () => {
     expect(toBcCreate(order(), 'NX-ABCDEF123456')).toEqual({ Document_Type: 'Order', Sell_to_Customer_No: 'C100', External_Document_No: 'NX-ABCDEF123456' })
     expect(toBcCreate(order(), 'NX-OTHER').External_Document_No).toBe('NX-OTHER')
+  })
+  it('creates with the number reserved when the New page opened', () => {
+    expect(toBcCreate(order({ reserved_order_number: 'W-100536' }), 'NX-A')).toEqual({
+      Document_Type: 'Order', No: 'W-100536', Sell_to_Customer_No: 'C100', External_Document_No: 'NX-A',
+    })
   })
   it('ship-to address maps null values to empty strings', () => {
     const out = toSalesDocShipToAddress(order({ ship_to_address_2: null, ship_to_contact: null } as unknown as Partial<SalesOrderRow>))

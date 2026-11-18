@@ -99,7 +99,7 @@ const order = (over: Partial<SalesOrderRow> = {}): SalesOrderRow => ({
   ship_to_address: '2 Dock Rd', ship_to_address_2: '', ship_to_city: 'Austin', ship_to_state: 'TX',
   ship_to_post_code: '78702', ship_to_country: 'US', ship_to_contact: 'Sam', ship_to_phone: '555-0111',
   payment_terms_code: 'NET30', tax_area_code: 'TX', gen_bus_posting_group: 'DOM', customer_posting_group: 'DOMESTIC',
-  shipment_method_code: 'UPS', location_code: 'W1', tax_liable: true, bc_order_number: 'SO-10234', bc_etag: null,
+  shipment_method_code: 'UPS', location_code: 'W1', tax_liable: true, bc_order_number: 'SO-10234', reserved_order_number: null, bc_etag: null,
   bc_create_marker: null, bc_due_date: '2026-12-10', bc_document_date: null, bc_posting_date: null,
   total_excl_tax: 100, total_tax: 8.25, total_incl_tax: 108.25, sync_state: 'synced', sync_error: null,
   sync_attempts: 0, claimed_until: null, last_synced_at: null, local_version: 3, synced_version: 3,
