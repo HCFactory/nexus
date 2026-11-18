@@ -94,6 +94,27 @@ Payment terms, shipment methods, tax areas, customers, invoices and sales docume
    - **Turn it on:** enable the connection, pick it on the BC environment (section 4), and do one real card save to confirm the webhook arrives.
    - **Who can charge:** give **Charge saved cards** only to the people who should charge cards.
    - **Charging needs Bill.com:** Charge card records the payment against a Nexus-made Bill.com invoice, so it needs section 6.
+6. **Optional: card links on the company's own address** (e.g. `payment.hawaiicandyfactory.com`):
+   - **Vercel → Settings → Domains → Add:** add the address, then add the DNS record Vercel shows (usually CNAME `payment` → `cname.vercel-dns.com`).
+   - **Vercel → Environment Variables:** set `CARD_SETUP_BASE_URL` = `https://payment.hawaiicandyfactory.com` and redeploy.
+   - **What it does:** on that address only the card setup pages are served. Anything else goes to the main app address.
+   - **What stays the same:** links already sent on the old address keep working, and the Stripe webhook stays on the main address.
+
+## 7b. Email (Resend), for card links and the "card saved" notice
+
+1. **Resend → Domains → Add Domain:** use a subdomain (e.g. `mail.hawaiicandyfactory.com`) so normal company email isn't affected.
+2. Add the DNS records Resend shows (MX and SPF on `send.…`, DKIM `resend._domainkey.…`), then click **Verify**.
+3. **Vercel → Environment Variables (Production):**
+   - **`RESEND_API_KEY`:** your Resend API key.
+   - **`CUSTOMER_EMAIL_FROM`:** e.g. `Hawaii Candy Factory <payments@mail.hawaiicandyfactory.com>`.
+   - **`CARD_SAVED_NOTIFY_EMAIL`:** optional. **One** address that gets the "card saved" notice; if left out it goes to `fundraisers@hawaiicandyfactory.com`.
+4. Redeploy. Vercel only applies new settings on the next deploy.
+
+## 7c. Moving the main app to a new address (e.g. `nexus.nomshsf.com`)
+
+- **Vercel:** add the domain and set `NEXT_PUBLIC_APP_URL` to it, then redeploy.
+- **Supabase → Authentication → URL Configuration:** set the Site URL and add the new address to the Redirect URLs, so sign-in and password-reset links work.
+- **Keep the old domain attached** so the Stripe webhook and links already sent keep working. If you ever remove it, first update the webhook endpoint URL in Stripe.
 
 ## 8. After setup
 
