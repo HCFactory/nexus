@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { getCurrentUser } from '@/app/actions/users';
 import { resolveUserAccess } from '@/lib/auth/permissions';
-import { createStripeForConnection } from '@/lib/stripe/connection';
+import { createStripeForConnection, createStripeForKey } from '@/lib/stripe/connection';
 import { createServiceClient } from '@/lib/supabase/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
@@ -74,6 +74,64 @@ export async function listStripeConnections(): Promise<StripeConnectionSummary[]
   }));
 }
 
+const DIFFERENT_ACCOUNT = 'This key is for a different Stripe account or mode. Add a new connection for it.';
+
+/**
+ * A new key for an existing connection must be for the same Stripe account and
+ * mode: its saved cards and Stripe customers live in that account. Returns the
+ * key's account and mode, to store.
+ */
+async function checkSameStripeAccount(
+  supabase: SupabaseClient,
+  orgId: string,
+  connectionId: string,
+  secretKey: string,
+): Promise<{ stripe_account_id: string; livemode: boolean }> {
+  const { data: conn, error } = await supabase
+    .from('stripe_connections')
+    .select('stripe_account_id, livemode')
+    .eq('id', connectionId)
+    .eq('organization_id', orgId)
+    .maybeSingle();
+  if (error) throw error;
+  const stored = (conn ?? {}) as { stripe_account_id?: string | null; livemode?: boolean | null };
+
+  const stripe = createStripeForKey(secretKey);
+  let accountId: string;
+  let livemode: boolean;
+  try {
+    accountId = (await stripe.accounts.retrieve(null)).id;
+    livemode = (await stripe.balance.retrieve()).livemode;
+  } catch {
+    throw new Error("Stripe didn't accept this key. Check it and try again.");
+  }
+  const otherAccount = Boolean(stored.stripe_account_id) && stored.stripe_account_id !== accountId;
+  const otherMode = stored.livemode !== null && stored.livemode !== undefined && stored.livemode !== livemode;
+  if (otherAccount || otherMode) throw new Error(DIFFERENT_ACCOUNT);
+
+  // Never tested, so the account is unknown: its Stripe customers must exist for the new key.
+  if (!stored.stripe_account_id) {
+    const { data: customer, error: custError } = await supabase
+      .from('stripe_customers')
+      .select('stripe_customer_id')
+      .eq('organization_id', orgId)
+      .eq('stripe_connection_id', connectionId)
+      .limit(1)
+      .maybeSingle();
+    if (custError) throw custError;
+    const customerId = (customer as { stripe_customer_id: string } | null)?.stripe_customer_id;
+    if (customerId) {
+      try {
+        await stripe.customers.retrieve(customerId);
+      } catch (e) {
+        if ((e as { code?: string }).code === 'resource_missing') throw new Error(DIFFERENT_ACCOUNT);
+        throw new Error("Couldn't check this key with Stripe. Try again.");
+      }
+    }
+  }
+  return { stripe_account_id: accountId, livemode };
+}
+
 export async function saveStripeConnection(input: StripeConnectionInput): Promise<string> {
   const { orgId } = await requireAdmin();
   const supabase = createServiceClient();
@@ -90,14 +148,17 @@ export async function saveStripeConnection(input: StripeConnectionInput): Promis
   const displayName = input.displayName.trim();
   if (!displayName) throw new Error('Display name is required.');
 
+  let identity: { stripe_account_id: string; livemode: boolean } | null = null;
   if (input.id) {
     await requireOwnedConnection(supabase, orgId, input.id);
+    if (secretKey) identity = await checkSameStripeAccount(supabase, orgId, input.id, secretKey);
   }
 
   const row = {
     organization_id: orgId,
     display_name: displayName,
     updated_at: new Date().toISOString(),
+    ...(identity ?? {}),
   };
 
   let connectionId = input.id;

@@ -38,6 +38,11 @@ export async function resolveDefaultStripeConnection(
   return disabled ? { id: disabled.id, enabled: false, livemode: Boolean(disabled.livemode) } : null;
 }
 
+/** A Stripe client for a key an admin just typed (to check it before it is stored). */
+export function createStripeForKey(secretKey: string): Stripe {
+  return new Stripe(secretKey);
+}
+
 /** Builds a Stripe client from the Vault-stored key. Throws if disabled or key missing. */
 export async function createStripeForConnection(
   supabase: SupabaseClient,

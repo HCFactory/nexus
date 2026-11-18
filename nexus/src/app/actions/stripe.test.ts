@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   retrieve: vi.fn(),
   balance: vi.fn(),
   createStripe: vi.fn(),
+  createStripeForKey: vi.fn(),
+  customerRetrieve: vi.fn(),
+  rows: {} as Record<string, Record<string, unknown> | null>,
 }));
 
 vi.mock('server-only', () => ({}));
@@ -21,7 +24,7 @@ vi.mock('@/app/actions/users', () => ({ getCurrentUser: async () => mocks.user }
 vi.mock('@/lib/auth/permissions', () => ({
   resolveUserAccess: (u: { role?: string } | null) => ({ isAdmin: u?.role === 'admin' }),
 }));
-vi.mock('@/lib/stripe/connection', () => ({ createStripeForConnection: mocks.createStripe }));
+vi.mock('@/lib/stripe/connection', () => ({ createStripeForConnection: mocks.createStripe, createStripeForKey: mocks.createStripeForKey }));
 vi.mock('@/lib/supabase/server', () => ({
   createServiceClient: () => ({
     from(table: string) {
@@ -35,7 +38,10 @@ vi.mock('@/lib/supabase/server', () => ({
         update: (values: Record<string, unknown>) => ((pending = { kind: 'update', table, values }), q),
         insert: (values: Record<string, unknown>) => ((pending = { kind: 'insert', table, values }), q),
         delete: () => ((pending = { kind: 'update', table, values: { deleted: true } }), q),
-        maybeSingle: async () => ({ data: mocks.owned ? { id: 'c1' } : null, error: null }),
+        maybeSingle: async () => {
+          if (table === 'stripe_customers') return { data: mocks.rows.stripe_customers ?? null, error: null };
+          return { data: mocks.owned ? { id: 'c1', ...(mocks.rows[table] ?? {}) } : null, error: null };
+        },
         single: async () => {
           if (pending) mocks.calls.push(pending);
           return { data: { id: 'new-1' }, error: null };
@@ -77,6 +83,14 @@ beforeEach(() => {
   mocks.balance.mockReset();
   mocks.createStripe.mockReset();
   mocks.createStripe.mockResolvedValue({ accounts: { retrieve: mocks.retrieve }, balance: { retrieve: mocks.balance } });
+  mocks.rows = {};
+  mocks.customerRetrieve.mockReset();
+  mocks.createStripeForKey.mockReset();
+  mocks.createStripeForKey.mockReturnValue({
+    accounts: { retrieve: mocks.retrieve },
+    balance: { retrieve: mocks.balance },
+    customers: { retrieve: mocks.customerRetrieve },
+  });
 });
 
 describe('admin only', () => {
@@ -113,6 +127,48 @@ describe('saveStripeConnection', () => {
     await expect(saveStripeConnection({ ...input, secretKey: 'pk_test_1' })).rejects.toThrow(/sk_test_ or sk_live_/);
     await expect(saveStripeConnection({ ...input, webhookSecret: 'abc' })).rejects.toThrow(/whsec_/);
     expect(mocks.calls).toEqual([]);
+  });
+
+  describe('changing the secret key of an existing connection', () => {
+    const DIFFERENT = 'This key is for a different Stripe account or mode. Add a new connection for it.';
+    const keyCalls = () => mocks.calls.filter((c) => c.kind === 'rpc' && c.fn === 'set_stripe_secret_key');
+
+    it('a key for another Stripe account is refused and not stored', async () => {
+      mocks.rows.stripe_connections = { stripe_account_id: 'acct_A', livemode: false };
+      mocks.retrieve.mockResolvedValue({ id: 'acct_B' });
+      mocks.balance.mockResolvedValue({ livemode: false });
+      await expect(saveStripeConnection({ ...input, id: 'c1', secretKey: SK })).rejects.toThrow(DIFFERENT);
+      expect(keyCalls()).toEqual([]);
+    });
+
+    it('test → live on the same connection is refused', async () => {
+      mocks.rows.stripe_connections = { stripe_account_id: 'acct_A', livemode: false };
+      mocks.retrieve.mockResolvedValue({ id: 'acct_A' });
+      mocks.balance.mockResolvedValue({ livemode: true });
+      await expect(saveStripeConnection({ ...input, id: 'c1', secretKey: 'sk_live_SECRETVALUE' })).rejects.toThrow(DIFFERENT);
+      expect(keyCalls()).toEqual([]);
+    });
+
+    it('never tested but has Stripe customers: refused when the new account does not have them', async () => {
+      mocks.rows.stripe_connections = { stripe_account_id: null, livemode: null };
+      mocks.rows.stripe_customers = { stripe_customer_id: 'cus_1' };
+      mocks.retrieve.mockResolvedValue({ id: 'acct_B' });
+      mocks.balance.mockResolvedValue({ livemode: false });
+      mocks.customerRetrieve.mockRejectedValue(Object.assign(new Error('No such customer'), { code: 'resource_missing' }));
+      await expect(saveStripeConnection({ ...input, id: 'c1', secretKey: SK })).rejects.toThrow(DIFFERENT);
+      expect(keyCalls()).toEqual([]);
+    });
+
+    it('same account and mode: the key is stored and the account and mode are refreshed', async () => {
+      mocks.rows.stripe_connections = { stripe_account_id: 'acct_A', livemode: false };
+      mocks.retrieve.mockResolvedValue({ id: 'acct_A' });
+      mocks.balance.mockResolvedValue({ livemode: false });
+      await saveStripeConnection({ ...input, id: 'c1', secretKey: SK });
+      expect(keyCalls()).toHaveLength(1);
+      expect(mocks.calls).toContainEqual(
+        expect.objectContaining({ kind: 'update', table: 'stripe_connections', values: expect.objectContaining({ stripe_account_id: 'acct_A', livemode: false }) }),
+      );
+    });
   });
 
   it('blank secrets leave stored values alone', async () => {
