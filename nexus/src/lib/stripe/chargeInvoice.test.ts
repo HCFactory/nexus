@@ -367,6 +367,18 @@ describe('chargeInvoice', () => {
     expect(s.db.writes.some(([, , p]) => (p as Row).billcom_state === 'failed')).toBe(false);
   });
 
+  it('(d) Bill.com recorded but saving that fails → the Bill.com payment id is still saved on the row (state unchanged)', async () => {
+    const s = setup();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const base = s.db.failOn!;
+    s.db.failOn = (table, op, payload) => {
+      base(table, op, payload);
+      return table === 'card_payments' && op === 'update' && (payload as Row).billcom_state === 'recorded' ? 'db down' : null;
+    };
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow(/0pay1/);
+    expect(s.db.tables.card_payments[0]).toMatchObject({ status: 'succeeded', billcom_state: 'not_started', billcom_payment_id: '0pay1' });
+  });
+
   it('second concurrent charge is rejected by the unique index (23505), no Stripe call', async () => {
     const s = setup();
     s.db.failOn = (table, op) => (table === 'card_payments' && op === 'insert' ? { message: 'duplicate key', code: '23505' } : null);
@@ -524,6 +536,31 @@ describe('checkChargeStatus', () => {
     expect(row.billcomError).toContain('before pressing Retry');
   });
 
+  it('(a) a stale Check status does not cut off a fresh Retry: the interrupted write only applies to the attempt it looked at', async () => {
+    const s = setup({
+      tables: {
+        card_payments: [
+          paymentRow({ status: 'succeeded', stripe_payment_intent_id: 'pi_1', charged_at: '2026-11-17T19:40:00.000Z', billcom_attempt_at: '2026-11-17T19:49:00.000Z' }),
+        ],
+      },
+    });
+    const base = s.db.failOn!;
+    s.db.failOn = (table, op, payload) => {
+      // A Retry started a new attempt after this Check status read the row.
+      if (table === 'card_payments' && op === 'update' && (payload as Row).billcom_state === 'failed') {
+        s.db.tables.card_payments[0].billcom_attempt_at = NOW.toISOString();
+      }
+      return base(table, op, payload);
+    };
+    await checkChargeStatus(s.deps, 'cp-1');
+    expect(s.db.tables.card_payments[0]).toMatchObject({ billcom_state: 'not_started', billcom_error: null });
+  });
+
+  it('(a) an interrupted first attempt with no attempt time is still marked interrupted', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', stripe_payment_intent_id: 'pi_1', charged_at: '2026-11-17T18:00:00.000Z', billcom_attempt_at: null })] } });
+    expect((await checkChargeStatus(s.deps, 'cp-1')).billcomState).toBe('failed');
+  });
+
   it('flags a stuck Bill.com record on the row (billcomStuck) so the panel can offer Check status', async () => {
     const { deps } = setup({
       tables: {
@@ -591,6 +628,51 @@ describe('retryBillcomRecord', () => {
     expect(stored.billcom_error).toContain('Do not press Retry');
     expect(errors.mock.calls.map((c) => String(c[0])).join('\n')).toContain('BILL.COM RECORDED BUT NOT SAVED');
     errors.mockRestore();
+  });
+
+  it('(b) refuses when Bill.com is already known to have this payment (payment id on the row): no Bill.com call', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed', billcom_payment_id: '0pay9' })] } });
+    await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow(
+      'Bill.com already has this payment (0pay9). Use "I marked it paid in Bill.com" instead of Retry.',
+    );
+    expect(mocks.record).not.toHaveBeenCalled();
+    expect(s.db.tables.card_payments[0].billcom_state).toBe('failed');
+  });
+
+  it('(c) checks the invoice in Bill.com first, by its Bill.com id', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed' })] } });
+    await retryBillcomRecord(s.deps, 'cp-1');
+    expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['INV-100412'], billcomInvoiceId: '00eBILL' });
+  });
+
+  it.each([
+    ['paid in full', found({ status: 'PAID_IN_FULL', dueAmount: 0 })],
+    ['less owing than this payment', found({ status: 'PARTIALLY_PAID', dueAmount: 40 })],
+  ])('(c) refuses when Bill.com shows the invoice %s: no Bill.com record', async (_n, lookup) => {
+    const s = setup({ lookup, tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed' })] } });
+    await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow(
+      'Bill.com shows less owing on this invoice than this payment, so it may already be recorded. Check Bill.com; if the payment is there, use "I marked it paid in Bill.com".',
+    );
+    expect(mocks.record).not.toHaveBeenCalled();
+    expect(s.db.tables.card_payments[0].billcom_state).toBe('failed');
+  });
+
+  it.each([
+    ['not found', { kind: 'not_found' } as BillcomLookup],
+    ['off', { kind: 'off' } as BillcomLookup],
+    ['a different invoice', found({ id: '00eOTHER' })],
+    ['no amount due', found({ dueAmount: null })],
+  ])('(c) refuses when Bill.com cannot confirm the invoice (%s)', async (_n, lookup) => {
+    const s = setup({ lookup, tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed' })] } });
+    await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow("Couldn't check this invoice in Bill.com, so nothing was recorded. Try again.");
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+
+  it('(c) a Bill.com lookup error refuses the same way', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed' })] } });
+    s.findBillcomInvoice.mockRejectedValueOnce(new Error('502'));
+    await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow("Couldn't check this invoice in Bill.com, so nothing was recorded. Try again.");
+    expect(mocks.record).not.toHaveBeenCalled();
   });
 
   it('a second failure stays failed with the new error', async () => {
@@ -689,9 +771,7 @@ describe('markNotCharged', () => {
 });
 
 describe('a charge that succeeds after the row was marked failed', () => {
-  it('logs loudly and notes it on the row, without flipping status or recording in Bill.com', async () => {
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
-    errors.mockClear();
+  const lateSetup = () => {
     const tables: Record<string, Row[]> = { card_payments: [] };
     const s = setup({
       tables,
@@ -702,10 +782,17 @@ describe('a charge that succeeds after the row was marked failed', () => {
         return { id: 'pi_late', status: 'succeeded' };
       },
     });
+    return s;
+  };
+
+  it('becomes charged-but-not-in-Bill.com (which blocks another charge), with a note to check Stripe; never records in Bill.com', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    errors.mockClear();
+    const s = lateSetup();
     const row = await chargeInvoice(s.deps, ARGS);
-    expect(row.status).toBe('failed');
-    expect(row.failureMessage).toBe(
-      'Marked as not charged by staff after checking Stripe. Stripe later reported this charge succeeded (pi_late) — check Stripe and refund or reconcile.',
+    expect(row).toMatchObject({ status: 'succeeded', billcomState: 'failed', stripePaymentIntentId: 'pi_late' });
+    expect(row.billcomError).toBe(
+      'Stripe charged this card (pi_late) after it was marked not charged. Check Stripe: if this is the only charge for the invoice, press Retry to record it in Bill.com; if the invoice was paid another way, refund this charge in Stripe, then use "I marked it paid in Bill.com".',
     );
     expect(mocks.record).not.toHaveBeenCalled();
     const logged = errors.mock.calls.map((c) => String(c[0])).join('\n');
@@ -713,6 +800,26 @@ describe('a charge that succeeds after the row was marked failed', () => {
     expect(logged).toContain(row.id);
     expect(logged).toContain('pi_late');
     expect(logged).toContain('100');
+    errors.mockRestore();
+  });
+
+  it('when another charge for the invoice is already open (unique index), stays failed with a "charged twice" note', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const s = lateSetup();
+    const base = s.db.failOn!;
+    s.db.failOn = (table, op, payload) => {
+      base(table, op, payload);
+      const p = payload as Row;
+      return table === 'card_payments' && op === 'update' && p.status === 'succeeded' && p.billcom_state === 'failed'
+        ? { message: 'duplicate key', code: '23505' }
+        : null;
+    };
+    const row = await chargeInvoice(s.deps, ARGS);
+    expect(row.status).toBe('failed');
+    expect(row.failureMessage).toBe(
+      'Marked as not charged by staff after checking Stripe. Stripe later charged this card (pi_late) while another charge for this invoice was open — the customer may have been charged twice. Check Stripe and refund one.',
+    );
+    expect(mocks.record).not.toHaveBeenCalled();
     errors.mockRestore();
   });
 
