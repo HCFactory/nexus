@@ -675,6 +675,30 @@ describe('retryBillcomRecord', () => {
     expect(mocks.record).not.toHaveBeenCalled();
   });
 
+  it('a slow attempt that lands after a newer attempt claimed the row does not write "recorded" over it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed' })] } });
+    mocks.record.mockImplementation(async () => {
+      // While this call hung: Check status interrupted it and a newer Retry claimed the row.
+      s.db.tables.card_payments[0].billcom_attempt_at = '2026-11-17T20:30:00.000Z';
+      return { paymentId: '0payA' };
+    });
+    await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow(/0payA/);
+    expect(s.db.tables.card_payments[0]).toMatchObject({ billcom_state: 'not_started', billcom_attempt_at: '2026-11-17T20:30:00.000Z' });
+    expect(s.db.tables.card_payments[0].billcom_payment_id).toBeNull();
+  });
+
+  it('after a late charge, a refused Retry says to refund first', async () => {
+    const s = setup({
+      lookup: found({ status: 'PAID_IN_FULL', dueAmount: 0 }),
+      tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed', billcom_error: 'Stripe charged this card (pi_late) after Nexus had marked the charge failed. Check Stripe: …' })] },
+    });
+    await expect(retryBillcomRecord(s.deps, 'cp-1')).rejects.toThrow(
+      'Bill.com shows less owing on this invoice than this late charge, so the customer may have paid twice. Refund this charge in Stripe, then use "I marked it paid in Bill.com".',
+    );
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+
   it('a second failure stays failed with the new error', async () => {
     const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed', billcom_error: 'old' })] } });
     mocks.record.mockRejectedValue(new Error('new'));
@@ -792,7 +816,7 @@ describe('a charge that succeeds after the row was marked failed', () => {
     const row = await chargeInvoice(s.deps, ARGS);
     expect(row).toMatchObject({ status: 'succeeded', billcomState: 'failed', stripePaymentIntentId: 'pi_late' });
     expect(row.billcomError).toBe(
-      'Stripe charged this card (pi_late) after it was marked not charged. Check Stripe: if this is the only charge for the invoice, press Retry to record it in Bill.com; if the invoice was paid another way, refund this charge in Stripe, then use "I marked it paid in Bill.com".',
+      'Stripe charged this card (pi_late) after Nexus had marked the charge failed. Check Stripe: if this is the only charge for the invoice, press Retry to record it in Bill.com; if the invoice was paid another way, refund this charge in Stripe, then use "I marked it paid in Bill.com".',
     );
     expect(mocks.record).not.toHaveBeenCalled();
     const logged = errors.mock.calls.map((c) => String(c[0])).join('\n');
@@ -811,7 +835,7 @@ describe('a charge that succeeds after the row was marked failed', () => {
       base(table, op, payload);
       const p = payload as Row;
       return table === 'card_payments' && op === 'update' && p.status === 'succeeded' && p.billcom_state === 'failed'
-        ? { message: 'duplicate key', code: '23505' }
+        ? { message: 'duplicate key value violates unique constraint "card_payments_one_open_per_invoice"', code: '23505' }
         : null;
     };
     const row = await chargeInvoice(s.deps, ARGS);
@@ -842,6 +866,31 @@ describe('a charge that succeeds after the row was marked failed', () => {
     expect(errors).not.toHaveBeenCalled();
     expect(mocks.record).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+});
+
+describe('late charge, other unique violations', () => {
+  it('a unique violation on another index is not labelled "charged twice": the error surfaces and the row stays failed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const tables: Record<string, Row[]> = { card_payments: [] };
+    const s = setup({
+      tables,
+      create: async () => {
+        tables.card_payments[0].status = 'failed';
+        return { id: 'pi_late', status: 'succeeded' };
+      },
+    });
+    const base = s.db.failOn!;
+    s.db.failOn = (table, op, payload) => {
+      base(table, op, payload);
+      const p = payload as Row;
+      return table === 'card_payments' && op === 'update' && p.status === 'succeeded' && p.billcom_state === 'failed'
+        ? { message: 'duplicate key value violates unique constraint "card_payments_payment_intent_key"', code: '23505' }
+        : null;
+    };
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow('card_payments_payment_intent_key');
+    expect(tables.card_payments[0].status).toBe('failed');
+    expect(String(tables.card_payments[0].failure_message ?? '')).not.toContain('charged twice');
   });
 });
 

@@ -33,6 +33,9 @@ import type {
 export const RETRY_CANNOT_CHECK = "Couldn't check this invoice in Bill.com, so nothing was recorded. Try again.";
 export const RETRY_LESS_OWING =
   'Bill.com shows less owing on this invoice than this payment, so it may already be recorded. Check Bill.com; if the payment is there, use "I marked it paid in Bill.com".';
+export const RETRY_LESS_OWING_LATE =
+  'Bill.com shows less owing on this invoice than this late charge, so the customer may have paid twice. Refund this charge in Stripe, then use "I marked it paid in Bill.com".';
+const LATE_CHARGE_PREFIX = 'Stripe charged this card (';
 const billcomAlreadyHas = (id: string) => `Bill.com already has this payment (${id}). Use "I marked it paid in Bill.com" instead of Retry.`;
 export const DUPLICATE_CHARGE_MESSAGE = 'A charge for this invoice is already in progress or needs attention.';
 export const AUTH_REQUIRED_MESSAGE = 'The bank needs the customer to approve this charge — send a new setup link.';
@@ -283,8 +286,9 @@ async function transition(
 }
 
 /** Records a Stripe-succeeded payment in Bill.com. Never throws for a Bill.com error: it is stored. */
-async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
-  const notStarted = { status: 'succeeded', billcomStates: ['not_started'] };
+async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: string, attemptAt: string): Promise<void> {
+  // Every write is for this attempt only: a newer attempt (after Check status + Retry) is never overwritten.
+  const notStarted = { status: 'succeeded', billcomStates: ['not_started'], attemptAt };
   const client = await deps.billcom().catch(() => null);
   if (!client) {
     await transition(deps, p.id, notStarted, { billcom_state: 'failed', billcom_error: BILLCOM_OFF });
@@ -350,13 +354,14 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
 /** processing → succeeded, then Bill.com. Only the caller that wins the transition records. */
 async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
   let won: boolean;
+  const attemptAt = deps.now().toISOString();
   try {
     // The Bill.com step starts right after this, so its attempt time is set with it.
     won = await transition(deps, p.id, { status: 'processing' }, {
       status: 'succeeded',
       stripe_payment_intent_id: intentId,
       failure_message: null,
-      billcom_attempt_at: deps.now().toISOString(),
+      billcom_attempt_at: attemptAt,
     });
   } catch (e) {
     throw new Error(
@@ -364,7 +369,7 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
     );
   }
   if (won) {
-    await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId);
+    await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId, attemptAt);
     return;
   }
   // Lost the transition. If the row was marked failed meanwhile, money moved anyway: say so loudly.
@@ -385,7 +390,8 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
       billcom_attempt_at: deps.now().toISOString(),
     });
   } catch (e) {
-    if ((e as { code?: string }).code !== UNIQUE_VIOLATION) throw e;
+    const err = e as { code?: string; message?: string };
+    if (err.code !== UNIQUE_VIOLATION || !err.message?.includes('card_payments_one_open_per_invoice')) throw e;
     // Another charge for this invoice is open: the customer may have paid twice.
     const note = `Stripe later charged this card (${intentId}) while another charge for this invoice was open — the customer may have been charged twice. Check Stripe and refund one.`;
     await transition(deps, p.id, { status: 'failed' }, {
@@ -395,7 +401,7 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
 }
 
 function lateChargeNote(intentId: string): string {
-  return `Stripe charged this card (${intentId}) after it was marked not charged. Check Stripe: if this is the only charge for the invoice, press Retry to record it in Bill.com; if the invoice was paid another way, refund this charge in Stripe, then use "I marked it paid in Bill.com".`;
+  return `${LATE_CHARGE_PREFIX}${intentId}) after Nexus had marked the charge failed. Check Stripe: if this is the only charge for the invoice, press Retry to record it in Bill.com; if the invoice was paid another way, refund this charge in Stripe, then use "I marked it paid in Bill.com".`;
 }
 
 async function settleFailed(deps: ChargeDeps, id: string, message: string, intentId: string | null): Promise<void> {
@@ -703,15 +709,18 @@ export async function retryBillcomRecord(deps: ChargeDeps, cardPaymentId: string
     .catch(() => null);
   const due = lookup?.kind === 'found' && lookup.status.id === p.billcom_invoice_id ? lookup.status.dueAmount : null;
   if (due === null || due === undefined) throw new Error(RETRY_CANNOT_CHECK);
-  if (toCents(due) < toCents(Number(p.amount))) throw new Error(RETRY_LESS_OWING);
+  if (toCents(due) < toCents(Number(p.amount))) {
+    throw new Error(p.billcom_error?.startsWith(LATE_CHARGE_PREFIX) ? RETRY_LESS_OWING_LATE : RETRY_LESS_OWING);
+  }
   // Claim it (failed → not_started) so two clicks cannot both record it.
+  const attemptAt = deps.now().toISOString();
   const claimed = await transition(deps, p.id, { status: 'succeeded', billcomStates: ['failed'] }, {
     billcom_state: 'not_started',
     billcom_error: null,
-    billcom_attempt_at: deps.now().toISOString(),
+    billcom_attempt_at: attemptAt,
   });
   if (!claimed) throw new Error(NOT_RETRYABLE);
-  await recordInBillcom(deps, { ...p, billcom_state: 'not_started' }, p.stripe_payment_intent_id ?? '');
+  await recordInBillcom(deps, { ...p, billcom_state: 'not_started' }, p.stripe_payment_intent_id ?? '', attemptAt);
   return rowById(deps, p.id);
 }
 
