@@ -59,7 +59,18 @@ Payment terms, shipment methods, tax areas, customers, invoices and sales docume
 - Each sync runs for about a minute, then stops where it got to. Large lists show **"Incomplete — click Sync again to continue"**. That's normal: keep clicking **Sync now** until everything says Complete. The first HCF production sync took several runs: 3,644 customers, more than 5,000 invoices.
 - **A "404 … Publish page N as an OData web service named X" line** means a web service from section 2 is missing. Publish it and sync again.
 - **"Customer card fields: The operation was aborted due to timeout"** means BC was slow returning the extra customer fields for a large customer list. Sync again. If it keeps happening, tell the developer: Nexus should read that list in smaller chunks.
-- Then sync **Shipment methods**, and check one customer and one invoice against BC.
+- **Sync the dropdown lists (admin):** these are per environment and **not** part of Customers → Sync now. Without them, the new customer form has no templates and empty dropdowns. Open **Customer Lists** and click **Sync** on each, in this order:
+  1. Payment terms
+  2. Customer price groups
+  3. Tax areas (this also pulls tax area lines)
+  4. Tax jurisdictions
+  5. Tax details
+  6. Locations
+  7. Customer posting groups
+  8. Gen. bus. posting groups
+  9. Shipment methods
+  10. **Customer templates**, last (this also pulls number series)
+- Check one customer and one invoice against BC.
 
 ## 6. Bill.com (only if this environment uses Nexus → Bill.com)
 
