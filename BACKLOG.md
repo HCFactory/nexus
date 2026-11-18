@@ -4,7 +4,7 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
 
 ## Up next (agreed order, 2026-11-17)
 
-1. **Go-live of `feat/sales-orders`** (sales orders, invoicing, change invoice, shipment methods, order number up front, Stripe saved cards). Do these in production **before** merging to `main`, or the live app will query tables/columns that don't exist:
+1. ~~**Go-live of `feat/sales-orders`**~~ **Done 2026-11-18** (PR #10, #11; per-environment Bill.com/Stripe connections PR #12). Kept for reference: (sales orders, invoicing, change invoice, shipment methods, order number up front, Stripe saved cards). Do these in production **before** merging to `main`, or the live app will query tables/columns that don't exist:
    - ~~apply migrations 060–068 in production Supabase~~ **done:** the live site uses the same Supabase project as local (user confirmed 2026-11-17), so 060–068 are already applied;
    - **Bill.com connector stays on in production** (user decision 2026-11-17); it keeps copying invoices and sending payments back to BC. So: apply migration **069** (same database, so applying it once covers both), and in Nexus **Admin** → Business Central Environments → Edit on the **production** connection → tick "Bill.com invoices come from Bill.com's own BC connector". Create/Change invoice then post in BC only there (spec `docs/superpowers/specs/2026-11-17-billcom-via-connector-design.md`). TEST stays unticked (full flow with the Bill.com sandbox). No production Bill.com connection is needed in Nexus for now;
    - BC production: check General Ledger Setup "Allow Posting From/To" covers today (and any User Setup line for the Nexus app user), and tick **Manual Nos.** on the sales order number series;
@@ -20,6 +20,14 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
      4. Re-enable Bill.com and press Retry. Expect it to check Bill.com, then record.
      5. Press Retry again on a recorded or paid invoice. Expect a refusal.
      6. Turn the permission back off.
+   - **Then, to turn on live Stripe in Production** (in order):
+     1. Do the live check above, then push and merge.
+     2. Verify a sending domain in Resend and set `CUSTOMER_EMAIL_FROM` in Vercel, for Email link and the "card saved" email. Copy link works without it.
+     3. Confirm `NEXT_PUBLIC_APP_URL` in Vercel is the real site address.
+     4. Enable the live Stripe connection (Admin → Stripe) and pick it for Production (Admin → Business Central Environments → Production → Stripe).
+     5. Do one real card save to confirm the webhook arrives.
+     6. Turn on Charge saved cards only for the right people.
+   - **Charging in Production waits for Bill.com:** Charge card needs a Nexus-made Bill.com invoice, and today Bill.com's own connector makes them. It also waits for the switch away from the connector (see the duplicate-customer note under customer sync go-live prep).
    - **Gap left (from review):** a Stripe charge that completes after the request that started it died is only noticed by Check status while the row is still processing. If the row was already marked not charged, nothing notices. A `payment_intent.succeeded` webhook would close this.
    - **Live Stripe connection added 2026-11-18** (live mode, webhook `checkout.session.completed`, snapshot). Left **disabled**, and Production → Stripe = None.
 4. **Payments** (#5.4): Bill.com payments into Nexus, reviewed, then recorded in BC. Big, high risk (writes to the general ledger); needs its own design, including the Bill.com rounding difference.
