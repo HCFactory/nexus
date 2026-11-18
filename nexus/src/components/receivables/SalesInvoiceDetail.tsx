@@ -4,7 +4,7 @@ import { formatDate, formatMoney } from '@/lib/format';
 import type { BusinessCentralSalesInvoice, BusinessCentralSalesInvoiceLine } from '@/types/database';
 
 const LABEL = 'text-[11px] uppercase tracking-wide text-black dark:text-white';
-const CARD = 'glass-card rounded-xl border border-border p-4';
+export const CARD = 'glass-card rounded-xl border border-border p-4';
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -26,6 +26,8 @@ interface Props {
   salesOrder: { id: string; bcOrderNumber: string | null } | null;
   /** The Bill.com panel (streamed in by the page). */
   billcom: ReactNode;
+  /** The card-charge panel (streamed in by the page). */
+  cardCharge?: ReactNode;
   /** The change log card (rendered by the page). */
   changes?: ReactNode;
   /** A finished change cancelled this invoice and posted this one instead. */
@@ -33,7 +35,7 @@ interface Props {
 }
 
 /** A posted BC invoice as Nexus holds it: header, Bill.com side, lines and totals. */
-export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, changes = null, replacedBy = null }: Props) {
+export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, cardCharge = null, changes = null, replacedBy = null }: Props) {
   const cur = invoice.currency_code;
   const title = invoice.external_document_number || invoice.bc_invoice_number || '—';
   return (
@@ -83,6 +85,9 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
       </section>
 
       {billcom && <section className={CARD}>{billcom}</section>}
+
+      {/* The card-charge slot draws its own card, so a hidden panel leaves no empty box. */}
+      {cardCharge}
 
       {changes}
 

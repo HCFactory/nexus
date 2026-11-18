@@ -4,7 +4,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type Row = Record<string, unknown>;
-type Result = { data: Row[] | null; error: { message: string } | null };
+type Result = { data: Row[] | null; error: { message: string; code?: string } | null };
 type Op = 'select' | 'insert' | 'update' | 'delete';
 
 export interface FakeSupabase {
@@ -12,8 +12,8 @@ export interface FakeSupabase {
   tables: Record<string, Row[]>;
   /** Every write, in order: [table, op, payload]. */
   writes: [string, Op, unknown][];
-  /** Return an error message to make that call fail. */
-  failOn?: (table: string, op: Op, payload: unknown) => string | null;
+  /** Return an error message (or { message, code }) to make that call fail. */
+  failOn?: (table: string, op: Op, payload: unknown) => string | { message: string; code?: string } | null;
 }
 
 function orMatches(row: Row, expr: string): boolean {
@@ -49,7 +49,7 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
     const exec = (): Result => {
       const failure = fake.failOn?.(table, op, payload);
       if (op !== 'select') fake.writes.push([table, op, payload]);
-      if (failure) return { data: null, error: { message: failure } };
+      if (failure) return { data: null, error: typeof failure === 'string' ? { message: failure } : failure };
       if (op === 'insert') {
         const list = Array.isArray(payload) ? payload : [payload];
         const rows = list.map((p) => ({ id: `gen-${nextId++}`, ...p }));

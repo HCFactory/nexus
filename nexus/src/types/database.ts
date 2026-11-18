@@ -1,4 +1,12 @@
 import type { BillcomConnection } from './billcom';
+import type {
+  CardPayment,
+  CardPaymentBillcomState,
+  CardSetupLink,
+  CustomerCard,
+  StripeConnection,
+  StripeCustomer,
+} from './stripe';
 
 export type UserRole = "user" | "admin";
 export type DimensionUnit = "mm" | "cm" | "in";
@@ -64,6 +72,7 @@ export interface PermissionOverrides {
   assignInvoices?: boolean;
   viewCustomers?: boolean;
   editCustomers?: boolean;
+  chargeSavedCards?: boolean;
   viewSalesOrders?: boolean;
   editSalesOrders?: boolean;
   viewReceivables?: boolean;
@@ -1093,6 +1102,124 @@ export interface Database {
           session_last_used_at?: string | null;
         };
         Update: Partial<Omit<BillcomConnection, 'id'>>;
+      };
+      stripe_connections: {
+        Row: StripeConnection;
+        Insert: Omit<
+          StripeConnection,
+          | 'id'
+          | 'created_at'
+          | 'updated_at'
+          | 'secret_key_secret_id'
+          | 'webhook_secret_secret_id'
+          | 'livemode'
+          | 'stripe_account_id'
+          | 'is_enabled'
+          | 'is_default'
+        > & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+          secret_key_secret_id?: string | null;
+          webhook_secret_secret_id?: string | null;
+          livemode?: boolean | null;
+          stripe_account_id?: string | null;
+          is_enabled?: boolean;
+          is_default?: boolean;
+        };
+        Update: Partial<Omit<StripeConnection, 'id'>>;
+      };
+      stripe_customers: {
+        Row: StripeCustomer;
+        Insert: Omit<StripeCustomer, 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Omit<StripeCustomer, 'id'>>;
+      };
+      customer_cards: {
+        Row: CustomerCard;
+        Insert: Omit<
+          CustomerCard,
+          | 'id'
+          | 'saved_at'
+          | 'removed_at'
+          | 'removed_by'
+          | 'brand'
+          | 'last4'
+          | 'exp_month'
+          | 'exp_year'
+        > & {
+          id?: string;
+          saved_at?: string;
+          removed_at?: string | null;
+          removed_by?: string | null;
+          brand?: string | null;
+          last4?: string | null;
+          exp_month?: number | null;
+          exp_year?: number | null;
+        };
+        Update: Partial<Omit<CustomerCard, 'id'>>;
+      };
+      card_setup_links: {
+        Row: CardSetupLink;
+        Insert: Omit<
+          CardSetupLink,
+          | 'id'
+          | 'created_at'
+          | 'created_by'
+          | 'canceled_at'
+          | 'completed_at'
+          | 'emailed_to'
+          | 'stripe_checkout_session_id'
+        > & {
+          id?: string;
+          created_at?: string;
+          created_by?: string | null;
+          canceled_at?: string | null;
+          completed_at?: string | null;
+          emailed_to?: string | null;
+          stripe_checkout_session_id?: string | null;
+        };
+        Update: Partial<Omit<CardSetupLink, 'id'>>;
+      };
+      card_payments: {
+        Row: CardPayment;
+        Insert: Omit<
+          CardPayment,
+          | 'id'
+          | 'sales_order_id'
+          | 'currency'
+          | 'stripe_payment_intent_id'
+          | 'failure_message'
+          | 'billcom_state'
+          | 'billcom_payment_id'
+          | 'billcom_error'
+          | 'charged_by'
+          | 'charged_at'
+          | 'billcom_recorded_at'
+          | 'recorded_manually_by'
+          | 'billcom_attempt_at'
+          | 'not_charged_by'
+          | 'not_charged_at'
+        > & {
+          id?: string;
+          sales_order_id?: string | null;
+          currency?: string;
+          stripe_payment_intent_id?: string | null;
+          failure_message?: string | null;
+          billcom_state?: CardPaymentBillcomState;
+          billcom_payment_id?: string | null;
+          billcom_error?: string | null;
+          charged_by?: string | null;
+          charged_at?: string;
+          billcom_recorded_at?: string | null;
+          recorded_manually_by?: string | null;
+          billcom_attempt_at?: string | null;
+          not_charged_by?: string | null;
+          not_charged_at?: string | null;
+        };
+        Update: Partial<Omit<CardPayment, 'id'>>;
       };
       billcom_customer_links: {
         Row: BillcomCustomerLink;

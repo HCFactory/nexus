@@ -27,7 +27,7 @@ vi.mock('@/lib/billcom/customerSyncHooks', () => ({ resolveBillcomConnection: (.
 vi.mock('@/lib/billcom/connection', () => ({ createBillcomClientForConnection: (...a: unknown[]) => mocks.createBillcom(...a) }));
 vi.mock('@/lib/billcom/invoiceStatus', () => ({ readBillcomInvoiceStatus: (...a: unknown[]) => mocks.readStatus(...a) }));
 
-import { getSalesInvoiceBillcomPanel, getSalesInvoicePage } from './salesInvoicePage';
+import { findBillcomInvoiceForCharge, getSalesInvoiceBillcomPanel, getSalesInvoicePage } from './salesInvoicePage';
 
 const INV = '143fbb46-e8e0-f111-84e4-7ced8d88ddac';
 const OTHER = '00000000-0000-0000-0000-000000000001';
@@ -263,5 +263,42 @@ describe('getSalesInvoiceBillcomPanel', () => {
     setup({});
     mocks.resolveBillcom.mockRejectedValue(new Error('db down'));
     expect(await getSalesInvoiceBillcomPanel(input())).toEqual({ kind: 'error', message: 'db down' });
+  });
+});
+
+describe('findBillcomInvoiceForCharge', () => {
+  const link = (extra: Row = {}): Row => ({
+    organization_id: 'org-1', bc_connection_id: 'conn-1', billcom_connection_id: 'bcom-1',
+    bc_customer_number: 'C1', status: 'synced', billcom_customer_id: '0cu1', ...extra,
+  });
+  const input = (extra: Partial<Parameters<typeof findBillcomInvoiceForCharge>[0]> = {}) => ({
+    customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null, ...extra,
+  });
+
+  it('by stored id: the Bill.com customer comes from the invoice itself', async () => {
+    setup({ billcom_customer_links: [link({ billcom_customer_id: '0cuLINK' })] });
+    mocks.readStatus.mockResolvedValue({ ...STATUS, customerId: '0cuINV' });
+    expect(await findBillcomInvoiceForCharge(input({ billcomInvoiceId: '00eX' }))).toMatchObject({ kind: 'found', billcomCustomerId: '0cuINV' });
+  });
+
+  it('by stored id without a customer on the invoice: falls back to the synced link', async () => {
+    setup({ billcom_customer_links: [link()] });
+    expect(await findBillcomInvoiceForCharge(input({ billcomInvoiceId: '00eX' }))).toEqual({ kind: 'found', status: STATUS, billcomCustomerId: '0cu1' });
+  });
+
+  it('by stored id with neither: found, but no customer id', async () => {
+    setup({});
+    expect(await findBillcomInvoiceForCharge(input({ billcomInvoiceId: '00eX' }))).toMatchObject({ kind: 'found', billcomCustomerId: null });
+  });
+
+  it('by number: the linked customer', async () => {
+    setup({ billcom_customer_links: [link()] });
+    expect(await findBillcomInvoiceForCharge(input())).toEqual({ kind: 'found', status: STATUS, billcomCustomerId: '0cu1' });
+  });
+
+  it('throws on Bill.com errors (the panel turns them into an error panel)', async () => {
+    setup({ billcom_customer_links: [link()] });
+    mocks.readStatus.mockRejectedValue(new Error('down'));
+    await expect(findBillcomInvoiceForCharge(input())).rejects.toThrow('down');
   });
 });
