@@ -37,7 +37,8 @@ vi.mock('@/lib/billcom/customerSyncHooks', () => ({
 }));
 vi.mock('./customerReferenceLists', () => ({ getSelectOptions: mocks.getSelectOptions }));
 
-import { createCustomerAction, deleteCustomerAction, getCustomerEditContext, updateCustomerAction } from './customerEditing';
+import { fakeSupabase } from '@/test/fakeSupabase';
+import { createCustomerAction, deleteCustomerAction, getCustomerEditContext, setCustomerDeliveryMethod, updateCustomerAction } from './customerEditing';
 
 const NO_PERMISSION = "You don't have permission to change customers";
 const scope = (canEditCustomers: boolean, canViewCustomers = true) => ({
@@ -204,5 +205,53 @@ describe('Bill.com push after save', () => {
     mocks.updateCustomer.mockRejectedValue(new Error('nope'));
     expect((await updateCustomerAction({ id: 'c1', original: {}, edited: {} })).ok).toBe(false);
     expect(mocks.pushAfterSave).not.toHaveBeenCalled();
+  });
+});
+
+describe('setCustomerDeliveryMethod', () => {
+  const customers = () =>
+    fakeSupabase({
+      business_central_customers: [
+        { id: 'cust-1', organization_id: 'org-1', bc_connection_id: 'conn-1', bc_customer_number: 'W00389', shipment_method_code: 'PICKUP' },
+      ],
+    }).client;
+
+  it('refused without customer edit', async () => {
+    mocks.requireScope.mockResolvedValue(scope(false));
+    expect(await setCustomerDeliveryMethod('cust-1', 'GROUND')).toEqual({ ok: false, error: NO_PERMISSION });
+    expect(mocks.updateCustomer).not.toHaveBeenCalled();
+  });
+
+  it('diff from a fresh read: only the delivery method changes, no Bill.com push', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.createServiceClient.mockReturnValue(customers());
+    expect(await setCustomerDeliveryMethod('cust-1', 'GROUND')).toEqual({ ok: true });
+    expect(mocks.updateCustomer).toHaveBeenCalledWith(expect.anything(), {
+      id: 'cust-1',
+      original: { shipment_method_code: 'PICKUP' },
+      edited: { shipment_method_code: 'GROUND' },
+    });
+    expect(mocks.pushAfterSave).not.toHaveBeenCalled();
+  });
+
+  it('saves a blank method', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.createServiceClient.mockReturnValue(customers());
+    expect(await setCustomerDeliveryMethod('cust-1', '')).toEqual({ ok: true });
+    expect(mocks.updateCustomer.mock.calls[0][1].edited).toEqual({ shipment_method_code: '' });
+  });
+
+  it('unknown customer', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.createServiceClient.mockReturnValue(customers());
+    expect(await setCustomerDeliveryMethod('nope', 'GROUND')).toEqual({ ok: false, error: 'Customer not found.' });
+    expect(mocks.updateCustomer).not.toHaveBeenCalled();
+  });
+
+  it('a BC error comes back as the message', async () => {
+    mocks.requireScope.mockResolvedValue(scope(true));
+    mocks.createServiceClient.mockReturnValue(customers());
+    mocks.updateCustomer.mockRejectedValue(new Error('Shipment Method Code XYZ does not exist.'));
+    expect(await setCustomerDeliveryMethod('cust-1', 'XYZ')).toEqual({ ok: false, error: 'Shipment Method Code XYZ does not exist.' });
   });
 });
