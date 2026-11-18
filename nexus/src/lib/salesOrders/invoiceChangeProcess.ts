@@ -16,6 +16,7 @@
 // - Every state change is a compare-and-set on the expected current state.
 // - The order's lines change only at `done`, so until then the order still
 //   matches the live BC invoice (or, after the cancel, the one being made).
+import { readChangeBlock } from '@/lib/billcom/invoiceChangeCheck'
 import { buildBillcomInvoice } from '@/lib/billcom/invoicePayload'
 import {
   billcomInvoiceMismatch,
@@ -451,6 +452,12 @@ async function billcomStep(deps: InvoiceDeps, c: InvoiceChangeRow): Promise<Chan
       if (!built.ok) return fail(deps, c, 'billcom_failed', built.error)
       const existingId =
         order.billcom_invoice_id ?? (await findBillcomInvoice(deps.billcom, customer.id, inv.externalDocumentNumber))?.id ?? null
+      // Re-checked right before the PUT: a Retry can come days later, after the
+      // customer paid the old amount (Bill.com or a card charge).
+      if (existingId) {
+        const blocked = await readChangeBlock(deps.billcom, existingId)
+        if (blocked) return fail(deps, c, 'billcom_failed', blocked)
+      }
       const saved = existingId
         ? await replaceBillcomInvoice(deps.billcom, existingId, built.payload)
         : await findOrCreateBillcomInvoice(deps.billcom, customer.id, built.payload)

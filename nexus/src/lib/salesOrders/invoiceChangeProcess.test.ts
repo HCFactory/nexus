@@ -26,9 +26,14 @@ vi.mock('@/lib/billcom/invoicePush', async (orig) => ({
   replaceBillcomInvoice: vi.fn(),
   findOrCreateBillcomInvoice: vi.fn(),
 }))
+vi.mock('@/lib/billcom/invoiceChangeCheck', async (orig) => ({
+  ...(await orig<typeof import('@/lib/billcom/invoiceChangeCheck')>()),
+  readChangeBlock: vi.fn(),
+}))
 
 import * as bc from './bcInvoiceChange'
 import * as push from '@/lib/billcom/invoicePush'
+import * as changeCheck from '@/lib/billcom/invoiceChangeCheck'
 import {
   deleteExtraDrafts,
   discardInvoiceChange,
@@ -122,6 +127,7 @@ beforeEach(() => {
   vi.mocked(bc.deleteDraftInvoice).mockResolvedValue(undefined)
   vi.mocked(bc.postDraftInvoice).mockImplementation(async (_d, draft) => { bcState.posted.add(draft.id) })
   vi.mocked(push.findBillcomInvoice).mockResolvedValue(null)
+  vi.mocked(changeCheck.readChangeBlock).mockResolvedValue(null)
   vi.mocked(push.replaceBillcomInvoice).mockImplementation(async (_c, id) => ({ id, totalAmount: 49.24, lineCount: 2 }))
   vi.mocked(push.findOrCreateBillcomInvoice).mockResolvedValue({ id: '00eNEW', totalAmount: 49.24, lineCount: 2 })
 })
@@ -335,6 +341,15 @@ describe('runInvoiceChange', () => {
     setup({ change: changeRow(), billcom: false })
     expect(await runInvoiceChange(deps, 'ch1')).toBe('done')
     expect(push.replaceBillcomInvoice).not.toHaveBeenCalled()
+  })
+
+  it('paid in Bill.com since the change started → billcom_failed with the reason, the paid invoice is not rewritten', async () => {
+    setup({ change: changeRow() })
+    vi.mocked(changeCheck.readChangeBlock).mockResolvedValue("Paid or partly paid in Bill.com — can't change")
+    expect(await runInvoiceChange(deps, 'ch1')).toBe('billcom_failed')
+    expect(changeCheck.readChangeBlock).toHaveBeenCalledWith(deps.billcom, '00eX')
+    expect(push.replaceBillcomInvoice).not.toHaveBeenCalled()
+    expect(change()).toMatchObject({ state: 'billcom_failed', error: "Paid or partly paid in Bill.com — can't change" })
   })
 
   it('Bill.com on but unavailable → billcom_failed, never done with the old total left in Bill.com', async () => {
