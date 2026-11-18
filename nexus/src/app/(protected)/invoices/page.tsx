@@ -29,7 +29,7 @@ export default async function InvoicesPage() {
 
   if (!user) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-background">
+      <main className="flex flex-1 items-center justify-center">
         <div className="text-foreground-muted">Not authenticated</div>
       </main>
     );
@@ -37,7 +37,7 @@ export default async function InvoicesPage() {
 
   if (!user.organization_id) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-background">
+      <main className="flex flex-1 items-center justify-center">
         <div className="max-w-sm text-center">
           <h1 className="text-lg font-semibold text-foreground">No organization assigned</h1>
           <p className="mt-2 text-sm text-foreground-muted">

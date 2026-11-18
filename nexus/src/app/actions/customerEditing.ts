@@ -169,6 +169,37 @@ export async function updateCustomerAction(input: {
   }
 }
 
+/**
+ * Saves the customer's default delivery method (BC Shipment Method Code), from a
+ * sales order's "Update Customer". Only that field changes; Bill.com doesn't hold it.
+ */
+export async function setCustomerDeliveryMethod(customerId: string, shipmentMethodCode: string): Promise<{ ok: true } | Fail> {
+  try {
+    const scope = await editScope();
+    if (!scope) return { ok: false, error: NO_PERMISSION };
+    const deps = await buildDeps(scope);
+    const { data, error } = await deps.supabase
+      .from('business_central_customers')
+      .select('shipment_method_code')
+      .eq('id', customerId)
+      .eq('organization_id', scope.orgId)
+      .eq('bc_connection_id', scope.bcConnectionId)
+      .maybeSingle();
+    if (error) throw new Error(`Could not read the customer: ${error.message}`);
+    if (!data) return { ok: false, error: 'Customer not found.' };
+    await updateCustomer(deps, {
+      id: customerId,
+      original: { shipment_method_code: (data as { shipment_method_code: string | null }).shipment_method_code ?? '' },
+      edited: { shipment_method_code: shipmentMethodCode },
+    });
+    revalidateCustomers();
+    revalidatePath('/sales-orders', 'layout');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
+}
+
 export async function deleteCustomerAction(id: string): Promise<{ ok: true; billcom?: BillcomSaveStatus } | Fail> {
   try {
     const scope = await editScope();

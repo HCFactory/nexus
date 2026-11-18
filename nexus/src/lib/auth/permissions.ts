@@ -25,6 +25,9 @@ export interface ResolvedUserAccess {
   canAssignInvoices: boolean;
   canViewCustomers: boolean;
   canEditCustomers: boolean;
+  canChargeSavedCards: boolean;
+  canViewSalesOrders: boolean;
+  canEditSalesOrders: boolean;
   canViewReceivables: boolean;
   canViewDesignerFields: boolean;
   canViewArtworkFields: boolean;
@@ -79,6 +82,9 @@ const ACCESS_KEYS = [
   'canAssignInvoices',
   'canViewCustomers',
   'canEditCustomers',
+  'canChargeSavedCards',
+  'canViewSalesOrders',
+  'canEditSalesOrders',
   'canViewReceivables',
   'canViewDesignerFields',
   'canViewArtworkFields',
@@ -118,6 +124,9 @@ const OVERRIDE_TO_ACCESS_KEY: Record<keyof PermissionOverrides, keyof ResolvedUs
   assignInvoices: 'canAssignInvoices',
   viewCustomers: 'canViewCustomers',
   editCustomers: 'canEditCustomers',
+  chargeSavedCards: 'canChargeSavedCards',
+  viewSalesOrders: 'canViewSalesOrders',
+  editSalesOrders: 'canEditSalesOrders',
   viewReceivables: 'canViewReceivables',
   viewDesignerFields: 'canViewDesignerFields',
   editDesignerFields: 'canEditDesignerFields',
@@ -219,6 +228,9 @@ export function resolveUserAccess(user: Pick<User, 'role' | 'permissions'> | nul
     canAssignInvoices: isAdmin || purchaser,
     canViewCustomers: isAdmin,
     canEditCustomers: isAdmin,
+    canChargeSavedCards: false,
+    canViewSalesOrders: isAdmin,
+    canEditSalesOrders: isAdmin,
     canViewReceivables: isAdmin,
     canViewDesignerFields: isAdmin || vendor || designer === 'view' || designer === 'edit',
     canViewArtworkFields: isAdmin || vendor || designer === 'view' || designer === 'edit',

@@ -62,6 +62,16 @@ describe('createUsageCounter', () => {
     expect(listResourcePage.mock.calls[0]?.[1].filter).toBe('taxAreaId eq 3fa85f64-5717-4562-b3fc-2c963f66afa6');
   });
 
+  it('shipment methods count customers by shipmentMethodId and templates by Shipment_Method_Code', async () => {
+    const { bc, listResourcePage } = fakeBc(2);
+    const { transport, list } = templateTransport(['RETAIL']);
+    expect(await createUsageCounter(bc, transport)(def('shipmentMethods'), row({ values: { code: 'GROUND' } }))).toBe(
+      'Used by 2 customers and template RETAIL',
+    );
+    expect(listResourcePage.mock.calls[0]?.[1].filter).toBe('shipmentMethodId eq 3fa85f64-5717-4562-b3fc-2c963f66afa6');
+    expect(list.mock.calls[0]?.[1]?.filter).toBe("Shipment_Method_Code eq 'GROUND'");
+  });
+
   it('unused returns null', async () => {
     const { bc } = fakeBc(0);
     expect(await createUsageCounter(bc, none())(def('paymentTerms'), row(withCode))).toBeNull();

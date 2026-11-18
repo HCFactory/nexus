@@ -45,14 +45,14 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="flex flex-1 items-center justify-center bg-background">
+      <div className="flex flex-1 items-center justify-center">
         <div className="text-foreground-muted">Loading...</div>
       </div>
     );
   }
 
   return (
-    <main className="flex-1 overflow-y-auto p-4 lg:p-6 bg-background">
+    <main className="flex-1 overflow-y-auto p-4 lg:p-6">
         <div className="max-w-4xl mx-auto">
           <h1 className="text-xl lg:text-2xl font-bold text-foreground mb-6">Settings</h1>
 

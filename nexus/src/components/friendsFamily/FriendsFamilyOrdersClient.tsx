@@ -477,7 +477,7 @@ export function FriendsFamilyOrdersClient({
   }, [fulfillmentFilter, paymentFilter, searchTerm, workspace.orders]);
 
   return (
-    <main className="flex w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto bg-background px-3 py-4 lg:p-6">
+    <main className="flex w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-4 lg:p-6">
       <div className="mx-auto w-full min-w-0 max-w-7xl space-y-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>

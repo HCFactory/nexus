@@ -25,6 +25,7 @@ import {
   Users,
   Clock,
   ListChecks,
+  ClipboardList,
 } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -63,6 +64,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Receivables',
     items: [
+      { label: 'Sales orders', href: '/sales-orders', icon: ClipboardList },
       { label: 'Customers', href: '/customers', icon: Users },
       { label: 'Customer lists', href: '/customer-lists', icon: ListChecks },
       { label: 'Receivables', href: '/receivables', icon: Clock },
@@ -110,6 +112,9 @@ export function AppNav({
       }
       if (item.href === '/invoices') {
         return access.canViewInvoices;
+      }
+      if (item.href === '/sales-orders') {
+        return access.canViewSalesOrders;
       }
       if (item.href === '/customers') {
         return canViewCustomers(access);

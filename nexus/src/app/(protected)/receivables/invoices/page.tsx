@@ -3,7 +3,8 @@ import { SalesInvoicesClient } from '@/components/receivables/SalesInvoicesClien
 
 export const dynamic = 'force-dynamic';
 
-export default async function SalesInvoicesPage() {
+export default async function SalesInvoicesPage({ searchParams }: { searchParams: Promise<{ q?: string | string[] }> }) {
+  const { q } = await searchParams;
   const { invoices } = await getSalesInvoicesPageData();
-  return <SalesInvoicesClient invoices={invoices} />;
+  return <SalesInvoicesClient invoices={invoices} initialSearch={Array.isArray(q) ? q[0] : q} />;
 }

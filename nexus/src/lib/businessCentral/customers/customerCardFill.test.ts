@@ -16,6 +16,7 @@ describe('mapCardToCustomerColumns', () => {
       tax_identification_type: 'Legal Entity', customer_price_group: 'WHSL-DLVRY',
       customer_posting_group: 'DOMESTIC', gen_bus_posting_group: 'DOMESTIC', application_method: 'Manual',
       location_code: 'MAIN', credit_limit: 2500.5, blocked: 'Invoice', bc_card_etag: 'W/"1"',
+      contact_no: '', mobile_phone_no: '', ship_to_code: '', shipment_method_code: '',
     });
   });
   it('uses empty string / 0 for missing values', () => {
@@ -23,6 +24,14 @@ describe('mapCardToCustomerColumns', () => {
     expect(out.payment_terms_code).toBe('');
     expect(out.email_cc).toBe('');
     expect(out.credit_limit).toBe(0);
+  });
+});
+
+describe('mapCardToCustomerColumns new fields', () => {
+  it('fills contact, mobile, default ship-to and shipment method', () => {
+    const out = mapCardToCustomerColumns({ etag: 'e', fields: {
+      Primary_Contact_No: 'CT101830', MobilePhoneNo: '808', Ship_to_Code: '165KAIHOLU', Shipment_Method_Code: 'GROUND' } });
+    expect(out).toMatchObject({ contact_no: 'CT101830', mobile_phone_no: '808', ship_to_code: '165KAIHOLU', shipment_method_code: 'GROUND' });
   });
 });
 

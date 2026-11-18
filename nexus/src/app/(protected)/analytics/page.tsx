@@ -2,7 +2,7 @@ import { BarChart3 } from 'lucide-react';
 
 export default function AnalyticsPage() {
   return (
-    <main className="flex-1 flex items-center justify-center bg-background">
+    <main className="flex-1 flex items-center justify-center">
       <div className="text-center">
         <BarChart3 className="w-16 h-16 mx-auto text-foreground-subtle mb-4" />
         <h1 className="text-xl lg:text-2xl font-bold text-foreground mb-2">Analytics</h1>

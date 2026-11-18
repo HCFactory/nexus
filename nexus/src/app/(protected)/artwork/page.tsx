@@ -385,7 +385,7 @@ export default function HomePage() {
 
   if (loading) {
     return (
-      <div className="flex flex-1 items-center justify-center bg-background">
+      <div className="flex flex-1 items-center justify-center">
         <div className="text-foreground-muted">Loading...</div>
       </div>
     );
@@ -393,7 +393,7 @@ export default function HomePage() {
 
   if (!user?.organization_id) {
     return (
-      <main className="flex-1 flex items-center justify-center bg-background">
+      <main className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm">
           <svg className="w-12 h-12 mx-auto text-foreground-subtle mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
@@ -409,7 +409,7 @@ export default function HomePage() {
 
   if (!canAccessArtworkWorkspace(access)) {
     return (
-      <main className="flex-1 flex items-center justify-center bg-background">
+      <main className="flex-1 flex items-center justify-center">
         <div className="text-center max-w-sm">
           <h2 className="text-lg font-semibold text-foreground mb-2">Artwork access required</h2>
           <p className="text-sm text-foreground-muted">
@@ -421,7 +421,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="flex flex-1 overflow-hidden bg-background">
+    <div className="flex flex-1 overflow-hidden">
         <Sidebar
           items={items}
           selectedId={selectedId}

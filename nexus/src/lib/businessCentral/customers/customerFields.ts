@@ -47,6 +47,8 @@ export const CUSTOMER_FIELDS: FieldSpec[] = [
       { value: 'All', label: 'All' },
     ],
   }),
+  f('mobile_phone_no', 'MobilePhoneNo', 'Mobile phone', 'text', { maxLength: 30, listHidden: true }),
+  f('shipment_method_code', 'Shipment_Method_Code', 'Shipment method', 'select', { listHidden: true, optionsFrom: 'shipmentMethods' }),
   f('credit_limit', 'Credit_Limit_LCY', 'Credit limit', 'number', { listHidden: true }),
 ];
 

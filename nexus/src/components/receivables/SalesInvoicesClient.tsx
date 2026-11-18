@@ -10,13 +10,18 @@ import { BusinessCentralSalesInvoice } from "@/types/database";
 
 interface SalesInvoicesClientProps {
   invoices: BusinessCentralSalesInvoice[];
+  /** Pre-fills the search box (e.g. from ?q= when linked from a sales order). */
+  initialSearch?: string;
 }
+
+/** The invoice's page in Nexus, keyed by BC's invoice id. */
+const invoicePage = (invoice: BusinessCentralSalesInvoice) => `/receivables/invoices/${encodeURIComponent(invoice.bc_invoice_id)}`;
 
 const SELECT_CLASSNAME =
   "h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
-export function SalesInvoicesClient({ invoices }: SalesInvoicesClientProps) {
-  const [search, setSearch] = useState("");
+export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesClientProps) {
+  const [search, setSearch] = useState(initialSearch ?? "");
   const [status, setStatus] = useState("all");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
@@ -49,7 +54,7 @@ export function SalesInvoicesClient({ invoices }: SalesInvoicesClientProps) {
   const isTruncated = invoices.length === 500;
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden bg-background">
+    <div className="flex h-[calc(100vh-3.5rem)] min-h-0 flex-col overflow-hidden">
       <header className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
@@ -154,7 +159,8 @@ export function SalesInvoicesClient({ invoices }: SalesInvoicesClientProps) {
                 <table className="min-w-full divide-y divide-border text-sm">
                   <thead className="sticky top-0 bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
                     <tr>
-                      <th className="px-4 py-2.5 font-medium">Invoice number</th>
+                      <th className="px-4 py-2.5 font-medium">Invoice #</th>
+                      <th className="px-4 py-2.5 font-medium">BC Invoice No.</th>
                       <th className="px-4 py-2.5 font-medium">Customer</th>
                       <th className="px-4 py-2.5 font-medium">Posting date</th>
                       <th className="px-4 py-2.5 font-medium">Due date</th>
@@ -166,8 +172,19 @@ export function SalesInvoicesClient({ invoices }: SalesInvoicesClientProps) {
                   <tbody className="divide-y divide-border">
                     {filtered.map((invoice) => (
                       <tr key={invoice.id} className="transition-colors hover:bg-surface">
-                        <td className="px-4 py-2.5 font-mono text-xs text-foreground-muted">
-                          {invoice.bc_invoice_number ?? "—"}
+                        <td className="p-0">
+                          {invoice.external_document_number ? (
+                            <Link href={invoicePage(invoice)} className="block px-4 py-2.5 font-medium text-primary hover:underline">
+                              {invoice.external_document_number}
+                            </Link>
+                          ) : (
+                            <span className="block px-4 py-2.5 text-foreground-muted">—</span>
+                          )}
+                        </td>
+                        <td className="p-0">
+                          <Link href={invoicePage(invoice)} className="block px-4 py-2.5 font-mono text-xs text-foreground-muted hover:underline">
+                            {invoice.bc_invoice_number ?? "—"}
+                          </Link>
                         </td>
                         <td className="p-0">
                           {invoice.customer_number ? (

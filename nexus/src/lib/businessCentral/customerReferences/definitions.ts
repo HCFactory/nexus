@@ -8,7 +8,7 @@ function f(name: string, bcName: string, label: string, type: FieldSpec['type'],
   return { name, bcName, label, type, editable, ...opts };
 }
 
-/** Marks every field read-only (used by the three readOnly lists). */
+/** Marks every field read-only (used by the readOnly lists). */
 function readOnly(fields: FieldSpec[]): FieldSpec[] {
   return fields.map((x) => ({ ...x, editable: false }));
 }
@@ -121,6 +121,14 @@ export const LIST_DEFINITIONS: Record<ListKey, ListDefinition> = {
       f('default_vat_business_posting_group', 'Def_VAT_Bus_Posting_Group', 'Default VAT bus. posting group', 'text', false, { maxLength: 20 }),
       f('auto_insert_default', 'Auto_Insert_Default', 'Auto insert default', 'boolean', false),
     ]),
+  },
+  shipmentMethods: {
+    key: 'shipmentMethods', title: 'Shipment methods', table: 'business_central_shipment_methods', mode: 'managed',
+    source: { kind: 'api', resource: 'shipmentMethods' }, renameField: 'code',
+    fields: [
+      f('code', 'code', 'Code', 'text', true, { required: true, isKey: true, maxLength: 10 }),
+      f('display_name', 'displayName', 'Description', 'text', true, { maxLength: 100 }),
+    ],
   },
   customerTemplates: {
     key: 'customerTemplates', title: 'Customer templates', table: 'business_central_customer_templates', mode: 'managed',

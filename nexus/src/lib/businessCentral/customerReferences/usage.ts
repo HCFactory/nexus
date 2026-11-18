@@ -88,6 +88,8 @@ export function createUsageCounter(bc: BcClient, transport: ReferenceTransport):
         return countCustomersAndTemplates('paymentTermsId', 'Payment_Terms_Code', row);
       case 'taxAreas':
         return countCustomersAndTemplates('taxAreaId', 'Tax_Area_Code', row);
+      case 'shipmentMethods':
+        return countCustomersAndTemplates('shipmentMethodId', 'Shipment_Method_Code', row);
       case 'customerPriceGroups':
         return countCustomersAndTemplates(null, 'Customer_Price_Group', row);
       case 'taxJurisdictions':

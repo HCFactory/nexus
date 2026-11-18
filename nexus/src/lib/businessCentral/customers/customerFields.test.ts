@@ -19,6 +19,7 @@ describe('CUSTOMER_FIELDS', () => {
       customer_price_group: 'Customer_Price_Group', customer_posting_group: 'Customer_Posting_Group',
       gen_bus_posting_group: 'Gen_Bus_Posting_Group', application_method: 'Application_Method',
       location_code: 'Location_Code', blocked: 'Blocked', credit_limit: 'Credit_Limit_LCY',
+      mobile_phone_no: 'MobilePhoneNo', shipment_method_code: 'Shipment_Method_Code',
     });
   });
 
@@ -39,6 +40,11 @@ describe('CUSTOMER_FIELDS', () => {
     expect(byName('customer_posting_group').optionsFrom).toBe('customerPostingGroups');
     expect(byName('gen_bus_posting_group').optionsFrom).toBe('generalBusinessPostingGroups');
     expect(byName('location_code').optionsFrom).toBe('locations');
+  });
+
+  it('has shipment method select and hidden mobile phone', () => {
+    expect(byName('shipment_method_code')).toMatchObject({ bcName: 'Shipment_Method_Code', type: 'select', optionsFrom: 'shipmentMethods' });
+    expect(byName('mobile_phone_no')).toMatchObject({ bcName: 'MobilePhoneNo', type: 'text', maxLength: 30, listHidden: true });
   });
 
   it('has fixed options for blocked, tax identification type and application method', () => {

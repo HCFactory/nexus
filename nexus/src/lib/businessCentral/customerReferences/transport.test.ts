@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createReferenceTransport } from './transport';
+import { createReferenceTransport, TRANSPORT_TIMEOUT_MS } from './transport';
+import { LEASE_MS } from '@/lib/salesOrders/orderClaim';
 import { BcConflictError, BcReferenceError, ReferencePageUnavailableError } from './errors';
 import type { BcClient } from '../client';
 
@@ -33,6 +34,29 @@ const odataSource = { kind: 'odata' as const, service: 'CustomerPriceGroups', pa
 const apiSource = { kind: 'api' as const, resource: 'paymentTerms' };
 
 describe('reference transport', () => {
+  it('every request has its own abort signal (a repeated read during a page render is never answered from the first response)', async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      seen.push(init?.signal);
+      return json({ value: [] });
+    });
+    const transport = createReferenceTransport(fakeBcClient(), 'My Co', fetchImpl as unknown as typeof fetch);
+    await transport.list(apiSource);
+    await transport.list(apiSource);
+    expect(seen[0]).toBeInstanceOf(AbortSignal);
+    expect(seen[1]).toBeInstanceOf(AbortSignal);
+    expect(seen[0]).not.toBe(seen[1]);
+  });
+
+  it('every request times out (shorter than the order lease), so a stuck call never outlives its lease', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fetchImpl = vi.fn(async () => json({ value: [] }));
+    await createReferenceTransport(fakeBcClient(), 'My Co', fetchImpl as unknown as typeof fetch).list(apiSource);
+    expect(timeout).toHaveBeenCalledWith(TRANSPORT_TIMEOUT_MS);
+    expect(TRANSPORT_TIMEOUT_MS).toBeLessThan(LEASE_MS / 2);
+    timeout.mockRestore();
+  });
+
   it('list follows nextLink across pages', async () => {
     const { transport, calls } = setup([
       json({ value: [{ id: 'a', '@odata.etag': 'W/"1"' }, { id: 'b', '@odata.etag': 'W/"2"' }], '@odata.nextLink': 'https://next/page2' }),
@@ -77,6 +101,38 @@ describe('reference transport', () => {
     await transport.get(odataSource, { values: { Code: "O'HARE/1" } });
     expect(calls[0].url).toContain("CustomerPriceGroups('O''HARE%2F1')");
     expect(calls[0].url).toContain("ODataV4/Company('My%20Co')/");
+  });
+
+  it('odata integer key fields are written unquoted; other numeric-looking keys stay quoted', async () => {
+    const source = { kind: 'odata' as const, service: 'SalesOrderSalesLines', pageNumber: 46, keyFields: ['Document_Type', 'Document_No', 'Line_No'], integerKeyFields: ['Line_No'] };
+    const { transport, calls } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await transport.get(source, { values: { Document_Type: 'Order', Document_No: '10000', Line_No: '10000' } });
+    expect(calls[0].url).toContain("SalesOrderSalesLines(Document_Type='Order',Document_No='10000',Line_No=10000)");
+  });
+
+  it('odata integer key rejects a non-integer value', async () => {
+    const source = { kind: 'odata' as const, service: 'SalesOrderSalesLines', pageNumber: 46, keyFields: ['Line_No'], integerKeyFields: ['Line_No'] };
+    const { transport } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await expect(transport.get(source, { values: { Line_No: "1) or (1" } })).rejects.toThrow('Integer key value expected');
+  });
+
+  it('odata guid key fields are written unquoted', async () => {
+    const source = { kind: 'odata' as const, service: 'salesDocuments', pageNumber: 0, keyFields: ['id'], guidKeyFields: ['id'] };
+    const { transport, calls } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await transport.patch(source, { values: { id: '1603575e-1c2b-4d3e-8f90-0123456789ab' } }, 'W/"1"', { shipToCode: 'WH1' });
+    expect(calls[0].url).toMatch(/\/salesDocuments\(1603575e-1c2b-4d3e-8f90-0123456789ab\)$/);
+  });
+
+  it('odata guid key rejects a non-guid value', async () => {
+    const source = { kind: 'odata' as const, service: 'salesDocuments', pageNumber: 0, keyFields: ['id'], guidKeyFields: ['id'] };
+    const { transport } = setup([json({ '@odata.etag': 'W/"1"' })]);
+    await expect(transport.get(source, { values: { id: "x') or ('1" } })).rejects.toThrow('GUID key value expected');
+  });
+
+  it('a guid-looking value in a non-guid key field stays quoted', async () => {
+    const { transport, calls } = setup([json({ Code: 'x', '@odata.etag': 'W/"1"' })]);
+    await transport.get(odataSource, { values: { Code: '1603575e-1c2b-4d3e-8f90-0123456789ab' } });
+    expect(calls[0].url).toContain("CustomerPriceGroups('1603575e-1c2b-4d3e-8f90-0123456789ab')");
   });
 
   it('odata composite key with date', async () => {

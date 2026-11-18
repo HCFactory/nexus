@@ -16,6 +16,7 @@ const COLUMNS: Record<ListKey, string[]> = {
   customerTemplates: ['code', 'display_name', 'contact_type', 'no_series', 'customer_posting_group', 'gen_bus_posting_group',
     'customer_price_group', 'payment_terms_code', 'tax_area_code', 'tax_liable', 'tax_identification_type', 'application_method', 'location_code'],
   noSeries: ['code', 'display_name'],
+  shipmentMethods: ['code', 'display_name'],
 };
 const TABLES: Record<ListKey, string> = {
   paymentTerms: 'business_central_payment_terms',
@@ -29,12 +30,22 @@ const TABLES: Record<ListKey, string> = {
   generalBusinessPostingGroups: 'business_central_general_business_posting_groups',
   customerTemplates: 'business_central_customer_templates',
   noSeries: 'business_central_no_series',
+  shipmentMethods: 'business_central_shipment_methods',
 };
 const defs = Object.entries(LIST_DEFINITIONS);
 
 describe('LIST_DEFINITIONS', () => {
-  it('covers all eleven lists with matching keys', () => {
-    expect(defs).toHaveLength(11);
+  it('shipmentMethods is a managed api list keyed by code', () => {
+    const d = LIST_DEFINITIONS.shipmentMethods;
+    expect(d.mode).toBe('managed');
+    expect(d.source).toEqual({ kind: 'api', resource: 'shipmentMethods' });
+    const code = d.fields.find((x) => x.name === 'code')!;
+    expect(code).toMatchObject({ bcName: 'code', isKey: true, maxLength: 10 });
+    expect(d.fields.find((x) => x.name === 'display_name')!.bcName).toBe('displayName');
+  });
+
+  it('covers all twelve lists with matching keys', () => {
+    expect(defs).toHaveLength(12);
     for (const [k, d] of defs) expect(d.key).toBe(k);
   });
 
@@ -52,6 +63,13 @@ describe('LIST_DEFINITIONS', () => {
       }
     }
     expect(LIST_DEFINITIONS.taxDetails.fields.filter((f) => f.isKey)).toHaveLength(4);
+  });
+
+  it('shipment methods are managed: code (required key, 10 chars) and description are editable', () => {
+    const d = LIST_DEFINITIONS.shipmentMethods;
+    expect(d.mode).toBe('managed');
+    expect(d.fields.find((f) => f.name === 'code')).toMatchObject({ editable: true, required: true, isKey: true, maxLength: 10 });
+    expect(d.fields.find((f) => f.name === 'display_name')).toMatchObject({ editable: true });
   });
 
   it('read-only lists have no editable fields', () => {

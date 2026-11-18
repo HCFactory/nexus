@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { freshFetch } from '@/lib/freshFetch';
 
 export async function createClient() {
   const cookieStore = await cookies();
@@ -42,6 +43,8 @@ export function createServiceClient() {
         headers: {
           'X-Client-Info': 'nexus-service-role',
         },
+        // Background work started from a page render must re-read rows, not get the render's first answer.
+        fetch: freshFetch,
       },
     }
   );

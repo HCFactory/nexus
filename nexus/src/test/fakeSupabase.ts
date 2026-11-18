@@ -1,0 +1,109 @@
+// In-memory Supabase query builder for tests. Supports the subset the sales
+// order code uses: select/insert/update/delete, eq/in/or (is.null + lt),
+// (is.null, lt, eq, not.like) order, limit, range, maybeSingle/single and awaiting the builder.
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+export type Row = Record<string, unknown>;
+type Result = { data: Row[] | null; error: { message: string; code?: string } | null };
+type Op = 'select' | 'insert' | 'update' | 'delete';
+
+export interface FakeSupabase {
+  client: SupabaseClient;
+  tables: Record<string, Row[]>;
+  /** Every write, in order: [table, op, payload]. */
+  writes: [string, Op, unknown][];
+  /** Return an error message (or { message, code }) to make that call fail. */
+  failOn?: (table: string, op: Op, payload: unknown) => string | { message: string; code?: string } | null;
+}
+
+function orMatches(row: Row, expr: string): boolean {
+  return expr.split(',').some((part) => {
+    const [col, op, ...rest] = part.split('.');
+    const value = rest.join('.');
+    const cur = row[col];
+    if (op === 'is' && value === 'null') return cur === null || cur === undefined;
+    if (op === 'lt') return cur !== null && cur !== undefined && String(cur) < value;
+    if (op === 'eq') return String(cur) === value;
+    if (op === 'not' && rest[0] === 'like') {
+      // SQL semantics: NULL NOT LIKE x is not true. `*` is PostgREST's wildcard.
+      const pattern = rest.slice(1).join('.');
+      if (cur === null || cur === undefined) return false;
+      const re = new RegExp('^' + pattern.split('*').map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$');
+      return !re.test(String(cur));
+    }
+    throw new Error(`fakeSupabase: unsupported or() part ${part}`);
+  });
+}
+
+export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
+  let nextId = 1;
+  const fake: FakeSupabase = { client: null as unknown as SupabaseClient, tables, writes: [] };
+  const from = (table: string) => {
+    tables[table] ??= [];
+    const filters: ((r: Row) => boolean)[] = [];
+    let op: Op = 'select';
+    let payload: Row | Row[] = {};
+    const orders: [string, boolean][] = [];
+    let limit: number | null = null;
+    let range: [number, number] | null = null;
+    const exec = (): Result => {
+      const failure = fake.failOn?.(table, op, payload);
+      if (op !== 'select') fake.writes.push([table, op, payload]);
+      if (failure) return { data: null, error: typeof failure === 'string' ? { message: failure } : failure };
+      if (op === 'insert') {
+        const list = Array.isArray(payload) ? payload : [payload];
+        const rows = list.map((p) => ({ id: `gen-${nextId++}`, ...p }));
+        tables[table].push(...rows);
+        return { data: rows.map((r) => ({ ...r })), error: null };
+      }
+      const rows = tables[table].filter((r) => filters.every((f) => f(r)));
+      if (op === 'update') rows.forEach((r) => Object.assign(r, payload));
+      if (op === 'delete') tables[table] = tables[table].filter((r) => !rows.includes(r));
+      let out = rows.map((r) => ({ ...r }));
+      for (const [k, asc] of [...orders].reverse()) {
+        out.sort((a, b) => {
+          const x = a[k] as string | number;
+          const y = b[k] as string | number;
+          const c = x < y ? -1 : x > y ? 1 : 0;
+          return asc ? c : -c;
+        });
+      }
+      if (range) out = out.slice(range[0], range[1] + 1);
+      if (limit !== null) out = out.slice(0, limit);
+      return { data: out, error: null };
+    };
+    const b = {
+      select: () => b,
+      insert: (p: Row | Row[]) => { op = 'insert'; payload = p; return b; },
+      update: (p: Row) => { op = 'update'; payload = p; return b; },
+      delete: () => { op = 'delete'; return b; },
+      eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
+      neq: (k: string, v: unknown) => { filters.push((r) => r[k] !== v); return b; },
+      not: (k: string, o: string, v: unknown) => {
+        if (o !== 'is' || v !== null) throw new Error('fakeSupabase: only not(col, is, null)');
+        filters.push((r) => r[k] !== null && r[k] !== undefined);
+        return b;
+      },
+      is: (k: string, v: null) => {
+        if (v !== null) throw new Error('fakeSupabase: only is(col, null)');
+        filters.push((r) => r[k] === null || r[k] === undefined);
+        return b;
+      },
+      in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
+      or: (expr: string) => { filters.push((r) => orMatches(r, expr)); return b; },
+      order: (k: string, o?: { ascending?: boolean }) => { orders.push([k, o?.ascending !== false]); return b; },
+      limit: (n: number) => { limit = n; return b; },
+      range: (a: number, z: number) => { range = [a, z]; return b; },
+      maybeSingle: async () => { const r = exec(); return { data: r.data?.[0] ?? null, error: r.error }; },
+      single: async () => {
+        const r = exec();
+        if (r.error) return { data: null, error: r.error };
+        return { data: r.data?.[0] ?? null, error: r.data?.[0] ? null : { message: 'no row' } };
+      },
+      then: (res: (r: Result) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(exec()).then(res, rej),
+    };
+    return b;
+  };
+  fake.client = { from } as unknown as SupabaseClient;
+  return fake;
+}

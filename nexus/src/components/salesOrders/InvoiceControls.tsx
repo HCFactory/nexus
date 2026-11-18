@@ -1,0 +1,343 @@
+'use client';
+
+import { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+
+import { createInvoice, retryInvoice } from '@/app/actions/salesOrderInvoicing';
+import { deleteExtraInvoiceDrafts, discardChangeInvoice, getExtraInvoiceDrafts, retryChangeInvoice } from '@/app/actions/salesInvoiceChanges';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { formatMoney } from '@/lib/format';
+import { canStartInvoice, isInvoiceResumable, isPastPosting } from '@/lib/salesOrders/orderRules';
+import { DISCARDABLE_CHANGE_STATES, DUPLICATE_DRAFTS_PREFIX, FAILED_CHANGE_STATES, type DraftSummary, type InvoiceChangeRow } from '@/types/invoiceChanges';
+import type { InvoiceState, SalesOrderRow } from '@/types/salesOrders';
+import { GlassButton as Button } from './GlassButton';
+
+/** The one-line invoice status (header status line and list Sync column); null before an invoice starts. */
+export function invoiceStatusText(state: InvoiceState, billcomInvoiceId: string | null = null): string | null {
+  if (isInvoiceResumable(state)) return 'Invoicing…';
+  if (state === 'post_failed') return "Couldn't post";
+  if (state === 'billcom_failed') return 'Invoiced · Not in Bill.com';
+  // No Bill.com invoice from Nexus: Bill.com is off, or Bill.com's own connector copies it.
+  if (state === 'done') return billcomInvoiceId ? 'Invoiced · In Bill.com' : 'Invoiced';
+  if (state === 'changing') return 'Changing invoice…';
+  return null;
+}
+
+/** True while the invoice process is mid-step (the page polls for the result). */
+export function isInvoiceRunning(state: InvoiceState): boolean {
+  return isInvoiceResumable(state);
+}
+
+/** True when the order is locked by the invoice process (posting or past it). */
+export function isInvoiceLocked(state: InvoiceState): boolean {
+  return state === 'posting' || isPastPosting(state);
+}
+
+/** Create invoice shows for Final/Pulled orders for people who can edit, until the invoice is posting or posted. */
+export function showsCreateInvoice(order: Pick<SalesOrderRow, 'status' | 'invoice_state'>, canEdit: boolean): boolean {
+  return (
+    canEdit &&
+    (order.status === 'final' || order.status === 'pulled') &&
+    !isPastPosting(order.invoice_state) &&
+    order.invoice_state !== 'posting'
+  );
+}
+
+const DOT: Partial<Record<InvoiceState, string>> = {
+  posting: 'bg-sky-500', posted: 'bg-sky-500', billcom_sending: 'bg-sky-500',
+  post_failed: 'bg-red-500', billcom_failed: 'bg-amber-500', done: 'bg-green-500', changing: 'bg-sky-500',
+};
+const TEXT: Partial<Record<InvoiceState, string>> = {
+  posting: 'text-foreground-muted', posted: 'text-foreground-muted', billcom_sending: 'text-foreground-muted',
+  post_failed: 'text-destructive', billcom_failed: 'text-warning', done: 'text-foreground', changing: 'text-foreground-muted',
+};
+
+export const SAVE_FIRST = 'Save your changes before invoicing.';
+
+/** The invoice status line, with Retry for a failed step and View invoice once BC has the posted invoice. */
+export function InvoiceStatus({
+  order,
+  canEdit,
+  className,
+  onError,
+}: {
+  order: Pick<SalesOrderRow, 'id' | 'invoice_state' | 'invoice_error' | 'bc_posted_invoice_number' | 'bc_posted_invoice_id' | 'billcom_invoice_id'>;
+  canEdit: boolean;
+  className?: string;
+  onError?: (message: string | null) => void;
+}) {
+  const router = useRouter();
+  const [retrying, setRetrying] = useState(false);
+  const text = invoiceStatusText(order.invoice_state, order.billcom_invoice_id);
+  if (!text) return null;
+  const failed = order.invoice_state === 'post_failed' || order.invoice_state === 'billcom_failed';
+  const number = order.bc_posted_invoice_number;
+
+  const retry = async () => {
+    setRetrying(true);
+    onError?.(null);
+    try {
+      const res = await retryInvoice(order.id);
+      if (!res.ok) onError?.(res.error);
+    } catch (e) {
+      onError?.(e instanceof Error ? e.message : 'Could not retry the invoice.');
+    } finally {
+      router.refresh();
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <div className={`flex flex-wrap items-center gap-2 ${className ?? 'text-sm'}`}>
+      <span
+        className={`inline-flex items-center gap-1.5 ${TEXT[order.invoice_state]}`}
+        role="status"
+        title={failed ? order.invoice_error ?? undefined : undefined}
+      >
+        <span aria-hidden className={`size-2 rounded-full ${DOT[order.invoice_state]}`} />
+        {text}
+      </span>
+      {canEdit && failed && (
+        <Button type="button" size="sm" variant="outline" disabled={retrying} onClick={retry}>
+          Retry
+        </Button>
+      )}
+      {number && <span className="text-foreground-muted">Invoice {number} ·</span>}
+      {number && order.bc_posted_invoice_id && (
+        <Link
+          href={`/receivables/invoices/${encodeURIComponent(order.bc_posted_invoice_id)}`}
+          className="text-primary underline-offset-2 hover:underline"
+        >
+          View invoice
+        </Link>
+      )}
+    </div>
+  );
+}
+
+interface ControlsProps {
+  order: SalesOrderRow;
+  canEdit: boolean;
+  /** The form has edits that aren't saved yet. */
+  dirty: boolean;
+  blockedReason: string | null | undefined;
+  invoiceNumber: string;
+  customerLabel: string;
+  total: number;
+  /** YYYY-MM-DD, the page's today. */
+  today: string;
+}
+
+const dateLabel = (today: string) =>
+  new Date(`${today}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+/** The Create invoice button and its confirm box. Renders nothing when the order can't be invoiced from here. */
+export function InvoiceControls({ order, canEdit, dirty, blockedReason, invoiceNumber, customerLabel, total, today }: ControlsProps) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!showsCreateInvoice(order, canEdit)) return null;
+  const enabled = canStartInvoice(order) && !dirty && !blockedReason && !busy;
+  const title = blockedReason || (dirty ? SAVE_FIRST : undefined);
+
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await createInvoice(order.id);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not create the invoice.');
+    } finally {
+      // Even a failed attempt may have written state (e.g. post_failed); show it.
+      router.refresh();
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Button type="button" variant="blue-glass" disabled={!enabled} title={title} onClick={() => { setError(null); setOpen(true); }}>
+        {busy ? 'Invoicing…' : 'Create invoice'}
+      </Button>
+      <Dialog open={open} onOpenChange={(o) => { if (!busy) setOpen(o); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Create invoice for {order.bc_order_number}?</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1">
+                <p className="font-semibold text-foreground">Invoice Date: Today ({dateLabel(today)})</p>
+                <p>Customer: {customerLabel}</p>
+                <p>Total: {formatMoney(total, null)}</p>
+                <p>Invoice #: {invoiceNumber}</p>
+                <p className="pt-1 font-medium text-foreground">This posts the order in BC. It can&apos;t be undone.</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="button" size="sm" variant="blue-glass" disabled={busy} onClick={create}>
+              {busy ? 'Invoicing…' : 'Create invoice'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/** "Change invoice": shown on an invoiced order (done) to editors; disabled with the Bill.com reason. */
+export function ChangeInvoiceButton({
+  order,
+  canEdit,
+  blockedReason,
+  onStart,
+}: {
+  order: Pick<SalesOrderRow, 'invoice_state'>;
+  canEdit: boolean;
+  blockedReason: string | null | undefined;
+  onStart: () => void;
+}) {
+  if (!canEdit || order.invoice_state !== 'done') return null;
+  return (
+    <div className="flex flex-col items-end">
+      <Button type="button" variant="outline" disabled={!!blockedReason} title={blockedReason ?? undefined} onClick={onStart}>
+        Change invoice
+      </Button>
+      {blockedReason && <span className="mt-0.5 max-w-56 text-right text-[11px] leading-tight text-foreground-muted">{blockedReason}</span>}
+    </div>
+  );
+}
+
+/** The open change's failure (if any) with Retry, and Discard change while BC hasn't cancelled the old invoice. */
+export function InvoiceChangeStatus({
+  orderId,
+  change,
+  canEdit,
+  onError,
+}: {
+  orderId: string;
+  change: Pick<InvoiceChangeRow, 'id' | 'state' | 'error' | 'old_bc_invoice_number'>;
+  canEdit: boolean;
+  onError?: (message: string | null) => void;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const failed = FAILED_CHANGE_STATES.includes(change.state);
+  const discardable = DISCARDABLE_CHANGE_STATES.includes(change.state) && change.state !== 'pending';
+  if (!failed) return null;
+
+  const act = async (fn: (id: string) => Promise<{ ok: true } | { ok: false; error: string }>, fallback: string) => {
+    setBusy(true);
+    onError?.(null);
+    try {
+      const res = await fn(orderId);
+      if (!res.ok) onError?.(res.error);
+    } catch (e) {
+      onError?.(e instanceof Error ? e.message : fallback);
+    } finally {
+      router.refresh();
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {change.error && <span className="text-destructive">{change.error}</span>}
+      {canEdit && (
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => act(retryChangeInvoice, 'Could not retry the change.')}>
+          Retry
+        </Button>
+      )}
+      {canEdit && discardable && (
+        <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => act(discardChangeInvoice, 'Could not discard the change.')}>
+          Discard change
+        </Button>
+      )}
+      {canEdit && change.state === 'post_failed' && change.error?.startsWith(DUPLICATE_DRAFTS_PREFIX) && <DeleteExtraDrafts orderId={orderId} />}
+    </div>
+  );
+}
+
+type DraftPreview = { keep: DraftSummary | null; extra: DraftSummary[] };
+
+/** "Delete extra drafts" and its confirm box: lists the draft kept and the drafts deleted; deletes only on confirm. */
+function DeleteExtraDrafts({ orderId }: { orderId: string }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<DraftPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const show = async () => {
+    setOpen(true);
+    setPreview(null);
+    setError(null);
+    try {
+      const res = await getExtraInvoiceDrafts(orderId);
+      if (res.ok) setPreview({ keep: res.keep, extra: res.extra });
+      else setError(res.error);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not read BC's drafts.");
+    }
+  };
+
+  const confirm = async () => {
+    if (!preview) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await deleteExtraInvoiceDrafts(orderId, preview.extra.map((d) => d.id));
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      setOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not delete the drafts.');
+    } finally {
+      router.refresh();
+      setBusy(false);
+    }
+  };
+
+  const n = preview?.extra.length ?? 0;
+  return (
+    <>
+      <Button type="button" size="sm" variant="outline" onClick={show}>Delete extra drafts</Button>
+      <Dialog open={open} onOpenChange={(o) => { if (!busy) setOpen(o); }}>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Delete extra drafts in BC?</DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-1">
+                {!preview && !error && <p>Reading BC&apos;s drafts…</p>}
+                {preview?.keep && <p>Keep {preview.keep.no} ({formatMoney(preview.keep.totalExclTax, null)} before tax). Retry posts this one.</p>}
+                {preview?.extra.map((d) => (
+                  <p key={d.id} className="font-medium text-foreground">Delete {d.no} ({formatMoney(d.totalExclTax, null)} before tax)</p>
+                ))}
+                {preview && n === 0 && <p>There are no extra drafts now.</p>}
+                <p className="pt-1">Only unposted drafts are deleted. This can&apos;t be undone.</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setOpen(false)}>Cancel</Button>
+            <Button type="button" size="sm" variant="blue-glass" disabled={busy || n === 0} onClick={confirm}>
+              {busy ? 'Deleting…' : `Delete ${n} draft${n === 1 ? '' : 's'}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

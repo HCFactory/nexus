@@ -3,6 +3,7 @@ import { UserList } from '@/components/admin';
 import { BcCredentialsCard } from '@/components/businessCentral/BcCredentialsCard';
 import { BcEnvironmentsCard } from '@/components/businessCentral/BcEnvironmentsCard';
 import { BillcomConnectionsCard } from '@/components/billcom/BillcomConnectionsCard';
+import { StripeConnectionsCard } from '@/components/stripe/StripeConnectionsCard';
 import { getAllUsers, changeUserPassword, getCurrentUser, updateUserAccess } from '@/app/actions/users';
 import { resolveUserAccess } from '@/lib/auth/permissions';
 
@@ -17,7 +18,7 @@ export default async function AdminPage() {
   const users = await getAllUsers();
 
   return (
-    <div className="flex flex-col flex-1 overflow-y-auto bg-background">
+    <div className="flex flex-col flex-1 overflow-y-auto">
       <main className="max-w-6xl mx-auto p-6 w-full">
         <div className="mb-8">
           <h1 className="text-xl lg:text-2xl font-bold text-foreground">User Management</h1>
@@ -47,6 +48,14 @@ export default async function AdminPage() {
             Accounts-receivable connections. Disabled by default; nothing syncs until enabled.
           </p>
           <BillcomConnectionsCard />
+        </div>
+
+        <div className="mt-10">
+          <h2 className="text-xl lg:text-2xl font-bold text-foreground">Stripe</h2>
+          <p className="text-foreground-muted mt-1">
+            Saved-card payments. Disabled by default; nothing contacts Stripe until enabled.
+          </p>
+          <StripeConnectionsCard />
         </div>
       </main>
     </div>

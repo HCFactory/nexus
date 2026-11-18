@@ -1,10 +1,20 @@
 import 'server-only';
+import { freshFetchWith } from '@/lib/freshFetch';
 import { apiRoot, createBcClientForOrg, type BcClient } from '../client';
 import { BcConflictError, BcReferenceError, ReferencePageUnavailableError } from './errors';
 
 export type ReferenceSource =
   | { kind: 'api'; resource: string }
-  | { kind: 'odata'; service: string; pageNumber: number; keyFields: string[] };
+  | {
+      kind: 'odata';
+      service: string;
+      pageNumber: number;
+      keyFields: string[];
+      /** Key fields that are Integer in BC; written unquoted in key predicates (e.g. Line_No=10000). */
+      integerKeyFields?: string[];
+      /** Key fields that are GUIDs (e.g. a SystemId `id`); written unquoted, e.g. salesDocuments(1603575e-...). */
+      guidKeyFields?: string[];
+    };
 
 export type BcKey = { bcId: string } | { values: Record<string, string> };
 
@@ -30,7 +40,18 @@ function trimTrailingSlash(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function quoteKeyValue(value: string): string {
+const INTEGER_RE = /^-?\d+$/;
+const GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function quoteKeyValue(value: string, integer = false, guid = false): string {
+  if (guid) {
+    if (!GUID_RE.test(value)) throw new Error(`GUID key value expected, got "${value}"`);
+    return value;
+  }
+  if (integer) {
+    if (!INTEGER_RE.test(value)) throw new Error(`Integer key value expected, got "${value}"`);
+    return value;
+  }
   // Date-typed key fields are written unquoted in OData v4 key predicates.
   if (DATE_RE.test(value)) return value;
   return `'${encodeURIComponent(value.replace(/'/g, "''"))}'`;
@@ -50,11 +71,19 @@ function mapRecord(source: ReferenceSource, row: Record<string, unknown>): BcRec
   return { key: { values }, etag, fields };
 }
 
+/**
+ * Each BC request gives up after this long. Shorter than half an order lease, so
+ * work renewed before each write never outlives its lease mid-request.
+ */
+export const TRANSPORT_TIMEOUT_MS = 50_000;
+
 export function createReferenceTransport(
   bc: BcClient,
   companyName: string,
-  fetchImpl: typeof fetch = fetch,
+  baseFetch: typeof fetch = fetch,
 ): ReferenceTransport {
+  // Every request fresh: a page render must not answer a re-read (lines, status) from the first response.
+  const fetchImpl = freshFetchWith(baseFetch);
   const odataBase = `${trimTrailingSlash(bc.config.apiBaseUrl ?? 'https://api.businesscentral.dynamics.com')}/v2.0/${encodeURIComponent(bc.config.environment)}/ODataV4/Company('${encodeURIComponent(companyName)}')`;
   const apiBase = `${apiRoot(bc.config)}/companies(${encodeURIComponent(bc.config.companyId)})`;
 
@@ -75,8 +104,11 @@ export function createReferenceTransport(
       if (v === undefined) throw new Error(`Missing key field ${name} for ${source.service}`);
       return v;
     };
-    if (names.length === 1) return `${root}(${quoteKeyValue(value(names[0]))})`;
-    return `${root}(${names.map((n) => `${n}=${quoteKeyValue(value(n))}`).join(',')})`;
+    const ints = new Set(source.integerKeyFields ?? []);
+    const guids = new Set(source.guidKeyFields ?? []);
+    const q = (n: string) => quoteKeyValue(value(n), ints.has(n), guids.has(n));
+    if (names.length === 1) return `${root}(${q(names[0])})`;
+    return `${root}(${names.map((n) => `${n}=${q(n)}`).join(',')})`;
   }
 
   async function send(
@@ -95,6 +127,7 @@ export function createReferenceTransport(
       method: init.method ?? 'GET',
       headers,
       body: init.body ? JSON.stringify(init.body) : undefined,
+      signal: AbortSignal.timeout(TRANSPORT_TIMEOUT_MS),
     });
     if (res.ok) return res;
     if (res.status === 412) throw new BcConflictError();

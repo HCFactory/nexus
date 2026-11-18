@@ -170,7 +170,7 @@ export function AppShell({ user, organization, organizations, businessCentralSta
   }, [pathname, refreshFingerprint, router, user]);
 
   return (
-    <div className="h-screen flex overflow-hidden bg-background">
+    <div className="h-screen flex overflow-hidden glass-backdrop">
       <AppNav
         user={user}
         collapsed={sidebarCollapsed}

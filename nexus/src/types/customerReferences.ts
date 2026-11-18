@@ -1,6 +1,6 @@
 export type ListKey = 'paymentTerms' | 'customerPriceGroups' | 'taxAreas' | 'taxAreaLines'
   | 'taxJurisdictions' | 'taxDetails' | 'locations' | 'customerPostingGroups' | 'generalBusinessPostingGroups'
-  | 'customerTemplates' | 'noSeries';
+  | 'customerTemplates' | 'noSeries' | 'shipmentMethods';
 export type FieldType = 'text' | 'dateFormula' | 'percent' | 'number' | 'boolean' | 'date' | 'select';
 export interface FieldSpec {
   name: string;            // Nexus/DB column, snake_case
