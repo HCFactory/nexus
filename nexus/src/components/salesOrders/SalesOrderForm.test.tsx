@@ -12,6 +12,8 @@ const orderActions = vi.hoisted(() => ({
   deleteSalesOrder: vi.fn(),
   retrySalesOrderSync: vi.fn(),
   overwriteBcWithNexus: vi.fn(),
+  // Never resolves by default: a new order shows no number until a test resolves it.
+  reserveSalesOrderNumber: vi.fn((): Promise<{ ok: true; number: string } | { ok: false; error: string }> => new Promise(() => {})),
   // Never resolves by default: the form keeps the context's lines (each test sets its own when it matters).
   getSalesOrderPriceLines: vi.fn((): Promise<SalesPriceListLineRow[]> => new Promise(() => {})),
 }));
@@ -192,6 +194,56 @@ describe('SalesOrderForm — picking a customer', () => {
     expect(screen.getByLabelText('Invoice # (Ext. Doc No.)')).toHaveValue('INV-7');
     expect(screen.getByText('Pesto sauce')).toBeInTheDocument();
     await waitFor(() => expect(shipActions.refreshShipTos).toHaveBeenCalledWith('C2'));
+  });
+});
+
+describe('SalesOrderForm — order number up front', () => {
+  const invoice = () => screen.getByLabelText('Invoice # (Ext. Doc No.)');
+
+  it('a new order takes its number once and shows it in the title and the Invoice #', async () => {
+    orderActions.reserveSalesOrderNumber.mockResolvedValue({ ok: true, number: 'W-100536' });
+    renderForm();
+    expect(await screen.findByRole('heading', { level: 1, name: 'New sales order W-100536' })).toBeInTheDocument();
+    expect(invoice()).toHaveValue('W-100536');
+    fireEvent.change(screen.getByLabelText('Customer PO'), { target: { value: 'PO-77' } });
+    expect(invoice()).toHaveValue('W-100536 / PO-77');
+    expect(orderActions.reserveSalesOrderNumber).toHaveBeenCalledTimes(1);
+  });
+
+  it('Save sends the reserved number and keeps the Invoice # automatic', async () => {
+    orderActions.reserveSalesOrderNumber.mockResolvedValue({ ok: true, number: 'W-100536' });
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'new-1' });
+    shipActions.refreshShipTos.mockResolvedValue([dock]);
+    renderForm();
+    await screen.findByRole('heading', { level: 1, name: 'New sales order W-100536' });
+    pickCustomer('C1 – Acme Foods');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(orderActions.saveSalesOrder).toHaveBeenCalledWith(
+        expect.objectContaining({ reserved_order_number: 'W-100536', invoice_number: null }),
+      ),
+    );
+  });
+
+  it('when no number can be taken, says so and saves without one', async () => {
+    orderActions.reserveSalesOrderNumber.mockResolvedValue({ ok: false, error: 'Turn on Manual Nos.' });
+    orderActions.saveSalesOrder.mockResolvedValue({ ok: true, id: 'new-1' });
+    shipActions.refreshShipTos.mockResolvedValue([dock]);
+    renderForm();
+    expect(await screen.findByText('Order number will be assigned when saved. Turn on Manual Nos.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'New sales order' })).toBeInTheDocument();
+    pickCustomer('C1 – Acme Foods');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(orderActions.saveSalesOrder).toHaveBeenCalled());
+    expect(orderActions.saveSalesOrder.mock.calls[0][0].reserved_order_number ?? null).toBeNull();
+  });
+
+  it('a saved order not yet in BC shows its reserved number', () => {
+    renderForm({ order: order({ bc_order_number: null, reserved_order_number: 'W-100536', customer_po: 'PO-1' }), lines: [lineRow] });
+    expect(screen.getByRole('heading', { level: 1, name: 'W-100536' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Order W-100536' })).toBeInTheDocument();
+    expect(invoice()).toHaveValue('W-100536 / PO-1');
+    expect(orderActions.reserveSalesOrderNumber).not.toHaveBeenCalled();
   });
 });
 

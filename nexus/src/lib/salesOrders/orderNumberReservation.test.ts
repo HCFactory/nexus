@@ -3,7 +3,7 @@ import { NoSeriesConflictError, type BcNoSeriesLine, type NoSeriesClient } from 
 import type { BcRecord, ReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
 import { findOrderSeries, requireManualNos, takeNextNumber } from './orderNumberReservation';
 
-const rec = (fields: Record<string, unknown>): BcRecord => ({ key: {}, etag: 'e', fields });
+const rec = (fields: Record<string, unknown>): BcRecord => ({ key: { bcId: 'x' }, etag: 'e', fields });
 
 function transportWith(list: ReferenceTransport['list']): ReferenceTransport {
   return { list: vi.fn(list), get: vi.fn(), create: vi.fn(), patch: vi.fn(), remove: vi.fn() } as unknown as ReferenceTransport;

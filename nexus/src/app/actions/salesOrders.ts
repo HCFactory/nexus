@@ -668,7 +668,12 @@ const RESERVATION_UNUSABLE = "This order number can't be used. Reload the page t
 /** The id of this user's unused reservation of `number`, or null. */
 async function usableReservation(scope: Scope, number: string): Promise<string | null> {
   const rows = check(
-    await scoped(scope, createServiceClient().from(RESERVATIONS).select('id').eq('number', number))
+    await createServiceClient()
+      .from(RESERVATIONS)
+      .select('id')
+      .eq('organization_id', scope.orgId)
+      .eq('bc_connection_id', scope.bcConnectionId)
+      .eq('number', number)
       .eq('reserved_by', scope.user.id)
       .is('sales_order_id', null),
     'Could not check the order number',
@@ -697,7 +702,11 @@ export async function reserveSalesOrderNumber(): Promise<{ ok: true; number: str
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
     const latest = check(
-      await scoped(scope, createServiceClient().from(ORDERS).select('bc_order_number'))
+      await createServiceClient()
+        .from(ORDERS)
+        .select('bc_order_number')
+        .eq('organization_id', scope.orgId)
+        .eq('bc_connection_id', scope.bcConnectionId)
         .not('bc_order_number', 'is', null)
         .order('created_at', { ascending: false })
         .limit(1),

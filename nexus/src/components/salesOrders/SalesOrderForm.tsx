@@ -9,6 +9,7 @@ import {
   deleteSalesOrder,
   getSalesOrderPriceLines,
   overwriteBcWithNexus,
+  reserveSalesOrderNumber,
   retrySalesOrderSync,
   saveSalesOrder,
   setSalesOrderStatus,
@@ -311,7 +312,20 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
   const showSyncBadge = invoiceState === 'none' || (invoiceState === 'post_failed' && order?.sync_state !== 'synced');
   const locked = !canEdit || invoiceLocked || (order ? editableFields(order.status) !== 'all' : false);
   const busy = pending;
-  const invoiceShown = invoiceNumber ?? autoInvoiceNumber(order?.bc_order_number ?? null, customerPo);
+  // A new order takes BC's next number when the page opens (once, even under React's dev double effects).
+  const [reservedNumber, setReservedNumber] = useState<string | null>(null);
+  const [reserveNote, setReserveNote] = useState<string | null>(null);
+  const reserveStarted = useRef(false);
+  useEffect(() => {
+    if (order || !canEdit || reserveStarted.current) return;
+    reserveStarted.current = true;
+    reserveSalesOrderNumber()
+      .then((res) => (res.ok ? setReservedNumber(res.number) : setReserveNote(res.error)))
+      .catch((e: unknown) => setReserveNote(e instanceof Error ? e.message : 'Could not reach Business Central.'));
+  }, [order, canEdit]);
+  // BC's number once the order is in BC; before that, the number reserved for it.
+  const orderNumber = order ? order.bc_order_number || order.reserved_order_number || null : reservedNumber;
+  const invoiceShown = invoiceNumber ?? autoInvoiceNumber(orderNumber, customerPo);
 
   // The customer as saved in Nexus (null before one is picked): "Update Customer" compares against it.
   const savedCustomer = customers.find((c) => c.id === customerId) ?? null;
@@ -507,7 +521,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
         invoice_number: invoiceNumber?.trim() || null,
         customer_po: customerPo,
         lines: draftLines,
-        ...(order ? { id: order.id } : {}),
+        ...(order ? { id: order.id } : reservedNumber ? { reserved_order_number: reservedNumber } : {}),
       };
       const res = await saveSalesOrder(input);
       if (!res.ok) {
@@ -609,8 +623,11 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             <span className="mx-1.5">›</span>
           </nav>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-            {order ? order.bc_order_number || 'Not yet in BC' : 'New sales order'}
+            {order ? orderNumber || 'Not yet in BC' : reservedNumber ? `New sales order ${reservedNumber}` : 'New sales order'}
           </h1>
+          {!order && reserveNote && (
+            <p className="text-xs text-foreground-muted">Order number will be assigned when saved. {reserveNote}</p>
+          )}
         </div>
         {/* Sync state sits above the buttons; the column is no taller than the title block. */}
         <div className="flex flex-col items-end gap-1.5">
@@ -713,7 +730,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             <section className="glass-card p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h2 className="text-sm font-semibold text-foreground">
-                  {order?.bc_order_number ? `Order ${order.bc_order_number}` : 'Order'}
+                  {orderNumber ? `Order ${orderNumber}` : 'Order'}
                 </h2>
                 <div className="flex items-center gap-2">
                   <Label htmlFor="so-order-date" className={LABEL}>Order date</Label>

@@ -84,4 +84,9 @@ describe('SalesOrdersList', () => {
     expect(screen.getByText('Invoiced · Not in Bill.com')).toBeInTheDocument();
     expect(screen.queryByText('In BC')).toBeNull();
   });
+  it('an order not yet in BC shows its reserved number and Invoice #', () => {
+    render(<SalesOrdersList orders={[row({ id: 'o8', bc_order_number: null, reserved_order_number: 'W-100536', invoice_number: null, customer_po: 'PO-5' })]} canEdit={false} />);
+    expect(screen.getByText('W-100536')).toBeTruthy();
+    expect(screen.getByText('W-100536 / PO-5')).toBeTruthy();
+  });
 });
