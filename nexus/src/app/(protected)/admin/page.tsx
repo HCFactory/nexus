@@ -5,6 +5,7 @@ import { BcEnvironmentsCard } from '@/components/businessCentral/BcEnvironmentsC
 import { BillcomConnectionsCard } from '@/components/billcom/BillcomConnectionsCard';
 import { StripeConnectionsCard } from '@/components/stripe/StripeConnectionsCard';
 import { getAllUsers, changeUserPassword, getCurrentUser, updateUserAccess } from '@/app/actions/users';
+import { getUserOrganizations } from '@/app/actions/organizations';
 import { resolveUserAccess } from '@/lib/auth/permissions';
 
 export default async function AdminPage() {
@@ -16,6 +17,11 @@ export default async function AdminPage() {
   }
 
   const users = await getAllUsers();
+  const orgs = await getUserOrganizations(currentUser.id).catch(() => []);
+  const own = orgs.find((o) => o.id === currentUser.organization_id) ?? orgs[0];
+  const organization = currentUser.organization_id
+    ? { id: currentUser.organization_id, name: own?.name ?? 'this organization' }
+    : null;
 
   return (
     <div className="flex flex-col flex-1 overflow-y-auto">
@@ -29,6 +35,7 @@ export default async function AdminPage() {
 
         <UserList
           users={users}
+          organization={organization}
           onChangePassword={changeUserPassword}
           onUpdateUserAccess={updateUserAccess}
         />
