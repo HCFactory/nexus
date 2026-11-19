@@ -6,7 +6,7 @@ import {
 } from './permissions';
 
 /** Admin only: hidden from everyone else in the sidebar, and the pages send them away. */
-const ADMIN_ONLY = ['/dashboard', '/analytics', '/customer-lists'];
+const ADMIN_ONLY = ['/dashboard', '/analytics', '/customer-lists', '/items'];
 
 /** Where a non-admin lands, first page they can open wins (Customers first: user decision 2026-11-18). */
 const LANDING_ORDER = [
@@ -17,7 +17,6 @@ const LANDING_ORDER = [
   '/orders',
   '/invoices',
   '/shipments',
-  '/items',
   '/fnforders',
   '/settings',
 ];
