@@ -153,7 +153,7 @@ function setup(opts: {
     billcom: vi.fn(async () => (opts.billcom === false ? null : ({ request: vi.fn() } as never))),
     loadInvoice: vi.fn(async (id: string) =>
       id === INV
-        ? { bcInvoiceId: INV, customerNumber: 'C1', invoiceNumber: 'INV-100412', invoiceNumbers: ['W-100532', 'INV-100412'], salesOrderId: 'so-1', billcomInvoiceId: null }
+        ? { bcInvoiceId: INV, customerNumber: 'C1', invoiceNumber: 'INV-100412', invoiceNumbers: ['W-100532', 'INV-100412'], salesOrderId: 'so-1', billcomInvoiceId: null, bcTotal: 100, customerName: 'Aloha School' }
         : null,
     ),
     findBillcomInvoice,
@@ -198,7 +198,7 @@ describe('chargeInvoice', () => {
   it('charges the fresh Bill.com due amount when it matches what staff confirmed', async () => {
     const s = setup({ lookup: found({ dueAmount: 60 }) });
     const row = await chargeInvoice(s.deps, { ...ARGS, expectedAmountCents: 6000 });
-    expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null });
+    expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null, bcTotal: 100, customerName: 'Aloha School' });
     expect(s.create.mock.calls[0][0]).toMatchObject({ amount: 6000 });
     expect(row.amount).toBe(60);
   });
@@ -925,5 +925,22 @@ describe('invoiceChargeView names', () => {
     const { deps } = setup({ tables: { card_payments: [paymentRow({ charged_by: 'ghost' })], users: [] } });
     const { payments } = await invoiceChargeView(deps, INV);
     expect(payments[0].chargedByName).toBeUndefined();
+  });
+});
+
+describe('connector mode safety check reaches the Bill.com lookup', () => {
+  it('passes the BC total and customer name with the invoice numbers', async () => {
+    const s = setup();
+    await invoiceChargeView(s.deps, INV);
+    expect(s.findBillcomInvoice).toHaveBeenCalledWith({
+      customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null, bcTotal: 100, customerName: 'Aloha School',
+    });
+  });
+
+  it('a Bill.com invoice that does not match BC is never charged', async () => {
+    const s = setup({ lookup: { kind: 'mismatch' } });
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow("The Bill.com invoice with this number doesn't match this invoice's total or customer.");
+    expect(s.create).not.toHaveBeenCalled();
+    expect(s.db.tables.card_payments).toHaveLength(0);
   });
 });

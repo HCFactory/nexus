@@ -65,6 +65,8 @@ async function scope(requireCharge: boolean): Promise<{ deps: ChargeDeps; userId
         salesOrderId: page.salesOrder?.id ?? null,
         billcomInvoiceId: page.salesOrder?.billcomInvoiceId ?? null,
         status: invoiceChargeStatus(page),
+        bcTotal: inv.total_amount_including_tax ?? null,
+        customerName: inv.customer_name ?? null,
       };
     },
     findBillcomInvoice: findBillcomInvoiceForCharge,

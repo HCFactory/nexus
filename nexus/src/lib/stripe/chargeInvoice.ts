@@ -46,6 +46,7 @@ const REASONS = {
   noCard: 'No card on file — send a setup link from the customer page.',
   notInBillcom: "This invoice isn't in Bill.com yet.",
   ambiguous: 'More than one Bill.com invoice matches this number.',
+  mismatch: "The Bill.com invoice with this number doesn't match this invoice's total or customer.",
   nothingDue: 'Nothing is due on this invoice.',
   notPastDue: "This invoice isn't past due yet.",
   replaced: 'This invoice was cancelled and replaced — charge the corrected invoice.',
@@ -111,6 +112,9 @@ export interface ChargeInvoiceContext {
   billcomInvoiceId: string | null;
   /** From the order's invoice changes; missing = 'live'. */
   status?: InvoiceChargeStatus;
+  /** BC total incl. tax and customer name: connector mode only matches a Bill.com invoice that agrees. */
+  bcTotal?: number | null;
+  customerName?: string | null;
 }
 
 /** Everything with side effects, injected so tests need no network. */
@@ -159,6 +163,7 @@ export function chargeEligibility(a: {
   if (a.stripe === 'off') return no(REASONS.stripeOff);
   if (!a.card) return no(REASONS.noCard);
   if (a.billcom.kind === 'ambiguous') return no(REASONS.ambiguous);
+  if (a.billcom.kind === 'mismatch') return no(REASONS.mismatch);
   if (a.billcom.kind !== 'found' || !a.billcom.billcomCustomerId) return no(REASONS.notInBillcom);
   const { dueAmount, dueDate } = a.billcom.status;
   if (dueAmount === null || toCents(dueAmount) <= 0) return no(REASONS.nothingDue);
@@ -452,6 +457,8 @@ async function assess(deps: ChargeDeps, bcInvoiceId: string) {
           customerNumber: invoice.customerNumber,
           invoiceNumbers: invoice.invoiceNumbers,
           billcomInvoiceId: invoice.billcomInvoiceId,
+          bcTotal: invoice.bcTotal ?? null,
+          customerName: invoice.customerName ?? null,
         })
       : { kind: 'off' };
   const eligibility = chargeEligibility({ canCharge: deps.canCharge, invoice: status, stripe, card, billcom, today: businessDate(deps.now()) });
