@@ -2,12 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import {
-  canAccessArtworkWorkspace,
-  canViewCustomers,
-  canViewReceivables,
-  resolveUserAccess,
-} from '@/lib/auth/permissions';
+import { canOpenPath } from '@/lib/auth/pageAccess';
+import { resolveUserAccess } from '@/lib/auth/permissions';
 import { cn } from '@/lib/utils';
 import { User } from '@/types/database';
 import {
@@ -106,25 +102,8 @@ export function AppNav({
   const isCollapsed = onCollapse ? collapsed : false;
   const navGroups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => {
-      if (item.href === '/artwork') {
-        return canAccessArtworkWorkspace(access);
-      }
-      if (item.href === '/invoices') {
-        return access.canViewInvoices;
-      }
-      if (item.href === '/sales-orders') {
-        return access.canViewSalesOrders;
-      }
-      if (item.href === '/customers') {
-        return canViewCustomers(access);
-      }
-      if (item.href === '/receivables' || item.href === '/receivables/invoices') {
-        return canViewReceivables(access);
-      }
-
-      return true;
-    }),
+    // One rule for the sidebar and the pages themselves (see pageAccess).
+    items: group.items.filter((item) => canOpenPath(access, item.href)),
   })).filter((group) => group.items.length > 0);
 
   // Highlight only the most specific match, so /receivables/invoices doesn't also light up /receivables.
