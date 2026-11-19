@@ -109,6 +109,9 @@ View details: ${APP_URL}/packaging/${packagingId}`,
   });
 }
 
+const escapeHtml = (v: string) =>
+  v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 /**
  * Card setup email. Unlike sendEmail this THROWS on missing config or a Resend
  * error: staff clicked "Email link" and must know if it did not go out.
@@ -132,17 +135,41 @@ export async function sendCardSetupEmail(p: {
     day: 'numeric',
     year: 'numeric',
   });
+  const org = p.organizationName;
+  const text = `Hi ${p.customerName},
+
+Thank you for doing business with ${org}! As part of keeping your account up to date, we ask all of our customers to have a card on file. It helps keep everything running smoothly.
+
+You can add your card securely here (it only takes a minute):
+${p.url}
+
+Your card details go straight to Stripe, our secure payment provider. We never see or store your full card number, and you'll see the terms before you save.
+
+This link expires on ${date}. If you have any questions, please get in touch with us.
+
+Mahalo,
+${org}`;
+
+  const e = escapeHtml;
+  const html = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #1f2937; max-width: 560px;">
+  <p>Hi ${e(p.customerName)},</p>
+  <p>Thank you for doing business with ${e(org)}! As part of keeping your account up to date, we ask all of our customers to have a card on file. It helps keep everything running smoothly.</p>
+  <p>It only takes a minute:</p>
+  <p style="margin: 24px 0;">
+    <a href="${e(p.url)}" style="background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 6px; font-weight: 600; display: inline-block;">Add your card securely</a>
+  </p>
+  <p style="font-size: 13px; color: #6b7280;">Or open this link: <a href="${e(p.url)}" style="color: #2563eb;">${e(p.url)}</a></p>
+  <p>Your card details go straight to Stripe, our secure payment provider. We never see or store your full card number, and you'll see the terms before you save.</p>
+  <p>This link expires on ${e(date)}. If you have any questions, please get in touch with us.</p>
+  <p>Mahalo,<br>${e(org)}</p>
+</div>`;
+
   const { error } = await new Resend(apiKey).emails.send({
     from,
     to: p.to,
-    subject: `Add a card for ${p.organizationName}`,
-    text: `Hello ${p.customerName},
-
-${p.organizationName} has asked you to save a card on file. Please use the secure link below to add one:
-
-${p.url}
-
-This link expires on ${date}.`,
+    subject: `Add a card on file for ${org}`,
+    text,
+    html,
   });
   if (error) throw new Error(`Could not send the email: ${error.message}`);
 }

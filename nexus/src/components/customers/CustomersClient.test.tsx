@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BusinessCentralCustomer } from '@/types/database';
 import { CustomersClient } from './CustomersClient';
@@ -221,5 +221,22 @@ describe('long customer lists', () => {
     fireEvent.change(screen.getByPlaceholderText(/search/i), { target: { value: 'Customer 449' } });
     expect(screen.getByText('Customer 449')).toBeInTheDocument();
     expect(rows()).toBe(1);
+  });
+});
+
+describe('customer form popup', () => {
+  it('New customer opens the form in a dialog, and Cancel closes it', () => {
+    render(<CustomersClient customers={customers} canSync={false} edit={edit} />);
+    fireEvent.click(screen.getByRole('button', { name: /new customer/i }));
+    const dialog = screen.getByRole('dialog', { name: 'New customer' });
+    expect(dialog).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('Edit from the list opens the form in a dialog too', () => {
+    render(<CustomersClient customers={customers} canSync={false} edit={edit} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Acme' }));
+    expect(screen.getByRole('dialog', { name: 'Edit customer' })).toBeInTheDocument();
   });
 });

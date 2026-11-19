@@ -226,7 +226,7 @@ export function CustomerDetail({ customer, invoices, ledgerEntries, edit, billco
             <ReadonlyField label="Currency" value={customer.currency_code ?? "—"} />
             <ReadonlyField
               label="Payment terms"
-              value={customer.payment_terms_id ?? "—"}
+              value={customer.payment_terms_code || "—"}
             />
             <ReadonlyField
               label="Blocked"

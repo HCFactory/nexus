@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 
 import { createCustomerAction, updateCustomerAction, type CustomerTemplateOption } from '@/app/actions/customerEditing';
 import { FieldInput, optionsFor, toRaw, toValue } from '@/components/customerReferences/ReferenceEntryForm';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import type { BillcomSaveStatus } from '@/lib/billcom/customerSyncHooks';
 import { normalizeBlocked } from '@/lib/businessCentral/customerMapper';
@@ -23,6 +24,10 @@ interface Props {
   selectOptions: Record<string, Option[]>;
   onDone(result: { id: string; warning?: string; billcom?: BillcomSaveStatus }): void;
   onCancel(): void;
+  /** Inside a dialog: no card frame or heading (the dialog has them). */
+  bare?: boolean;
+  /** Told when a save starts and ends, so a dialog can refuse to close mid-save. */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 /** Fields typed on create; the rest come from the template. Blocked and Credit limit are edit-only. */
@@ -38,7 +43,7 @@ const ADDRESS_FIELD_NAMES = ['address_line_1', 'address_line_2', 'city', 'state'
 const SELECT_CLASS =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50';
 
-export function CustomerForm({ customer, templates, selectOptions, onDone, onCancel }: Props) {
+export function CustomerForm({ customer, templates, selectOptions, onDone, onCancel, bare = false, onBusyChange }: Props) {
   const fields = customer ? CUSTOMER_FIELDS : CREATE_FIELDS;
   const [templateCode, setTemplateCode] = useState('');
   const [raw, setRaw] = useState<Record<string, string | boolean>>(() =>
@@ -52,6 +57,7 @@ export function CustomerForm({ customer, templates, selectOptions, onDone, onCan
   );
   const [errors, setErrors] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
+  useEffect(() => onBusyChange?.(pending), [pending, onBusyChange]);
 
   function chooseTemplate(code: string) {
     setTemplateCode(code);
@@ -91,13 +97,13 @@ export function CustomerForm({ customer, templates, selectOptions, onDone, onCan
 
   return (
     <form
-      className="space-y-3 rounded-lg border border-border bg-surface p-4"
+      className={bare ? 'space-y-3' : 'space-y-3 rounded-lg border border-border bg-surface p-4'}
       onSubmit={(e) => {
         e.preventDefault();
         submit();
       }}
     >
-      <h3 className="text-sm font-semibold text-foreground">{customer ? 'Edit customer' : 'New customer'}</h3>
+      {!bare && <h3 className="text-sm font-semibold text-foreground">{customer ? 'Edit customer' : 'New customer'}</h3>}
       {errors.length > 0 && (
         <div role="alert" className="rounded-md border border-destructive/30 bg-destructive-subtle px-3 py-2 text-sm text-destructive">
           <ul className="list-disc pl-4">
@@ -162,4 +168,20 @@ export function CustomerForm({ customer, templates, selectOptions, onDone, onCan
 export function customerFormValues(row: object): Row {
   const r = row as Row;
   return Object.fromEntries(CUSTOMER_FIELDS.map((f) => [f.name, r[f.name] ?? null]));
+}
+
+/** The customer form in a popup. It can't be closed while a save is running. */
+export function CustomerFormDialog(props: Omit<Props, 'bare' | 'onBusyChange'>) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open && !busy) props.onCancel(); }}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{props.customer ? 'Edit customer' : 'New customer'}</DialogTitle>
+          <DialogDescription>Saved to Business Central first, then to Nexus.</DialogDescription>
+        </DialogHeader>
+        <CustomerForm {...props} bare onBusyChange={setBusy} />
+      </DialogContent>
+    </Dialog>
+  );
 }
