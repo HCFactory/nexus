@@ -34,11 +34,21 @@ describe('getSyncOverview', () => {
       environment: 'Production',
       autoSync: true,
       runs: {
-        full: { startedAt: '2026-11-18T20:00:00Z', finishedAt: '2026-11-18T20:02:00Z', trigger: 'scheduled', complete: true, error: null },
+        full: { startedAt: '2026-11-18T20:00:00Z', finishedAt: '2026-11-18T20:02:00Z', trigger: 'scheduled', complete: true, error: null, unfinished: false },
         lists: null,
-        light: { startedAt: '2026-11-18T21:45:00Z', finishedAt: null, trigger: 'manual', complete: null, error: null },
+        light: { startedAt: '2026-11-18T21:45:00Z', finishedAt: null, trigger: 'manual', complete: null, error: null, unfinished: expect.any(Boolean) },
       },
     });
+  });
+
+  it('a run still unfinished after 15 minutes is marked unfinished; a recent one is not', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-18T21:50:00Z'));
+    const o = await getSyncOverview();
+    expect(o?.runs.light?.unfinished).toBe(false);
+    vi.setSystemTime(new Date('2026-11-18T22:01:00Z'));
+    expect((await getSyncOverview())?.runs.light?.unfinished).toBe(true);
+    vi.useRealTimers();
   });
 
   it('is admin only', async () => {

@@ -9,6 +9,8 @@ export interface SyncRunSummary {
   trigger: 'manual' | 'scheduled';
   complete: boolean | null;
   error: string | null;
+  /** Started over 15 minutes ago and never finished (stopped or timed out). */
+  unfinished: boolean;
 }
 
 export interface SyncOverview {
@@ -16,6 +18,9 @@ export interface SyncOverview {
   autoSync: boolean;
   runs: Record<'full' | 'lists' | 'light', SyncRunSummary | null>;
 }
+
+// Longer than any sync can run (5 min function limit; the lock expires at 10).
+const UNFINISHED_AFTER_MS = 15 * 60 * 1000;
 
 type RunRow = { started_at: string; finished_at: string | null; trigger: 'manual' | 'scheduled'; complete: boolean | null; error: string | null };
 
@@ -49,7 +54,9 @@ export async function getSyncOverview(): Promise<SyncOverview | null> {
       .limit(1)
       .maybeSingle();
     const r = data as RunRow | null;
-    return r ? { startedAt: r.started_at, finishedAt: r.finished_at, trigger: r.trigger, complete: r.complete, error: r.error } : null;
+    if (!r) return null;
+    const unfinished = r.finished_at === null && Date.now() - new Date(r.started_at).getTime() > UNFINISHED_AFTER_MS;
+    return { startedAt: r.started_at, finishedAt: r.finished_at, trigger: r.trigger, complete: r.complete, error: r.error, unfinished };
   };
   const [full, lists, light] = await Promise.all([latest('full'), latest('lists'), latest('light')]);
   const c = conn as { display_name?: string; auto_sync?: boolean } | null;

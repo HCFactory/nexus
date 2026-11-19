@@ -27,6 +27,7 @@ import {
 import type { createServiceClient } from '@/lib/supabase/server';
 import type { BusinessCentralConnection } from '@/types/database';
 
+import { acquireSyncLock, releaseSyncLock } from './syncLock';
 import { SyncInProgressError } from './syncRuns';
 
 /** light: customers, card fields, ship-tos (every 15 min). full: everything (every 2 h). */
@@ -147,24 +148,9 @@ export async function runReceivablesSync(o: {
   const now = new Date().toISOString();
   const lockUntil = new Date(Date.now() + LOCK_TIMEOUT_MS).toISOString();
 
-  if (
-    connection.sync_in_progress_since &&
-    (!connection.sync_in_progress_timeout_at || connection.sync_in_progress_timeout_at > now)
-  ) {
-    throw new SyncInProgressError(
-      `Sync already in progress by ${connection.sync_in_progress_by ?? 'an automatic sync'} since ${connection.sync_in_progress_since}`
-    );
+  if (!(await acquireSyncLock(supabase, connection.id, lockedBy, now, lockUntil))) {
+    throw new SyncInProgressError('A sync is already running for this environment. Try again in a few minutes.');
   }
-
-  await supabase
-    .from('business_central_connections')
-    .update({
-      sync_in_progress_by: lockedBy,
-      sync_in_progress_since: now,
-      sync_in_progress_timeout_at: lockUntil,
-      updated_at: now,
-    })
-    .eq('id', connection.id);
 
   try {
     const bcClient = await createBcClientForOrg(orgId, connection.id);
@@ -331,33 +317,20 @@ export async function runReceivablesSync(o: {
     }
 
     const failures = results.filter((r) => r.error);
-    await supabase
-      .from('business_central_connections')
-      .update({
-        last_pulled_at: now,
-        last_error: failures.length ? failures.map((f) => `${f.entityType}: ${f.error}`).join('; ') : null,
-        sync_in_progress_by: null,
-        sync_in_progress_since: null,
-        sync_in_progress_timeout_at: null,
-        updated_at: now,
-      })
-      .eq('id', connection.id);
+    await releaseSyncLock(supabase, connection.id, now, {
+      // Only the full sync pulls invoices and ledger entries.
+      ...(kind === 'full' ? { last_pulled_at: now } : {}),
+      last_error: failures.length ? failures.map((f) => `${f.entityType}: ${f.error}`).join('; ') : null,
+    });
 
     // 'layout' also refreshes customer profiles and invoice pages under these.
     revalidatePath('/customers', 'layout');
     revalidatePath('/receivables', 'layout');
     return results;
   } catch (error) {
-    await supabase
-      .from('business_central_connections')
-      .update({
-        last_error: error instanceof Error ? error.message : 'Receivables sync failed',
-        sync_in_progress_by: null,
-        sync_in_progress_since: null,
-        sync_in_progress_timeout_at: null,
-        updated_at: now,
-      })
-      .eq('id', connection.id);
+    await releaseSyncLock(supabase, connection.id, now, {
+      last_error: error instanceof Error ? error.message : 'Receivables sync failed',
+    });
     throw error;
   }
 }

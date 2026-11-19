@@ -46,7 +46,9 @@ function LastRun({ run }: { run: SyncRunSummary | null }) {
       <div className="flex flex-wrap items-center gap-2">
         <span>{when}</span>
         <span className="text-foreground-subtle">· {run.trigger === 'scheduled' ? 'automatic' : 'manual'}</span>
-        {run.finishedAt === null ? (
+        {run.unfinished ? (
+          <Badge variant="destructive">Did not finish</Badge>
+        ) : run.finishedAt === null ? (
           <Badge variant="warning">In progress</Badge>
         ) : run.complete ? (
           <Badge variant="success">Complete</Badge>
@@ -66,6 +68,7 @@ export function SyncSection({ overview }: { overview: SyncOverview | null }) {
   const [round, setRound] = useState(0);
   const [outcome, setOutcome] = useState<Partial<Record<RowKey, { errors: string[]; message?: string }>>>({});
   const stop = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   if (!overview) {
     return <p className="text-sm text-foreground-muted">Select a Business Central environment to see its syncs.</p>;
@@ -87,6 +90,7 @@ export function SyncSection({ overview }: { overview: SyncOverview | null }) {
     setRunning(key);
     setRound(1);
     stop.current = false;
+    setStopping(false);
     try {
       let parts: Part[];
       if (key === 'lists') {
@@ -145,9 +149,17 @@ export function SyncSection({ overview }: { overview: SyncOverview | null }) {
                 <td className="px-4 py-3 text-right align-top">
                   {running === r.key ? (
                     <div className="flex items-center justify-end gap-2 text-xs text-foreground-subtle">
-                      {r.key === 'lists' ? 'Syncing…' : `Round ${round}`}
-                      {r.key !== 'lists' && (
-                        <Button type="button" variant="ghost" size="sm" onClick={() => (stop.current = true)}>
+                      {r.key === 'lists' ? 'Syncing…' : stopping ? 'Stopping…' : `Round ${round}`}
+                      {r.key !== 'lists' && !stopping && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            stop.current = true;
+                            setStopping(true);
+                          }}
+                        >
                           Stop
                         </Button>
                       )}

@@ -7,10 +7,13 @@ import { createServiceClient } from '@/lib/supabase/server';
 import type { BusinessCentralConnection } from '@/types/database';
 
 // Called by Supabase pg_cron (every 15 min: light, every 2 h: full). Vercel
-// Hobby allows ~5 min per call; full rounds stop starting after 4 min.
+// Hobby allows 300 s per call: stay under 270 s, and only start a round when a
+// worst-case round still fits (full ≈ 60 s receivables + 30 s cards + 40 s
+// lines + page fetches and ship-tos; light ≈ 30 s cards + customers + ship-tos).
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
-const FULL_BUDGET_MS = 240_000;
+const LIMIT_MS = 270_000;
+const WORST_ROUND_MS = { full: 160_000, light: 90_000 } as const;
 
 function authorized(header: string | null, secret: string): boolean {
   const given = Buffer.from(header?.replace(/^Bearer\s+/i, '') ?? '');
@@ -36,7 +39,8 @@ export async function POST(request: Request): Promise<Response> {
     kind,
     connections: connections.map((c) => c.id),
     nowMs: () => Date.now(),
-    budgetMs: FULL_BUDGET_MS,
+    limitMs: LIMIT_MS,
+    worstRoundMs: WORST_ROUND_MS[kind],
     round: (connectionId) => {
       const connection = byId.get(connectionId)!;
       const orgId = connection.organization_id;

@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
   pullShipTos: vi.fn(),
   pullPriceLists: vi.fn(),
   calls: [] as string[],
+  lockFree: true,
+  lastLight: null as null | { started_at: string; complete: boolean | null },
+  connUpdates: [] as Record<string, unknown>[],
   runAll: vi.fn(),
   revalidate: vi.fn(),
   syncLines: vi.fn(),
@@ -25,11 +28,19 @@ vi.mock('@/lib/businessCentral/activeConnection', () => ({
 vi.mock('@/lib/supabase/server', () => {
   const make = (table: string) => {
     const q: Record<string, unknown> = {};
-    for (const m of ['select', 'eq', 'order', 'update']) q[m] = () => q;
+    let isLock = false;
+    for (const m of ['select', 'eq', 'order']) q[m] = () => q;
+    q.update = (row: Record<string, unknown>) => (table === 'business_central_connections' && mocks.connUpdates.push(row), q);
+    q.or = () => { isLock = true; return q; };
     q.upsert = (row: Record<string, unknown>) => (mocks.upserts.push({ table, row }), q);
     q.range = () => Promise.resolve({ data: [], error: null });
-    q.maybeSingle = () => Promise.resolve({ data: table === 'business_central_sync_checkpoints' ? mocks.checkpoint : null, error: null });
-    q.then = (r: (v: unknown) => unknown) => r({ data: null, error: null });
+    q.maybeSingle = () => Promise.resolve({
+      data: table === 'business_central_sync_checkpoints' ? mocks.checkpoint : table === 'bc_sync_runs' ? mocks.lastLight : null,
+      error: null,
+    });
+    q.limit = () => q;
+    q.gte = () => q;
+    q.then = (r: (v: unknown) => unknown) => r({ data: isLock ? (mocks.lockFree ? [{ id: 'bc-1' }] : []) : null, error: null });
     return q;
   };
   return { createServiceClient: () => ({ from: make }) };
@@ -73,6 +84,9 @@ beforeEach(() => {
   mocks.syncLines.mockReset().mockResolvedValue({ entityType: 'sales_invoice_line', recordsSynced: 0, complete: true, cursor: null, error: null });
   mocks.checkpoint = null;
   mocks.upserts.length = 0;
+  mocks.lockFree = true;
+  mocks.lastLight = null;
+  mocks.connUpdates.length = 0;
   mocks.pullShipTos.mockReset().mockResolvedValue({ upserted: 0, deleted: 0 });
   mocks.pullPriceLists.mockReset().mockResolvedValue({ lines: 0 });
 });
@@ -209,5 +223,38 @@ describe('light sync (Customers page, every 15 minutes)', () => {
     expect(adapters.map((a) => a.entityType)).toEqual(['customer', 'sales_invoice', 'customer_ledger_entry']);
     expect(mocks.pullPriceLists).toHaveBeenCalledTimes(1);
     expect(mocks.syncLines).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the environment lock', () => {
+  it('a held lock refuses before syncing anything', async () => {
+    mocks.lockFree = false;
+    await expect(syncCustomersLight()).rejects.toThrow('A sync is already running for this environment');
+    expect(mocks.runAll).not.toHaveBeenCalled();
+  });
+
+  it('only the full sync updates last_pulled_at', async () => {
+    await syncCustomersLight();
+    const lightRelease = mocks.connUpdates.find((u) => 'last_error' in u);
+    expect(lightRelease).not.toHaveProperty('last_pulled_at');
+    mocks.connUpdates.length = 0;
+    await syncBusinessCentralReceivables();
+    expect(mocks.connUpdates.find((u) => 'last_error' in u)).toHaveProperty('last_pulled_at');
+  });
+});
+
+describe('quick sync cooldown', () => {
+  it('refuses within 60 s of a finished quick sync', async () => {
+    mocks.lastLight = { started_at: new Date(Date.now() - 20_000).toISOString(), complete: true };
+    await expect(syncCustomersLight()).rejects.toThrow('Customers were just synced. Try again in a minute.');
+    expect(mocks.runAll).not.toHaveBeenCalled();
+  });
+
+  it('allows the next round of an unfinished quick sync, and any sync after a minute', async () => {
+    mocks.lastLight = { started_at: new Date(Date.now() - 20_000).toISOString(), complete: false };
+    await syncCustomersLight();
+    mocks.lastLight = { started_at: new Date(Date.now() - 61_000).toISOString(), complete: true };
+    await syncCustomersLight();
+    expect(mocks.runAll).toHaveBeenCalledTimes(2);
   });
 });

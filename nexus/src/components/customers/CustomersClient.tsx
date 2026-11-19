@@ -59,6 +59,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
   const [syncRound, setSyncRound] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const stopSync = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -76,6 +77,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
     setSyncError(null);
     setSyncing(true);
     stopSync.current = false;
+    setStopping(false);
     let previous: SyncEntityResult[] | null = null;
     try {
       for (let round = 1; round <= MAX_SYNC_ROUNDS; round++) {
@@ -154,10 +156,20 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
         )}
         {syncing && (
           <span className="flex items-center gap-2 text-xs text-foreground-subtle">
-            Round {syncRound} — keep this page open
-            <Button type="button" variant="ghost" size="sm" onClick={() => (stopSync.current = true)}>
-              Stop
-            </Button>
+            {stopping ? 'Stopping… (finishing this round)' : `Round ${syncRound} — keep this page open`}
+            {!stopping && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  stopSync.current = true;
+                  setStopping(true);
+                }}
+              >
+                Stop
+              </Button>
+            )}
           </span>
         )}
       </header>

@@ -25,9 +25,9 @@ const overview = (over: Partial<SyncOverview> = {}): SyncOverview => ({
   environment: 'Production',
   autoSync: true,
   runs: {
-    full: { startedAt: '2026-11-18T20:00:00Z', finishedAt: '2026-11-18T20:02:00Z', trigger: 'scheduled', complete: true, error: null },
+    full: { startedAt: '2026-11-18T20:00:00Z', finishedAt: '2026-11-18T20:02:00Z', trigger: 'scheduled', complete: true, error: null, unfinished: false },
     lists: null,
-    light: { startedAt: '2026-11-18T21:45:00Z', finishedAt: '2026-11-18T21:45:05Z', trigger: 'manual', complete: false, error: 'customer: Ship-to addresses: 404' },
+    light: { startedAt: '2026-11-18T21:45:00Z', finishedAt: '2026-11-18T21:45:05Z', trigger: 'manual', complete: false, error: 'customer: Ship-to addresses: 404', unfinished: false },
   },
   ...over,
 });
@@ -45,6 +45,12 @@ describe('SyncSection', () => {
     expect(within(row('Customers \\(quick\\)')).getByText('customer: Ship-to addresses: 404')).toBeInTheDocument();
   });
 
+  it('a run that never finished says so instead of "In progress"', () => {
+    render(<SyncSection overview={overview({ runs: { full: { startedAt: '2026-11-18T08:00:00Z', finishedAt: null, trigger: 'scheduled', complete: null, error: null, unfinished: true }, lists: null, light: null } })} />);
+    expect(within(row('Customers & Receivables')).getByText('Did not finish')).toBeInTheDocument();
+    expect(within(row('Customers & Receivables')).queryByText('In progress')).toBeNull();
+  });
+
   it('without Sync automatically, says the schedule is off for this environment', () => {
     render(<SyncSection overview={overview({ autoSync: false })} />);
     expect(within(row('Customers & Receivables')).getByText(/not automatic in Production/i)).toBeInTheDocument();
@@ -58,6 +64,18 @@ describe('SyncSection', () => {
     fireEvent.click(within(row('Customers & Receivables')).getByRole('button', { name: 'Sync now' }));
     await waitFor(() => expect(actions.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(actions.refresh).toHaveBeenCalled());
+  });
+
+  it('Stop shows "Stopping…" until the current round ends', async () => {
+    let finish: (v: unknown) => void = () => {};
+    actions.syncBusinessCentralReceivables.mockImplementationOnce(() => new Promise((res) => { finish = res; }));
+    render(<SyncSection overview={overview()} />);
+    fireEvent.click(within(row('Customers & Receivables')).getByRole('button', { name: 'Sync now' }));
+    fireEvent.click(await within(row('Customers & Receivables')).findByRole('button', { name: 'Stop' }));
+    expect(within(row('Customers & Receivables')).getByText('Stopping…')).toBeInTheDocument();
+    finish([r(false, 500, 'a')]);
+    await waitFor(() => expect(within(row('Customers & Receivables')).getByRole('button', { name: 'Sync now' })).toBeInTheDocument());
+    expect(actions.syncBusinessCentralReceivables).toHaveBeenCalledTimes(1);
   });
 
   it('Customer lists syncs every list once and shows a failing list', async () => {

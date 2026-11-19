@@ -153,6 +153,7 @@ describe('Sync keeps going until everything is complete', () => {
     clickSync();
     expect(await screen.findByText(/round 2/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(screen.getByText(/stopping…/i)).toBeInTheDocument();
     finishRound2([r('sales_invoice_line', 300, false, 'inv-100')]);
     expect(await screen.findByText('Incomplete — click Sync again to continue')).toBeInTheDocument();
     expect(sync.syncCustomersLight).toHaveBeenCalledTimes(2);

@@ -36,10 +36,30 @@ export async function syncCustomersLight(): Promise<SyncEntityResult[]> {
   return runManualSync(orgId, user.id, 'light');
 }
 
+// Anyone who can view customers may run the quick sync: once one finishes,
+// the next can start only after this long (follow-up rounds of an unfinished
+// sync are not held back).
+const LIGHT_COOLDOWN_MS = 60_000;
+
 async function runManualSync(orgId: string, userId: string, kind: ReceivablesSyncKind): Promise<SyncEntityResult[]> {
   const supabase = createServiceClient();
   const connection = await resolveActiveBcConnection(orgId, userId);
   if (!connection) throw new Error('Select a Business Central environment first');
+  if (kind === 'light') {
+    // Missing table (migration 072 not applied) reads as no recent run.
+    const { data } = await supabase
+      .from('bc_sync_runs')
+      .select('started_at, complete')
+      .eq('bc_connection_id', connection.id)
+      .eq('kind', 'light')
+      .order('started_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const last = data as { started_at: string; complete: boolean | null } | null;
+    if (last?.complete === true && Date.now() - new Date(last.started_at).getTime() < LIGHT_COOLDOWN_MS) {
+      throw new Error('Customers were just synced. Try again in a minute.');
+    }
+  }
   return recordSyncRun(supabase, { orgId, connectionId: connection.id, kind, trigger: 'manual', triggeredBy: userId }, () =>
     runReceivablesSync({ supabase, orgId, connection, kind, lockedBy: userId })
   );

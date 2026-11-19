@@ -37,3 +37,12 @@ Apply migration 072, add `CRON_SECRET` in Vercel, enable `pg_cron` and `pg_net`,
 - Row names "Customers & Receivables" and "Customer lists".
 - Customer lists stay manual. Items sync stays on the Items page.
 - The environment is chosen by a tick box, not by matching the name "Production".
+
+## After review (2026-11-18)
+
+- **Atomic lock:** the lock is taken in one guarded update (`sync_in_progress_since is null or timeout < now`), and a run releases only its own lock. Before, a saved copy of the connection was checked, so an automatic round could take over a manual run.
+- **Time limit:** scheduled runs stay under 270 s. A round only starts if a worst-case round still fits (full 160 s, light 90 s). An environment that doesn't fit waits for the next schedule.
+- **Stale rows:** a run unfinished after 15 minutes shows "Did not finish".
+- **Quick-sync cooldown:** once a quick sync finishes, the next can start only after 60 s. Follow-up rounds of an unfinished one aren't held back.
+- **`last_pulled_at`:** only the full sync sets it.
+- **Stop:** shows "Stopping…" until the current round ends.
