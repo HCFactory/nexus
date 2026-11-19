@@ -28,6 +28,8 @@ interface Props {
   billcom: ReactNode;
   /** The card-charge panel (streamed in by the page). */
   cardCharge?: ReactNode;
+  /** The notes panel (rendered by the page); shown in its own block to the right. */
+  notes?: ReactNode;
   /** The change log card (rendered by the page). */
   changes?: ReactNode;
   /** A finished change cancelled this invoice and posted this one instead. */
@@ -35,7 +37,7 @@ interface Props {
 }
 
 /** A posted BC invoice as Nexus holds it: header, Bill.com side, lines and totals. */
-export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, cardCharge = null, changes = null, replacedBy = null }: Props) {
+export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, cardCharge = null, notes = null, changes = null, replacedBy = null }: Props) {
   const cur = invoice.currency_code;
   const title = invoice.external_document_number || invoice.bc_invoice_number || '—';
   return (
@@ -59,35 +61,48 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
         </p>
       )}
 
-      <section className={`${CARD} grid gap-4 sm:grid-cols-3 lg:grid-cols-6`}>
-        <Field label="Invoice #">{invoice.external_document_number || '—'}</Field>
-        <Field label="Customer">
-          {invoice.customer_number ? (
-            <Link href={`/customers?search=${encodeURIComponent(invoice.customer_number)}`} className="text-primary hover:underline">
-              {invoice.customer_name ?? invoice.customer_number}
-            </Link>
-          ) : (
-            invoice.customer_name ?? '—'
-          )}
-        </Field>
-        <Field label="Invoice date">{formatDate(invoice.invoice_date)}</Field>
-        <Field label="Due date">{formatDate(invoice.due_date)}</Field>
-        <Field label="BC status">{invoice.status ?? '—'}</Field>
-        <Field label="Sales order">
-          {salesOrder ? (
-            <Link href={`/sales-orders/${salesOrder.id}`} className="text-primary hover:underline">
-              {salesOrder.bcOrderNumber ?? 'Open order'} →
-            </Link>
-          ) : (
-            '—'
-          )}
-        </Field>
-      </section>
+      {/* Info, Bill.com and card payment stack on the left; Notes sit to their right (like a sales order). */}
+      <div className={`grid gap-4 ${notes ? 'lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]' : ''}`}>
+        <div data-testid="invoice-main" className="space-y-4">
+          <section className={`${CARD} grid grid-cols-2 gap-4 sm:grid-cols-3`}>
+            <Field label="Customer">
+              {invoice.customer_number ? (
+                <Link href={`/customers?search=${encodeURIComponent(invoice.customer_number)}`} className="text-primary hover:underline">
+                  {invoice.customer_name ?? invoice.customer_number}
+                </Link>
+              ) : (
+                invoice.customer_name ?? '—'
+              )}
+            </Field>
+            <Field label="Invoice date">{formatDate(invoice.invoice_date)}</Field>
+            <Field label="Due date">{formatDate(invoice.due_date)}</Field>
+            <Field label="BC status">{invoice.status ?? '—'}</Field>
+            <Field label="Sales order">
+              {salesOrder ? (
+                <Link href={`/sales-orders/${salesOrder.id}`} className="text-primary hover:underline">
+                  {salesOrder.bcOrderNumber ?? 'Open order'} →
+                </Link>
+              ) : (
+                '—'
+              )}
+            </Field>
+          </section>
 
-      {billcom && <section className={CARD}>{billcom}</section>}
+          {billcom && <section className={CARD}>{billcom}</section>}
 
-      {/* The card-charge slot draws its own card, so a hidden panel leaves no empty box. */}
-      {cardCharge}
+          {/* The card-charge slot draws its own card, so a hidden panel leaves no empty box. */}
+          {cardCharge}
+        </div>
+
+        {notes && (
+          <aside data-testid="invoice-notes" className="self-start">
+            <section className={CARD}>
+              <h2 className="mb-3 text-sm font-semibold text-foreground">Notes</h2>
+              {notes}
+            </section>
+          </aside>
+        )}
+      </div>
 
       {changes}
 

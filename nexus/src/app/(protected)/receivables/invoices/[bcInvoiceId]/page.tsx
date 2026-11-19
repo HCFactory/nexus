@@ -3,10 +3,12 @@ import { notFound } from 'next/navigation';
 
 import { getSalesInvoiceBillcomPanel, getSalesInvoicePage, type BillcomPanelInput } from '@/lib/receivables/salesInvoicePage';
 import { getInvoiceChargeView } from '@/app/actions/cardPayments';
+import { listSalesInvoiceNotes } from '@/app/actions/salesInvoiceNotes';
 import { requireOrganizationContext } from '@/lib/auth/currentUserAccess';
 import { loadChargePanel } from '@/lib/stripe/chargePanelLoad';
 import { CardChargePanel } from '@/components/receivables/CardChargePanel';
 import { BillcomInvoicePanel } from '@/components/receivables/BillcomInvoicePanel';
+import { InvoiceNotes } from '@/components/receivables/InvoiceNotes';
 import { InvoiceChangesCard } from '@/components/receivables/InvoiceChangesCard';
 import { CARD, SalesInvoiceDetail } from '@/components/receivables/SalesInvoiceDetail';
 
@@ -38,6 +40,19 @@ async function CardChargeSide({ bcInvoiceId, invoiceNumber }: { bcInvoiceId: str
   );
 }
 
+/** Notes on the invoice, streamed in. A failure (e.g. the table isn't set up yet) never breaks the page. */
+async function NotesSide({ bcInvoiceId }: { bcInvoiceId: string }) {
+  let loaded: { notes: Awaited<ReturnType<typeof listSalesInvoiceNotes>>; canEdit: boolean } | null = null;
+  try {
+    const [notes, ctx] = await Promise.all([listSalesInvoiceNotes(bcInvoiceId), requireOrganizationContext()]);
+    loaded = { notes, canEdit: Boolean(ctx.access.canViewReceivables) };
+  } catch (e) {
+    console.error(`[invoice page] could not load notes of ${bcInvoiceId}:`, e);
+  }
+  if (!loaded) return <p className="text-sm text-foreground-muted">Notes couldn&apos;t be loaded right now.</p>;
+  return <InvoiceNotes bcInvoiceId={bcInvoiceId} canEdit={loaded.canEdit} initialNotes={loaded.notes} />;
+}
+
 export default async function SalesInvoicePage({ params }: { params: Promise<{ bcInvoiceId: string }> }) {
   const { bcInvoiceId } = await params;
   const data = await getSalesInvoicePage(bcInvoiceId);
@@ -50,6 +65,11 @@ export default async function SalesInvoicePage({ params }: { params: Promise<{ b
       salesOrder={data.salesOrder}
       replacedBy={data.replacedBy}
       changes={<InvoiceChangesCard changes={data.changes} />}
+      notes={
+        <Suspense fallback={<p className="text-sm text-foreground-muted">Loading notes…</p>}>
+          <NotesSide bcInvoiceId={data.invoice.bc_invoice_id} />
+        </Suspense>
+      }
       cardCharge={
         <Suspense fallback={<section className={CARD}><p className="text-sm text-foreground-muted">Loading card payments…</p></section>}>
           <CardChargeSide

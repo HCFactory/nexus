@@ -54,10 +54,44 @@ describe('SalesInvoiceDetail', () => {
     expect(screen.getByText('Total').parentElement).toHaveTextContent('45.23');
   });
 
-  it('falls back to the BC Invoice No. in the title and shows — for a blank Invoice #', () => {
+  it('falls back to the BC Invoice No. in the title when there is no Invoice #', () => {
     render(<SalesInvoiceDetail invoice={invoice({ external_document_number: null })} lines={[line()]} salesOrder={null} billcom={null} />);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Invoice INV-100412');
-    expect(screen.getByText('Invoice #').parentElement).toHaveTextContent('—');
+  });
+
+  it('does not repeat the Invoice # in the info block (it is the page title)', () => {
+    render(<SalesInvoiceDetail invoice={invoice()} lines={[line()]} salesOrder={null} billcom={null} />);
+    expect(screen.queryByText('Invoice #')).toBeNull();
+    for (const label of ['Customer', 'Invoice date', 'Due date', 'BC status', 'Sales order']) expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  it('puts the info, Bill.com and card payment blocks in a left column and Notes to their right', () => {
+    render(
+      <SalesInvoiceDetail
+        invoice={invoice()}
+        lines={[]}
+        salesOrder={null}
+        billcom={<p>Bill.com panel</p>}
+        cardCharge={<section>Card panel</section>}
+        notes={<p>Notes body</p>}
+      />,
+    );
+    const main = screen.getByTestId('invoice-main');
+    const side = screen.getByTestId('invoice-notes');
+    expect(within(main).getByText('Customer')).toBeInTheDocument();
+    expect(within(main).getByText('Bill.com panel')).toBeInTheDocument();
+    expect(within(main).getByText('Card panel')).toBeInTheDocument();
+    expect(within(side).getByRole('heading', { name: 'Notes' })).toBeInTheDocument();
+    expect(within(side).getByText('Notes body')).toBeInTheDocument();
+    expect(main.compareDocumentPosition(side) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The lines table stays full width below the columns.
+    expect(main.parentElement?.contains(screen.getByText('No lines'))).toBe(false);
+  });
+
+  it('without a notes block the left column simply fills the row', () => {
+    render(<SalesInvoiceDetail invoice={invoice()} lines={[]} salesOrder={null} billcom={null} />);
+    expect(screen.queryByTestId('invoice-notes')).toBeNull();
+    expect(screen.getByTestId('invoice-main')).toBeInTheDocument();
   });
 
   it('shows No lines when there are none', () => {
@@ -82,7 +116,7 @@ describe('BillcomInvoicePanel', () => {
 
   it('shows status and amount due', () => {
     render(<BillcomInvoicePanel panel={{ kind: 'found', status }} />);
-    expect(screen.getByText(/Open · \$45\.23 due of \$45\.23/)).toBeInTheDocument();
+    expect(screen.getByText('Bill.com:').parentElement).toHaveTextContent('Bill.com: Open · $45.23 due of $45.23');
   });
 
   it.each([

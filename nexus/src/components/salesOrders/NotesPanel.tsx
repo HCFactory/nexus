@@ -5,13 +5,32 @@ import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { addSalesOrderNote, deleteSalesOrderNote, updateSalesOrderNote } from '@/app/actions/salesOrderNotes';
 import { GlassButton as Button } from './GlassButton';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import type { SalesOrderNoteView } from '@/types/salesOrders';
+import type { NoteView } from '@/types/salesOrders';
+
+type Saved = { ok: true; note: NoteView } | { ok: false; error: string };
+
+/** Where notes are saved: sales order notes by default, invoice notes for invoices. */
+export interface NotesActions {
+  add(parentId: string, body: string): Promise<Saved>;
+  update(noteId: string, body: string): Promise<Saved>;
+  remove(noteId: string): Promise<{ ok: true } | { ok: false; error: string }>;
+}
+
+const ORDER_ACTIONS: NotesActions = {
+  add: addSalesOrderNote,
+  update: updateSalesOrderNote,
+  remove: deleteSalesOrderNote,
+};
 
 interface Props {
-  /** null = the order isn't saved yet. */
-  orderId: string | null;
+  /** The order (or invoice) the notes belong to; null = it isn't saved yet. */
+  parentId: string | null;
   canEdit: boolean;
-  initialNotes: SalesOrderNoteView[];
+  initialNotes: NoteView[];
+  /** Defaults to sales order notes. */
+  actions?: NotesActions;
+  /** Shown while there is nothing to attach notes to. */
+  unsavedHint?: string;
 }
 
 const TEXTAREA_CLASS =
@@ -34,24 +53,24 @@ const DELETE_HOVER = 'hover:bg-destructive/15 hover:text-destructive';
 const when = (iso: string) => new Date(iso).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
 /** Timestamped note cards. Notes save immediately, apart from the order form's Save button. */
-export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
+export function NotesPanel({ parentId, canEdit, initialNotes, actions = ORDER_ACTIONS, unsavedHint = 'Save the order to add notes.' }: Props) {
   const [notes, setNotes] = useState(initialNotes);
   const [draft, setDraft] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
-  const [deleting, setDeleting] = useState<SalesOrderNoteView | null>(null);
+  const [deleting, setDeleting] = useState<NoteView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, startTransition] = useTransition();
 
-  if (orderId === null) {
-    return <p className="text-sm text-foreground-muted">Save the order to add notes.</p>;
+  if (parentId === null) {
+    return <p className="text-sm text-foreground-muted">{unsavedHint}</p>;
   }
 
   const add = () => {
     if (busy || draft.trim() === '') return;
     setError(null);
     startTransition(async () => {
-      const res = await addSalesOrderNote(orderId, draft);
+      const res = await actions.add(parentId, draft);
       if (!res.ok) return setError(res.error);
       setNotes((list) => [res.note, ...list]);
       setDraft('');
@@ -62,7 +81,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
     if (busy || editText.trim() === '') return;
     setError(null);
     startTransition(async () => {
-      const res = await updateSalesOrderNote(id, editText);
+      const res = await actions.update(id, editText);
       if (!res.ok) return setError(res.error);
       setNotes((list) => list.map((n) => (n.id === id ? res.note : n)));
       setEditingId(null);
@@ -72,7 +91,7 @@ export function NotesPanel({ orderId, canEdit, initialNotes }: Props) {
   const remove = (id: string) => {
     setError(null);
     startTransition(async () => {
-      const res = await deleteSalesOrderNote(id);
+      const res = await actions.remove(id);
       setDeleting(null);
       if (!res.ok) return setError(res.error);
       setNotes((list) => list.filter((n) => n.id !== id));
