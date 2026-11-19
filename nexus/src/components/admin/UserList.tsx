@@ -8,6 +8,8 @@ import { DesignerAccessLevel, PermissionOverrides, User, UserPermissions, UserRo
 
 interface UserListProps {
   users: User[];
+  /** The admin's organization: users can be added to it (or removed). */
+  organization?: { id: string; name: string } | null;
   onChangePassword: (userId: string, newPassword: string) => Promise<void>;
   onUpdateUserAccess: (userId: string, input: {
     role: UserRole;
@@ -103,6 +105,11 @@ function RoleSummary({ user }: { user: User }) {
         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'admin' ? 'bg-purple-500/15 text-purple-300' : 'bg-surface-overlay text-foreground-muted'}`}>
           {user.role === 'admin' ? 'Admin' : 'User'}
         </span>
+        {user.organization_id === null && (
+          <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-warning-subtle text-warning">
+            No organization
+          </span>
+        )}
         {labels.length === 0 ? (
           <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-surface-overlay text-foreground-muted">
             No functional roles
@@ -122,11 +129,13 @@ function RoleSummary({ user }: { user: User }) {
   );
 }
 
-export function UserList({ users, onChangePassword, onUpdateUserAccess }: UserListProps) {
+export function UserList({ users, organization = null, onChangePassword, onUpdateUserAccess }: UserListProps) {
   const [selectedPasswordUser, setSelectedPasswordUser] = useState<User | null>(null);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [permissionsDraft, setPermissionsDraft] = useState<UserPermissions | null>(null);
   const [draftRole, setDraftRole] = useState<UserRole>('user');
+  // Organization membership; on by default for unassigned users so saving gives them access.
+  const [draftMember, setDraftMember] = useState(true);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loadingPassword, setLoadingPassword] = useState(false);
@@ -142,6 +151,7 @@ export function UserList({ users, onChangePassword, onUpdateUserAccess }: UserLi
   const openAccessEditor = (user: User) => {
     setEditingUser(user);
     setDraftRole(user.role);
+    setDraftMember(user.organization_id === null || user.organization_id === organization?.id);
     setPermissionsDraft(clonePermissions(user));
     setError('');
     setSuccess('');
@@ -204,7 +214,7 @@ export function UserList({ users, onChangePassword, onUpdateUserAccess }: UserLi
     try {
       await onUpdateUserAccess(editingUser.id, {
         role: draftRole,
-        organizationId: editingUser.organization_id,
+        organizationId: organization ? (draftMember ? organization.id : null) : editingUser.organization_id,
         permissions: permissionsDraft,
       });
       setSuccess(`Permissions updated for ${editingUser.display_name}`);
@@ -404,6 +414,14 @@ export function UserList({ users, onChangePassword, onUpdateUserAccess }: UserLi
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
+              {organization && (
+                <RoleToggleCard
+                  title={`Member of ${organization.name}`}
+                  description="Gives access to this organization's data. Turn off to remove their access."
+                  checked={draftMember}
+                  onCheckedChange={setDraftMember}
+                />
+              )}
               <div>
                 <h4 className="text-sm font-semibold text-foreground mb-3">Roles</h4>
                 <div className="grid md:grid-cols-2 gap-4">

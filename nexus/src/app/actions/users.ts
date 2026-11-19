@@ -116,6 +116,9 @@ export async function updateUserAccess(
   ) {
     throw new Error('Admins can only assign users to their own organization');
   }
+  if (userId === adminContext.user.id && input.organizationId === null) {
+    throw new Error("You can't remove yourself from the organization.");
+  }
 
   const permissions = normalizeUserPermissions(input.permissions ?? DEFAULT_PERMISSIONS);
   const permissionsVersion = (targetUser.permissions_version ?? 0) + 1;
