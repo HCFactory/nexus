@@ -138,7 +138,7 @@ export async function sendCardSetupEmail(p: {
   const org = p.organizationName;
   const text = `Hi ${p.customerName},
 
-Thank you for doing business with ${org}! To make paying your invoices quick and easy, we'd like to keep a card on file for your account.
+Thank you for doing business with ${org}! As part of keeping your account up to date, we ask all of our customers to have a card on file. It helps keep everything running smoothly.
 
 You can add your card securely here (it only takes a minute):
 ${p.url}
@@ -153,7 +153,7 @@ ${org}`;
   const e = escapeHtml;
   const html = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #1f2937; max-width: 560px;">
   <p>Hi ${e(p.customerName)},</p>
-  <p>Thank you for doing business with ${e(org)}! To make paying your invoices quick and easy, we'd like to keep a card on file for your account.</p>
+  <p>Thank you for doing business with ${e(org)}! As part of keeping your account up to date, we ask all of our customers to have a card on file. It helps keep everything running smoothly.</p>
   <p>It only takes a minute:</p>
   <p style="margin: 24px 0;">
     <a href="${e(p.url)}" style="background: #2563eb; color: #ffffff; text-decoration: none; padding: 12px 22px; border-radius: 6px; font-weight: 600; display: inline-block;">Add your card securely</a>
