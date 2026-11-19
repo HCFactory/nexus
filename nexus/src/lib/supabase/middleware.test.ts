@@ -18,6 +18,7 @@ describe('updateSession without a signed-in user', () => {
     expect(await redirectsToLogin('/card-setup/abc')).toBe(false);
     expect(await redirectsToLogin('/card-setup/abc/done?session_id=cs_1')).toBe(false);
     expect(await redirectsToLogin('/api/stripe/webhook/11111111-2222-4333-8444-555555555555')).toBe(false);
+    expect(await redirectsToLogin('/api/cron/sync')).toBe(false);
   });
 
   it('still sends other pages to login', async () => {

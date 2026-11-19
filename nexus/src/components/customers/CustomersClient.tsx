@@ -8,11 +8,12 @@ import { Pencil, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { syncBusinessCentralReceivables } from "@/app/actions/businessCentralReceivables";
+import { syncCustomersLight } from "@/app/actions/businessCentralReceivables";
 import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
 import type { BillcomCustomerView } from "@/app/actions/billcomCustomers";
 import { CustomerFormDialog, customerFormValues } from "./CustomerForm";
 import { createdCustomerHref } from "./createdCustomerHref";
+import { shouldSyncAgain } from "@/lib/businessCentral/sync/shouldSyncAgain";
 import { BillcomPushPanel, type BillcomPushPanelHandle } from "./BillcomPushPanel";
 import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
 import { formatMoney } from "@/lib/format";
@@ -38,17 +39,6 @@ const ROWS_PER_PAGE = 200;
 /** Safety cap on automatic rounds; each round is one sync (about 1–2 minutes). */
 const MAX_SYNC_ROUNDS = 200;
 
-/**
- * Run another round while some part is incomplete without an error and moved
- * forward (synced records, or its cursor changed since the last round). An
- * error alone (e.g. a missing BC page) never repeats on its own.
- */
-function shouldSyncAgain(results: SyncEntityResult[], previous: SyncEntityResult[] | null): boolean {
-  return results.some(
-    (r, i) => !r.complete && !r.error && (r.recordsSynced > 0 || r.cursor !== previous?.[i]?.cursor)
-  );
-}
-
 export function CustomersClient({ customers, canSync, initialSearch, edit, billcom }: CustomersClientProps) {
   const router = useRouter();
   const billcomOn = billcom?.on === true;
@@ -69,6 +59,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
   const [syncRound, setSyncRound] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const stopSync = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -86,11 +77,14 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
     setSyncError(null);
     setSyncing(true);
     stopSync.current = false;
+    setStopping(false);
     let previous: SyncEntityResult[] | null = null;
     try {
       for (let round = 1; round <= MAX_SYNC_ROUNDS; round++) {
         setSyncRound(round);
-        const results = await syncBusinessCentralReceivables();
+        // Light sync: new and changed customers, card fields, ship-tos. The full
+        // sync lives in Admin → Sync.
+        const results = await syncCustomersLight();
         setSyncResults(results);
         if (stopSync.current || !shouldSyncAgain(results, previous)) {
           // New or changed customers were queued for Bill.com; send them now.
@@ -162,10 +156,20 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
         )}
         {syncing && (
           <span className="flex items-center gap-2 text-xs text-foreground-subtle">
-            Round {syncRound} — keep this page open
-            <Button type="button" variant="ghost" size="sm" onClick={() => (stopSync.current = true)}>
-              Stop
-            </Button>
+            {stopping ? 'Stopping… (finishing this round)' : `Round ${syncRound} — keep this page open`}
+            {!stopping && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  stopSync.current = true;
+                  setStopping(true);
+                }}
+              >
+                Stop
+              </Button>
+            )}
           </span>
         )}
       </header>

@@ -239,6 +239,17 @@ describe('createBcConnection', () => {
 // ---------------------------------------------------------------------------
 // deleteBcConnection — deleting the org's only environment is blocked
 // ---------------------------------------------------------------------------
+describe('updateBcConnection: Sync automatically', () => {
+  it('saves auto_sync when given and leaves it alone when not', async () => {
+    const supa = createSupabaseMock(() => ({ data: { id: 'c1' }, error: null }));
+    mocks.createServiceClient.mockReturnValue(supa.client);
+    await updateBcConnection('c1', { autoSync: true });
+    await updateBcConnection('c1', { displayName: 'Production' });
+    expect(supa.updates[0]).toMatchObject({ auto_sync: true });
+    expect(supa.updates[1]).not.toHaveProperty('auto_sync');
+  });
+});
+
 describe('updateBcConnection: Bill.com via its BC connector', () => {
   it('saves the switch when given and leaves it alone when not', async () => {
     const supa = createSupabaseMock(() => ({ data: { id: 'c1' }, error: null }));

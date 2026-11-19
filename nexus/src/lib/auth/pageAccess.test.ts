@@ -25,9 +25,9 @@ describe('canOpenPath', () => {
     }
   });
 
-  it('non-admins never open Dashboard, Analytics or Customer lists (and their sub-pages)', () => {
+  it('non-admins never open Dashboard, Analytics, Customer lists or Items (and their sub-pages)', () => {
     for (const a of [plain, purchaser, vendor, designer, customersUser]) {
-      for (const p of ['/dashboard', '/analytics', '/customer-lists', '/customer-lists/tax-areas']) expect(canOpenPath(a, p)).toBe(false);
+      for (const p of ['/dashboard', '/analytics', '/customer-lists', '/customer-lists/tax-areas', '/items', '/items/abc']) expect(canOpenPath(a, p)).toBe(false);
     }
   });
 
@@ -46,7 +46,7 @@ describe('canOpenPath', () => {
     expect(canOpenPath(customersUser, '/customers')).toBe(true);
     expect(canOpenPath(plain, '/customers')).toBe(false);
     expect(canOpenPath(purchaser, '/receivables/invoices')).toBe(false);
-    expect(canOpenPath(plain, '/items')).toBe(true);
+    expect(canOpenPath(admin, '/items')).toBe(true);
     expect(canOpenPath(plain, '/settings')).toBe(true);
   });
 });
@@ -57,6 +57,6 @@ describe('landingPath', () => {
     expect(landingPath(customersUser)).toBe('/customers');
     expect(landingPath(vendor)).toBe('/artwork');
     expect(landingPath(purchaser)).toBe('/orders');
-    expect(landingPath(plain)).toBe('/items');
+    expect(landingPath(plain)).toBe('/fnforders');
   });
 });

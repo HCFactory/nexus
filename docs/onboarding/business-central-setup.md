@@ -78,6 +78,55 @@ Payment terms, shipment methods, tax areas, customers, invoices and sales docume
   10. **Customer templates**, last (this also pulls number series)
 - Check one customer and one invoice against BC.
 
+## 5b. Automatic syncs (every 15 minutes and every 2 hours)
+
+Nexus copies BC changes on its own for environments with **Sync automatically** ticked (Admin → Business Central Environments → Edit). Usually only Production.
+- **Light sync, every 15 minutes:** new and changed customers, card fields and ship-to addresses.
+- **Full sync, every 2 hours:** everything, including invoices, ledger entries, invoice lines and price lists.
+
+Supabase's scheduler starts them, because Vercel Hobby can only schedule once a day. You can see each run in **Admin → Sync**.
+
+1. **Migration:** apply `072_scheduled_sync.sql`.
+2. **Secret:** make a long random value, for example with a password manager or `openssl rand -hex 32` in your own terminal. Don't paste it into chat.
+   - In **Vercel → Environment Variables (Production)**, add `CRON_SECRET` = that value, then **Redeploy**.
+3. **Supabase → Database → Extensions:** enable **pg_cron** and **pg_net**.
+4. **Supabase → SQL editor:** run the following, replacing `PASTE-THE-SECRET` and the site address:
+
+```sql
+-- The secret, stored encrypted in Supabase Vault (same value as CRON_SECRET in Vercel).
+select vault.create_secret('PASTE-THE-SECRET', 'nexus_cron_secret');
+
+-- Light sync every 15 minutes.
+select cron.schedule('nexus-sync-light', '*/15 * * * *', $$
+  select net.http_post(
+    url := 'https://nexus.nomshcf.com/api/cron/sync?kind=light',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'nexus_cron_secret'),
+      'Content-Type', 'application/json'),
+    timeout_milliseconds := 300000
+  );
+$$);
+
+-- Full sync every 2 hours (at 7 minutes past, away from the light runs).
+select cron.schedule('nexus-sync-full', '7 */2 * * *', $$
+  select net.http_post(
+    url := 'https://nexus.nomshcf.com/api/cron/sync?kind=full',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'nexus_cron_secret'),
+      'Content-Type', 'application/json'),
+    timeout_milliseconds := 300000
+  );
+$$);
+```
+
+5. **Tick the box:** tick **Sync automatically** on Production.
+6. **Check it:** after 15 minutes, Admin → Sync shows "Customers (quick)" last run as **automatic**. Supabase → Integrations → Cron also lists each run.
+
+**Good to know:**
+- **To pause:** run `select cron.unschedule('nexus-sync-light');` and/or `select cron.unschedule('nexus-sync-full');`, or untick Sync automatically.
+- **To change the secret:** run `select vault.update_secret((select id from vault.secrets where name = 'nexus_cron_secret'), 'NEW-SECRET');`, update `CRON_SECRET` in Vercel to match, and redeploy.
+- **If two syncs overlap:** a scheduled sync that finds another sync running skips that round. The next one catches up.
+
 ## 6. Bill.com (only if this environment uses Nexus → Bill.com)
 
 - **Bill.com:** create an API sign-in token (**Settings → Sync & Integrations → Tokens → New**). Passwords don't work for the API.

@@ -55,3 +55,21 @@ describe('BcEnvironmentForm: Bill.com and Stripe connection for this environment
     );
   });
 });
+
+describe('BcEnvironmentForm: Sync automatically', () => {
+  const AUTO = 'Sync automatically';
+  it('is off by default and submits a change', async () => {
+    const onSubmit = vi.fn(async () => undefined);
+    render(<BcEnvironmentForm connection={connection({})} onSubmit={onSubmit} onCancel={vi.fn()} />);
+    const box = screen.getByRole('checkbox', { name: AUTO }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ autoSync: true })));
+  });
+
+  it('starts ticked when the environment has it on', () => {
+    render(<BcEnvironmentForm connection={connection({ auto_sync: true } as never)} onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    expect((screen.getByRole('checkbox', { name: AUTO }) as HTMLInputElement).checked).toBe(true);
+  });
+});

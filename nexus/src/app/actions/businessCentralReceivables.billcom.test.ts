@@ -6,6 +6,10 @@ const mocks = vi.hoisted(() => ({
   pullShipTos: vi.fn(),
   pullPriceLists: vi.fn(),
   calls: [] as string[],
+  lockFree: true,
+  lastLight: null as null | { started_at: string; complete: boolean | null },
+  connUpdates: [] as Record<string, unknown>[],
+  runAll: vi.fn(),
   revalidate: vi.fn(),
   syncLines: vi.fn(),
   list: vi.fn(),
@@ -24,19 +28,29 @@ vi.mock('@/lib/businessCentral/activeConnection', () => ({
 vi.mock('@/lib/supabase/server', () => {
   const make = (table: string) => {
     const q: Record<string, unknown> = {};
-    for (const m of ['select', 'eq', 'order', 'update']) q[m] = () => q;
+    let isLock = false;
+    for (const m of ['select', 'eq', 'order']) q[m] = () => q;
+    q.update = (row: Record<string, unknown>) => (table === 'business_central_connections' && mocks.connUpdates.push(row), q);
+    q.or = () => { isLock = true; return q; };
     q.upsert = (row: Record<string, unknown>) => (mocks.upserts.push({ table, row }), q);
     q.range = () => Promise.resolve({ data: [], error: null });
-    q.maybeSingle = () => Promise.resolve({ data: table === 'business_central_sync_checkpoints' ? mocks.checkpoint : null, error: null });
-    q.then = (r: (v: unknown) => unknown) => r({ data: null, error: null });
+    q.maybeSingle = () => Promise.resolve({
+      data: table === 'business_central_sync_checkpoints' ? mocks.checkpoint : table === 'bc_sync_runs' ? mocks.lastLight : null,
+      error: null,
+    });
+    q.limit = () => q;
+    q.gte = () => q;
+    q.then = (r: (v: unknown) => unknown) => r({ data: isLock ? (mocks.lockFree ? [{ id: 'bc-1' }] : []) : null, error: null });
     return q;
   };
   return { createServiceClient: () => ({ from: make }) };
 });
 vi.mock('@/lib/businessCentral/client', () => ({ createBcClientForOrg: vi.fn().mockResolvedValue({}) }));
 vi.mock('@/lib/businessCentral/customerLedgerClient', () => ({ createCustomerLedgerClientForOrg: vi.fn().mockResolvedValue({}) }));
-vi.mock('@/lib/businessCentral/arSyncAdapters', () => ({ buildArSyncAdapters: () => [] }));
-vi.mock('@/lib/businessCentral/syncRunner', () => ({ runAllEntitySyncs: vi.fn().mockResolvedValue([]) }));
+vi.mock('@/lib/businessCentral/arSyncAdapters', () => ({
+  buildArSyncAdapters: () => [{ entityType: 'customer' }, { entityType: 'sales_invoice' }, { entityType: 'customer_ledger_entry' }],
+}));
+vi.mock('@/lib/businessCentral/syncRunner', () => ({ runAllEntitySyncs: (...a: unknown[]) => mocks.runAll(...a) }));
 vi.mock('@/lib/businessCentral/salesInvoiceLineSync', () => ({
   syncSalesInvoiceLines: (...a: unknown[]) => mocks.syncLines(...a),
   fetchLinesForInvoicesFromBc: vi.fn(),
@@ -59,16 +73,20 @@ vi.mock('@/lib/billcom/customerSyncHooks', () => ({
   queueChangedCustomers: (...a: unknown[]) => (mocks.calls.push('queue'), mocks.queueChanged(...a)),
 }));
 
-import { syncBusinessCentralReceivables } from './businessCentralReceivables';
+import { syncBusinessCentralReceivables, syncCustomersLight } from './businessCentralReceivables';
 
 beforeEach(() => {
   mocks.calls.length = 0;
   mocks.queueChanged.mockReset().mockResolvedValue(3);
   mocks.fillCards.mockReset().mockResolvedValue({ filled: 0, cursor: null, complete: true });
   mocks.list.mockReset().mockResolvedValue([]);
+  mocks.runAll.mockReset().mockResolvedValue([]);
   mocks.syncLines.mockReset().mockResolvedValue({ entityType: 'sales_invoice_line', recordsSynced: 0, complete: true, cursor: null, error: null });
   mocks.checkpoint = null;
   mocks.upserts.length = 0;
+  mocks.lockFree = true;
+  mocks.lastLight = null;
+  mocks.connUpdates.length = 0;
   mocks.pullShipTos.mockReset().mockResolvedValue({ upserted: 0, deleted: 0 });
   mocks.pullPriceLists.mockReset().mockResolvedValue({ lines: 0 });
 });
@@ -184,5 +202,59 @@ describe('sync refreshes the pages that show synced data', () => {
     await syncBusinessCentralReceivables();
     expect(mocks.revalidate).toHaveBeenCalledWith('/customers', 'layout');
     expect(mocks.revalidate).toHaveBeenCalledWith('/receivables', 'layout');
+  });
+});
+
+describe('light sync (Customers page, every 15 minutes)', () => {
+  it('syncs customers only, then card fields, ship-tos and the Bill.com queue; no invoices, ledger, price lists or lines', async () => {
+    await syncCustomersLight();
+    const adapters = mocks.runAll.mock.calls[0][1] as { entityType: string }[];
+    expect(adapters.map((a) => a.entityType)).toEqual(['customer']);
+    expect(mocks.fillCards).toHaveBeenCalledTimes(1);
+    expect(mocks.pullShipTos).toHaveBeenCalledTimes(1);
+    expect(mocks.queueChanged).toHaveBeenCalledTimes(1);
+    expect(mocks.pullPriceLists).not.toHaveBeenCalled();
+    expect(mocks.syncLines).not.toHaveBeenCalled();
+  });
+
+  it('the full sync runs every part', async () => {
+    await syncBusinessCentralReceivables();
+    const adapters = mocks.runAll.mock.calls[0][1] as { entityType: string }[];
+    expect(adapters.map((a) => a.entityType)).toEqual(['customer', 'sales_invoice', 'customer_ledger_entry']);
+    expect(mocks.pullPriceLists).toHaveBeenCalledTimes(1);
+    expect(mocks.syncLines).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the environment lock', () => {
+  it('a held lock refuses before syncing anything', async () => {
+    mocks.lockFree = false;
+    await expect(syncCustomersLight()).rejects.toThrow('A sync is already running for this environment');
+    expect(mocks.runAll).not.toHaveBeenCalled();
+  });
+
+  it('only the full sync updates last_pulled_at', async () => {
+    await syncCustomersLight();
+    const lightRelease = mocks.connUpdates.find((u) => 'last_error' in u);
+    expect(lightRelease).not.toHaveProperty('last_pulled_at');
+    mocks.connUpdates.length = 0;
+    await syncBusinessCentralReceivables();
+    expect(mocks.connUpdates.find((u) => 'last_error' in u)).toHaveProperty('last_pulled_at');
+  });
+});
+
+describe('quick sync cooldown', () => {
+  it('refuses within 60 s of a finished quick sync', async () => {
+    mocks.lastLight = { started_at: new Date(Date.now() - 20_000).toISOString(), complete: true };
+    await expect(syncCustomersLight()).rejects.toThrow('Customers were just synced. Try again in a minute.');
+    expect(mocks.runAll).not.toHaveBeenCalled();
+  });
+
+  it('allows the next round of an unfinished quick sync, and any sync after a minute', async () => {
+    mocks.lastLight = { started_at: new Date(Date.now() - 20_000).toISOString(), complete: false };
+    await syncCustomersLight();
+    mocks.lastLight = { started_at: new Date(Date.now() - 61_000).toISOString(), complete: true };
+    await syncCustomersLight();
+    expect(mocks.runAll).toHaveBeenCalledTimes(2);
   });
 });
