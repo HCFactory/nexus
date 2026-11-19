@@ -6,6 +6,7 @@ const MESSAGES: Record<Exclude<BillcomPanel['kind'], 'found' | 'error'>, string>
   not_linked: "This customer isn't linked to Bill.com.",
   not_found: 'Not found in Bill.com.',
   ambiguous: 'Several Bill.com invoices have this number.',
+  mismatch: "A Bill.com invoice has this number, but its total or customer doesn't match — check it in Bill.com.",
 };
 
 /** The Bill.com side of an invoice: status and amount due, or why it can't be shown. */

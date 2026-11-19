@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   resolveBillcom: vi.fn(),
   createBillcom: vi.fn(),
   readStatus: vi.fn(),
+  connectorMode: vi.fn(),
+  findConnector: vi.fn(),
 }));
 
 vi.mock('server-only', () => ({}));
@@ -23,9 +25,15 @@ vi.mock('@/lib/businessCentral/invoiceMirror', () => ({
   fetchAndMirrorSalesInvoice: (...a: unknown[]) => mocks.fetchAndMirror(...a),
   mirrorSalesInvoiceLines: (...a: unknown[]) => mocks.mirrorLines(...a),
 }));
-vi.mock('@/lib/billcom/customerSyncHooks', () => ({ resolveBillcomConnection: (...a: unknown[]) => mocks.resolveBillcom(...a) }));
+vi.mock('@/lib/billcom/customerSyncHooks', () => ({
+  resolveBillcomConnection: (...a: unknown[]) => mocks.resolveBillcom(...a),
+  isBillcomConnectorMode: (...a: unknown[]) => mocks.connectorMode(...a),
+}));
 vi.mock('@/lib/billcom/connection', () => ({ createBillcomClientForConnection: (...a: unknown[]) => mocks.createBillcom(...a) }));
-vi.mock('@/lib/billcom/invoiceStatus', () => ({ readBillcomInvoiceStatus: (...a: unknown[]) => mocks.readStatus(...a) }));
+vi.mock('@/lib/billcom/invoiceStatus', () => ({
+  readBillcomInvoiceStatus: (...a: unknown[]) => mocks.readStatus(...a),
+  findConnectorInvoice: (...a: unknown[]) => mocks.findConnector(...a),
+}));
 
 import { findBillcomInvoiceForCharge, getSalesInvoiceBillcomPanel, getSalesInvoicePage } from './salesInvoicePage';
 
@@ -302,5 +310,33 @@ describe('findBillcomInvoiceForCharge', () => {
     setup({ billcom_customer_links: [link()] });
     mocks.readStatus.mockRejectedValue(new Error('down'));
     await expect(findBillcomInvoiceForCharge(input())).rejects.toThrow('down');
+  });
+});
+
+describe('Bill.com connector mode (invoices copied by Bill.com\'s own BC connector)', () => {
+  const input = { customerNumber: 'C1', invoiceNumbers: ['W-116041', 'INV-114570'], billcomInvoiceId: null, bcTotal: 120.5, customerName: 'Aloha School' };
+  beforeEach(() => {
+    setup({});
+    mocks.connectorMode.mockResolvedValue(true);
+  });
+
+  it('finds the invoice by number with the BC total and customer name, no customer link needed; the invoice names its customer', async () => {
+    mocks.findConnector.mockResolvedValue({ kind: 'found', status: { ...STATUS, customerId: '0cuX' } });
+    expect(await findBillcomInvoiceForCharge(input)).toEqual({ kind: 'found', status: { ...STATUS, customerId: '0cuX' }, billcomCustomerId: '0cuX' });
+    expect(mocks.findConnector.mock.calls[0][1]).toEqual({ invoiceNumbers: ['W-116041', 'INV-114570'], bcTotal: 120.5, customerName: 'Aloha School' });
+    expect(mocks.readStatus).not.toHaveBeenCalled();
+  });
+
+  it('a mismatch reaches the panel (and is never charged)', async () => {
+    mocks.findConnector.mockResolvedValue({ kind: 'mismatch' });
+    expect(await getSalesInvoiceBillcomPanel(input)).toEqual({ kind: 'mismatch' });
+    expect(await findBillcomInvoiceForCharge(input)).toEqual({ kind: 'mismatch' });
+  });
+
+  it('ambiguous and not found pass through', async () => {
+    mocks.findConnector.mockResolvedValue({ kind: 'ambiguous' });
+    expect(await findBillcomInvoiceForCharge(input)).toEqual({ kind: 'ambiguous' });
+    mocks.findConnector.mockResolvedValue({ kind: 'not_found' });
+    expect(await findBillcomInvoiceForCharge(input)).toEqual({ kind: 'not_found' });
   });
 });

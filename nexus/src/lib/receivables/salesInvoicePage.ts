@@ -11,8 +11,8 @@ import 'server-only';
 import { requirePermission } from '@/lib/auth/currentUserAccess';
 import { canViewReceivables } from '@/lib/auth/permissions';
 import { createBillcomClientForConnection } from '@/lib/billcom/connection';
-import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
-import { readBillcomInvoiceStatus, type BillcomPanel } from '@/lib/billcom/invoiceStatus';
+import { isBillcomConnectorMode, resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
+import { findConnectorInvoice, readBillcomInvoiceStatus, type BillcomPanel } from '@/lib/billcom/invoiceStatus';
 import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnection';
 import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { fetchAndMirrorSalesInvoice, mirrorSalesInvoiceLines, type InvoiceMirrorDeps } from '@/lib/businessCentral/invoiceMirror';
@@ -179,6 +179,9 @@ export interface BillcomPanelInput {
   invoiceNumbers: string[];
   /** Set when Nexus created the Bill.com invoice. */
   billcomInvoiceId: string | null;
+  /** BC total incl. tax and customer name: connector mode only matches when Bill.com agrees. */
+  bcTotal?: number | null;
+  customerName?: string | null;
 }
 
 /**
@@ -221,6 +224,17 @@ export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Pro
     if (found === 'ambiguous') return { kind: 'ambiguous' };
     if (!found) return { kind: 'not_found' };
     return { kind: 'found', status: found, billcomCustomerId: found.customerId ?? (await readLinkedCustomerId()) };
+  }
+
+  // Connector mode: Bill.com's own BC connector copied the invoice, so Nexus has
+  // no customer links. Find it by number; the invoice names its Bill.com customer.
+  if (await isBillcomConnectorMode(ctx.supabase, ctx.orgId, ctx.connection.id)) {
+    const r = await findConnectorInvoice(client, {
+      invoiceNumbers: input.invoiceNumbers,
+      bcTotal: input.bcTotal ?? null,
+      customerName: input.customerName ?? null,
+    });
+    return r.kind === 'found' ? { kind: 'found', status: r.status, billcomCustomerId: r.status.customerId ?? null } : { kind: r.kind };
   }
 
   const customerId = await readLinkedCustomerId();
