@@ -642,7 +642,7 @@ describe('retryBillcomRecord', () => {
   it('(c) checks the invoice in Bill.com first, by its Bill.com id', async () => {
     const s = setup({ tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed' })] } });
     await retryBillcomRecord(s.deps, 'cp-1');
-    expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['INV-100412'], billcomInvoiceId: '00eBILL' });
+    expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['INV-100412'], billcomInvoiceId: '00eBILL', trustBillcomInvoiceId: true });
   });
 
   it.each([

@@ -35,3 +35,9 @@ Merge the Stripe pre-live fixes (`fix/stripe-prelive`) and run their live check.
 
 - Total check to the cent; name check normalized.
 - A Bill.com read failure shows an error panel and never charges.
+
+## After review (2026-11-19)
+
+- **Stored ids:** in connector mode a sales order's stored `billcom_invoice_id` (from an invoice Nexus created before the mode) is ignored, and the lookup is always by number, total and name. A card payment's own matched id (Retry) is still read directly (`trustBillcomInvoiceId`).
+- **Case:** invoices whose number differs only in letter case count toward "ambiguous".
+- **Names:** accents are ignored in the name check ("Café" = "Cafe").

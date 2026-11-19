@@ -712,7 +712,13 @@ export async function retryBillcomRecord(deps: ChargeDeps, cardPaymentId: string
   // Bill.com may already have it (recorded, then Nexus failed to save): only record while
   // Bill.com still shows at least this payment owing on this exact invoice.
   const lookup = await deps
-    .findBillcomInvoice({ customerNumber: p.bc_customer_number, invoiceNumbers: [p.invoice_number], billcomInvoiceId: p.billcom_invoice_id })
+    .findBillcomInvoice({
+      customerNumber: p.bc_customer_number,
+      invoiceNumbers: [p.invoice_number],
+      billcomInvoiceId: p.billcom_invoice_id,
+      // This payment's own invoice, found by a checked lookup when it was charged.
+      trustBillcomInvoiceId: true,
+    })
     .catch(() => null);
   const due = lookup?.kind === 'found' && lookup.status.id === p.billcom_invoice_id ? lookup.status.dueAmount : null;
   if (due === null || due === undefined) throw new Error(RETRY_CANNOT_CHECK);

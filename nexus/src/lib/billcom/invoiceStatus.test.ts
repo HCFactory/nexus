@@ -155,6 +155,19 @@ describe('findConnectorInvoice (Bill.com invoices copied by its BC connector)', 
     expect(await findConnectorInvoice(none.client, { invoiceNumbers: ['W-1', ''], ...expectBc })).toEqual({ kind: 'not_found' });
   });
 
+  it('a twin that differs only in letter case counts as a second invoice with the number (ambiguous)', async () => {
+    const { client } = fakeClient((path: string) => {
+      if (path.startsWith('/v3/customers/')) return { id: '0cu1', name: 'Aloha School, Inc.' };
+      return { results: [{ ...RAW, invoiceNumber: 'W-1' }, { ...RAW, id: '00eY', invoiceNumber: 'w-1' }] };
+    });
+    expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], ...expectBc })).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('accents do not make the same customer name a mismatch', async () => {
+    const { client } = fakeClient(handler({ 'W-1': [RAW] }, 'Café Aloha'));
+    expect((await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], bcTotal: 45.23, customerName: 'Cafe Aloha' })).kind).toBe('found');
+  });
+
   it('without a BC total or customer name it refuses to call it a match', async () => {
     const { client } = fakeClient(handler({ 'W-1': [RAW] }));
     expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], bcTotal: null, customerName: 'Aloha School, Inc.' })).toEqual({ kind: 'mismatch' });

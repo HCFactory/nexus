@@ -317,7 +317,9 @@ describe('Bill.com connector mode (invoices copied by Bill.com\'s own BC connect
   const input = { customerNumber: 'C1', invoiceNumbers: ['W-116041', 'INV-114570'], billcomInvoiceId: null, bcTotal: 120.5, customerName: 'Aloha School' };
   beforeEach(() => {
     setup({});
-    mocks.connectorMode.mockResolvedValue(true);
+    mocks.connectorMode.mockReset().mockResolvedValue(true);
+    mocks.findConnector.mockReset();
+    mocks.readStatus.mockReset();
   });
 
   it('finds the invoice by number with the BC total and customer name, no customer link needed; the invoice names its customer', async () => {
@@ -331,6 +333,21 @@ describe('Bill.com connector mode (invoices copied by Bill.com\'s own BC connect
     mocks.findConnector.mockResolvedValue({ kind: 'mismatch' });
     expect(await getSalesInvoiceBillcomPanel(input)).toEqual({ kind: 'mismatch' });
     expect(await findBillcomInvoiceForCharge(input)).toEqual({ kind: 'mismatch' });
+  });
+
+  it('ignores a stored Nexus-made Bill.com invoice id and still checks by number, total and name', async () => {
+    mocks.findConnector.mockResolvedValue({ kind: 'found', status: { ...STATUS, id: '00eCONNECTOR', customerId: '0cuX' } });
+    const r = await findBillcomInvoiceForCharge({ ...input, billcomInvoiceId: '00eOLD-NEXUS' });
+    expect(r).toMatchObject({ kind: 'found', status: { id: '00eCONNECTOR' } });
+    expect(mocks.readStatus).not.toHaveBeenCalled();
+    expect(mocks.findConnector).toHaveBeenCalledTimes(1);
+  });
+
+  it('a card payment Retry reads its own matched invoice by id (that id came from a checked lookup)', async () => {
+    mocks.readStatus.mockResolvedValue({ ...STATUS, id: '00eMATCHED', customerId: '0cuX' });
+    const r = await findBillcomInvoiceForCharge({ ...input, billcomInvoiceId: '00eMATCHED', trustBillcomInvoiceId: true });
+    expect(r).toMatchObject({ kind: 'found', status: { id: '00eMATCHED' } });
+    expect(mocks.findConnector).not.toHaveBeenCalled();
   });
 
   it('ambiguous and not found pass through', async () => {

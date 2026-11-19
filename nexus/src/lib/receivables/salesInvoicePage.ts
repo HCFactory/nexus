@@ -179,6 +179,11 @@ export interface BillcomPanelInput {
   invoiceNumbers: string[];
   /** Set when Nexus created the Bill.com invoice. */
   billcomInvoiceId: string | null;
+  /**
+   * The id came from a checked lookup (a card payment's own invoice, e.g. Retry):
+   * read it by id even in connector mode. A sales order's stored id is not trusted there.
+   */
+  trustBillcomInvoiceId?: boolean;
   /** BC total incl. tax and customer name: connector mode only matches when Bill.com agrees. */
   bcTotal?: number | null;
   customerName?: string | null;
@@ -219,22 +224,24 @@ export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Pro
     return ready?.status === 'synced' && ready.billcom_customer_id ? ready.billcom_customer_id : null;
   };
 
-  if (input.billcomInvoiceId) {
-    const found = await readBillcomInvoiceStatus(client, { billcomInvoiceId: input.billcomInvoiceId, invoiceNumbers: [] });
-    if (found === 'ambiguous') return { kind: 'ambiguous' };
-    if (!found) return { kind: 'not_found' };
-    return { kind: 'found', status: found, billcomCustomerId: found.customerId ?? (await readLinkedCustomerId()) };
-  }
-
   // Connector mode: Bill.com's own BC connector copied the invoice, so Nexus has
   // no customer links. Find it by number; the invoice names its Bill.com customer.
-  if (await isBillcomConnectorMode(ctx.supabase, ctx.orgId, ctx.connection.id)) {
+  // A sales order's stored id (from a Nexus-made invoice) is ignored here: always
+  // check by number, total and name. Only a card payment's own checked id is read directly.
+  if (!input.trustBillcomInvoiceId && (await isBillcomConnectorMode(ctx.supabase, ctx.orgId, ctx.connection.id))) {
     const r = await findConnectorInvoice(client, {
       invoiceNumbers: input.invoiceNumbers,
       bcTotal: input.bcTotal ?? null,
       customerName: input.customerName ?? null,
     });
     return r.kind === 'found' ? { kind: 'found', status: r.status, billcomCustomerId: r.status.customerId ?? null } : { kind: r.kind };
+  }
+
+  if (input.billcomInvoiceId) {
+    const found = await readBillcomInvoiceStatus(client, { billcomInvoiceId: input.billcomInvoiceId, invoiceNumbers: [] });
+    if (found === 'ambiguous') return { kind: 'ambiguous' };
+    if (!found) return { kind: 'not_found' };
+    return { kind: 'found', status: found, billcomCustomerId: found.customerId ?? (await readLinkedCustomerId()) };
   }
 
   const customerId = await readLinkedCustomerId();

@@ -101,7 +101,8 @@ export async function readBillcomInvoiceStatus(
 
 const toCents = (n: unknown) => Math.round(Number(n) * 100);
 const sameName = (a: string, b: string) => {
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  // Accents ignored ("Café" = "Cafe"), then only letters and digits compared.
+  const norm = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   return norm(a) !== '' && norm(a) === norm(b);
 };
 
@@ -121,7 +122,10 @@ export async function findConnectorInvoice(
   for (const n of q.invoiceNumbers.map((x) => x.trim()).filter(Boolean)) {
     const qs = new URLSearchParams({ filters: `invoiceNumber:eq:${n}`, max: '5' });
     const res = await client.request<{ results?: RawInvoice[] }>(`/v3/invoices?${qs.toString()}`);
-    const hits = (res.results ?? []).filter((r) => (r.invoiceNumber ?? '').trim() === n);
+    // Every invoice Bill.com returns for the number counts toward "ambiguous" (its
+    // match may ignore case); exact equality only picks the one to use.
+    const all = (res.results ?? []).filter((r) => (r.invoiceNumber ?? '').trim().toLowerCase() === n.toLowerCase());
+    const hits = all.length > 1 ? all : all.filter((r) => (r.invoiceNumber ?? '').trim() === n);
     if (hits.length > 1) {
       ambiguous = true;
       continue;
