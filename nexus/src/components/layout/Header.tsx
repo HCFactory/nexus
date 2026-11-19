@@ -21,6 +21,10 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 
+// The selected organization / environment can't be clicked (already chosen), but
+// shouldn't look faded: full strength, bold, white in dark mode, black in light.
+const SELECTED_ITEM = 'font-bold text-black dark:text-white data-[disabled]:opacity-100';
+
 interface HeaderProps {
   user: User | null;
   organization: Organization | null;
@@ -169,7 +173,7 @@ export function Header({
                                 });
                               }
                             }}
-                            className="cursor-pointer px-1.5 py-1.5 text-xs"
+                            className={cn('cursor-pointer px-1.5 py-1.5 text-xs', isCurrent && SELECTED_ITEM)}
                           >
                             <div className="size-5 rounded bg-primary/20 flex items-center justify-center">
                               <span className="text-[10px] font-bold text-primary">
@@ -216,7 +220,7 @@ export function Header({
                                           handleSwitchEnvironment(conn.id);
                                         }
                                       }}
-                                      className="cursor-pointer px-1.5 py-1.5 text-xs"
+                                      className={cn('cursor-pointer px-1.5 py-1.5 text-xs', isActiveEnv && SELECTED_ITEM)}
                                     >
                                       <span className="ml-7 min-w-0 flex-1 truncate">
                                         {conn.display_name}
