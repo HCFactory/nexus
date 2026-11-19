@@ -13,6 +13,7 @@ import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/cu
 import type { BillcomCustomerView } from "@/app/actions/billcomCustomers";
 import { CustomerFormDialog, customerFormValues } from "./CustomerForm";
 import { createdCustomerHref } from "./createdCustomerHref";
+import { shouldSyncAgain } from "@/lib/businessCentral/sync/shouldSyncAgain";
 import { BillcomPushPanel, type BillcomPushPanelHandle } from "./BillcomPushPanel";
 import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
 import { formatMoney } from "@/lib/format";
@@ -37,17 +38,6 @@ const ROWS_PER_PAGE = 200;
 
 /** Safety cap on automatic rounds; each round is one sync (about 1–2 minutes). */
 const MAX_SYNC_ROUNDS = 200;
-
-/**
- * Run another round while some part is incomplete without an error and moved
- * forward (synced records, or its cursor changed since the last round). An
- * error alone (e.g. a missing BC page) never repeats on its own.
- */
-function shouldSyncAgain(results: SyncEntityResult[], previous: SyncEntityResult[] | null): boolean {
-  return results.some(
-    (r, i) => !r.complete && !r.error && (r.recordsSynced > 0 || r.cursor !== previous?.[i]?.cursor)
-  );
-}
 
 export function CustomersClient({ customers, canSync, initialSearch, edit, billcom }: CustomersClientProps) {
   const router = useRouter();

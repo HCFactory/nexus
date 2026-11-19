@@ -68,7 +68,9 @@ export async function updateSession(request: NextRequest) {
   // Stripe calls the webhook without a session (it verifies its signature).
   const isPublicStripePath =
     request.nextUrl.pathname.startsWith('/card-setup/') ||
-    request.nextUrl.pathname.startsWith('/api/stripe/webhook/');
+    request.nextUrl.pathname.startsWith('/api/stripe/webhook/') ||
+    // Scheduled syncs (Supabase pg_cron); the route itself requires CRON_SECRET.
+    request.nextUrl.pathname === '/api/cron/sync';
 
   if (!user && !isAuthPage && !isPublicFriendsFamilyPage && !isPublicStripePath) {
     const url = request.nextUrl.clone();

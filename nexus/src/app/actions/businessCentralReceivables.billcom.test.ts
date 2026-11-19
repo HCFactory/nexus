@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   pullShipTos: vi.fn(),
   pullPriceLists: vi.fn(),
   calls: [] as string[],
+  runAll: vi.fn(),
   revalidate: vi.fn(),
   syncLines: vi.fn(),
   list: vi.fn(),
@@ -35,8 +36,10 @@ vi.mock('@/lib/supabase/server', () => {
 });
 vi.mock('@/lib/businessCentral/client', () => ({ createBcClientForOrg: vi.fn().mockResolvedValue({}) }));
 vi.mock('@/lib/businessCentral/customerLedgerClient', () => ({ createCustomerLedgerClientForOrg: vi.fn().mockResolvedValue({}) }));
-vi.mock('@/lib/businessCentral/arSyncAdapters', () => ({ buildArSyncAdapters: () => [] }));
-vi.mock('@/lib/businessCentral/syncRunner', () => ({ runAllEntitySyncs: vi.fn().mockResolvedValue([]) }));
+vi.mock('@/lib/businessCentral/arSyncAdapters', () => ({
+  buildArSyncAdapters: () => [{ entityType: 'customer' }, { entityType: 'sales_invoice' }, { entityType: 'customer_ledger_entry' }],
+}));
+vi.mock('@/lib/businessCentral/syncRunner', () => ({ runAllEntitySyncs: (...a: unknown[]) => mocks.runAll(...a) }));
 vi.mock('@/lib/businessCentral/salesInvoiceLineSync', () => ({
   syncSalesInvoiceLines: (...a: unknown[]) => mocks.syncLines(...a),
   fetchLinesForInvoicesFromBc: vi.fn(),
@@ -59,13 +62,14 @@ vi.mock('@/lib/billcom/customerSyncHooks', () => ({
   queueChangedCustomers: (...a: unknown[]) => (mocks.calls.push('queue'), mocks.queueChanged(...a)),
 }));
 
-import { syncBusinessCentralReceivables } from './businessCentralReceivables';
+import { syncBusinessCentralReceivables, syncCustomersLight } from './businessCentralReceivables';
 
 beforeEach(() => {
   mocks.calls.length = 0;
   mocks.queueChanged.mockReset().mockResolvedValue(3);
   mocks.fillCards.mockReset().mockResolvedValue({ filled: 0, cursor: null, complete: true });
   mocks.list.mockReset().mockResolvedValue([]);
+  mocks.runAll.mockReset().mockResolvedValue([]);
   mocks.syncLines.mockReset().mockResolvedValue({ entityType: 'sales_invoice_line', recordsSynced: 0, complete: true, cursor: null, error: null });
   mocks.checkpoint = null;
   mocks.upserts.length = 0;
@@ -184,5 +188,26 @@ describe('sync refreshes the pages that show synced data', () => {
     await syncBusinessCentralReceivables();
     expect(mocks.revalidate).toHaveBeenCalledWith('/customers', 'layout');
     expect(mocks.revalidate).toHaveBeenCalledWith('/receivables', 'layout');
+  });
+});
+
+describe('light sync (Customers page, every 15 minutes)', () => {
+  it('syncs customers only, then card fields, ship-tos and the Bill.com queue; no invoices, ledger, price lists or lines', async () => {
+    await syncCustomersLight();
+    const adapters = mocks.runAll.mock.calls[0][1] as { entityType: string }[];
+    expect(adapters.map((a) => a.entityType)).toEqual(['customer']);
+    expect(mocks.fillCards).toHaveBeenCalledTimes(1);
+    expect(mocks.pullShipTos).toHaveBeenCalledTimes(1);
+    expect(mocks.queueChanged).toHaveBeenCalledTimes(1);
+    expect(mocks.pullPriceLists).not.toHaveBeenCalled();
+    expect(mocks.syncLines).not.toHaveBeenCalled();
+  });
+
+  it('the full sync runs every part', async () => {
+    await syncBusinessCentralReceivables();
+    const adapters = mocks.runAll.mock.calls[0][1] as { entityType: string }[];
+    expect(adapters.map((a) => a.entityType)).toEqual(['customer', 'sales_invoice', 'customer_ledger_entry']);
+    expect(mocks.pullPriceLists).toHaveBeenCalledTimes(1);
+    expect(mocks.syncLines).toHaveBeenCalledTimes(1);
   });
 });
