@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { syncBusinessCentralReceivables } from "@/app/actions/businessCentralReceivables";
 import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
 import type { BillcomCustomerView } from "@/app/actions/billcomCustomers";
-import { CustomerForm, customerFormValues } from "./CustomerForm";
+import { CustomerFormDialog, customerFormValues } from "./CustomerForm";
 import { createdCustomerHref } from "./createdCustomerHref";
 import { BillcomPushPanel, type BillcomPushPanelHandle } from "./BillcomPushPanel";
 import { BillcomStatusBadge, billcomSaveNote } from "./billcomStatus";
@@ -190,8 +190,7 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
       )}
 
       {canEdit && edit && formFor && (
-        <div className="border-b border-border px-5 py-3">
-          <CustomerForm
+          <CustomerFormDialog
             key={formFor === "new" ? "new" : formFor.id}
             customer={formFor === "new" ? null : { id: formFor.id, values: customerFormValues(formFor) }}
             templates={edit.templates}
@@ -211,7 +210,6 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
               router.refresh();
             }}
           />
-        </div>
       )}
 
       {syncError && (
