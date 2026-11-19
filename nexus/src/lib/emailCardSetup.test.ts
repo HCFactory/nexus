@@ -29,6 +29,13 @@ describe('sendCardSetupEmail', () => {
     expect(`${msg.text}${msg.html}`).not.toMatch(/Hello/);
   });
 
+  it('signs off with "Mahalo," in both versions', async () => {
+    await sendCardSetupEmail(base);
+    const msg = send.mock.calls[0][0];
+    expect(msg.text).toContain('Mahalo,\nHawaii Candy Factory');
+    expect(msg.html).toContain('Mahalo,<br>Hawaii Candy Factory');
+  });
+
   it('makes the link a clickable hyperlink, and keeps the plain address in the text version', async () => {
     await sendCardSetupEmail(base);
     const msg = send.mock.calls[0][0];

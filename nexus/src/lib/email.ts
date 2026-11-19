@@ -147,7 +147,7 @@ Your card details go straight to Stripe, our secure payment provider. We never s
 
 This link expires on ${date}. If you have any questions, please get in touch with us.
 
-Thank you,
+Mahalo,
 ${org}`;
 
   const e = escapeHtml;
@@ -161,7 +161,7 @@ ${org}`;
   <p style="font-size: 13px; color: #6b7280;">Or open this link: <a href="${e(p.url)}" style="color: #2563eb;">${e(p.url)}</a></p>
   <p>Your card details go straight to Stripe, our secure payment provider. We never see or store your full card number, and you'll see the terms before you save.</p>
   <p>This link expires on ${e(date)}. If you have any questions, please get in touch with us.</p>
-  <p>Thank you,<br>${e(org)}</p>
+  <p>Mahalo,<br>${e(org)}</p>
 </div>`;
 
   const { error } = await new Resend(apiKey).emails.send({
