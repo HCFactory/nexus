@@ -70,3 +70,18 @@ describe('CustomerDetail note after create', () => {
     expect(screen.getByText('Bill.com is turned off.')).toBeInTheDocument();
   });
 });
+
+describe('CustomerDetail payment terms', () => {
+  it('shows the payment terms code, never BC’s internal id', () => {
+    const c = { ...customer, payment_terms_id: '89d4d5f0-e10d-f011-9346-002248abff22', payment_terms_code: '10 DAYS' } as unknown as BusinessCentralCustomer;
+    render(<CustomerDetail customer={c} invoices={[]} ledgerEntries={[]} />);
+    expect(screen.getByText('10 DAYS')).toBeInTheDocument();
+    expect(screen.queryByText('89d4d5f0-e10d-f011-9346-002248abff22')).toBeNull();
+  });
+
+  it('shows a dash when there is no code', () => {
+    const c = { ...customer, payment_terms_id: '89d4d5f0-e10d-f011-9346-002248abff22', payment_terms_code: '' } as unknown as BusinessCentralCustomer;
+    render(<CustomerDetail customer={c} invoices={[]} ledgerEntries={[]} />);
+    expect(screen.queryByText('89d4d5f0-e10d-f011-9346-002248abff22')).toBeNull();
+  });
+});
