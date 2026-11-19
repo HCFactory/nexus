@@ -101,7 +101,8 @@ export async function getCustomersPageData(): Promise<{
 
   return {
     customers,
-    canSync: canEditBusinessCentralItems(access),
+    // Anyone who can view customers can run the light customer sync.
+    canSync: canViewCustomers(access),
   };
 }
 

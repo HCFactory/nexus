@@ -8,7 +8,7 @@ import { Pencil, Plus, RefreshCw, Search, Trash2, Users, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { syncBusinessCentralReceivables } from "@/app/actions/businessCentralReceivables";
+import { syncCustomersLight } from "@/app/actions/businessCentralReceivables";
 import { deleteCustomerAction, type CustomerEditContext } from "@/app/actions/customerEditing";
 import type { BillcomCustomerView } from "@/app/actions/billcomCustomers";
 import { CustomerFormDialog, customerFormValues } from "./CustomerForm";
@@ -80,7 +80,9 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
     try {
       for (let round = 1; round <= MAX_SYNC_ROUNDS; round++) {
         setSyncRound(round);
-        const results = await syncBusinessCentralReceivables();
+        // Light sync: new and changed customers, card fields, ship-tos. The full
+        // sync lives in Admin → Sync.
+        const results = await syncCustomersLight();
         setSyncResults(results);
         if (stopSync.current || !shouldSyncAgain(results, previous)) {
           // New or changed customers were queued for Bill.com; send them now.

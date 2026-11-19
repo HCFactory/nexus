@@ -10,6 +10,7 @@ export interface BcEnvironmentFormValues {
   apiBaseUrl: string;
   timeZone: string;
   billcomViaConnector: boolean;
+  autoSync: boolean;
   billcomConnectionId: string | null;
   stripeConnectionId: string | null;
 }
@@ -36,6 +37,7 @@ export function BcEnvironmentForm({ connection, billcomOptions = [], stripeOptio
   const [apiBaseUrl, setApiBaseUrl] = useState(connection?.api_base_url ?? '');
   const [timeZone, setTimeZone] = useState(connection?.time_zone ?? '');
   const [billcomViaConnector, setBillcomViaConnector] = useState(connection?.billcom_via_connector ?? false);
+  const [autoSync, setAutoSync] = useState(connection?.auto_sync ?? false);
   const [billcomConnectionId, setBillcomConnectionId] = useState(connection?.billcom_connection_id ?? '');
   const [stripeConnectionId, setStripeConnectionId] = useState(connection?.stripe_connection_id ?? '');
   const [loading, setLoading] = useState(false);
@@ -58,6 +60,7 @@ export function BcEnvironmentForm({ connection, billcomOptions = [], stripeOptio
         apiBaseUrl: apiBaseUrl.trim(),
         timeZone: timeZone.trim(),
         billcomViaConnector,
+        autoSync,
         billcomConnectionId: billcomConnectionId || null,
         stripeConnectionId: stripeConnectionId || null,
       });
@@ -180,6 +183,21 @@ export function BcEnvironmentForm({ connection, billcomOptions = [], stripeOptio
               </label>
               <p className="mt-1 text-xs text-foreground-subtle">
                 When ticked, Create invoice and Change invoice post in Business Central only; Bill.com&apos;s connector copies the invoice to Bill.com.
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-start gap-2 text-sm text-foreground">
+                <input
+                  type="checkbox"
+                  checked={autoSync}
+                  onChange={(e) => setAutoSync(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>Sync automatically</span>
+              </label>
+              <p className="mt-1 text-xs text-foreground-subtle">
+                Customers every 15 minutes, everything every 2 hours (needs the schedule set up in Supabase). Usually only Production.
               </p>
             </div>
 

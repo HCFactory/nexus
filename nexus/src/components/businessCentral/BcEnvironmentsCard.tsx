@@ -104,6 +104,7 @@ export function BcEnvironmentsCard() {
       apiBaseUrl: values.apiBaseUrl || null,
       timeZone: values.timeZone || null,
       billcomViaConnector: values.billcomViaConnector,
+      autoSync: values.autoSync,
       billcomConnectionId: values.billcomConnectionId,
       stripeConnectionId: values.stripeConnectionId,
     });

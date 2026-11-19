@@ -7,7 +7,7 @@ import { CustomersClient } from './CustomersClient';
 const actions = vi.hoisted(() => ({ createCustomerAction: vi.fn(), updateCustomerAction: vi.fn(), deleteCustomerAction: vi.fn() }));
 const nav = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock('@/app/actions/customerEditing', () => actions);
-const sync = vi.hoisted(() => ({ syncBusinessCentralReceivables: vi.fn() }));
+const sync = vi.hoisted(() => ({ syncBusinessCentralReceivables: vi.fn(), syncCustomersLight: vi.fn() }));
 const bc = vi.hoisted(() => ({ previewInitialPush: vi.fn(), confirmInitialPush: vi.fn(), runPendingPush: vi.fn() }));
 vi.mock('@/app/actions/businessCentralReceivables', () => sync);
 vi.mock('@/app/actions/billcomCustomers', () => bc);
@@ -103,7 +103,7 @@ describe('CustomersClient Bill.com', () => {
   });
 
   it('starts a pending run after a successful Sync (admin, Bill.com on)', async () => {
-    sync.syncBusinessCentralReceivables.mockResolvedValue([{ entityType: 'customers', recordsSynced: 1, complete: true }]);
+    sync.syncCustomersLight.mockResolvedValue([{ entityType: 'customers', recordsSynced: 1, complete: true }]);
     bc.runPendingPush.mockResolvedValue({ ok: true, result: { created: 0, updated: 0, linked: 0, unchanged: 0, failed: 0, needsAttention: 0, remaining: 0 } });
     render(<CustomersClient customers={customers} canSync={true} billcom={billcomOn()} />);
     fireEvent.click(screen.getByRole('button', { name: /sync now/i }));
@@ -111,7 +111,7 @@ describe('CustomersClient Bill.com', () => {
   });
 
   it('does not start a run after Sync for non-admins', async () => {
-    sync.syncBusinessCentralReceivables.mockResolvedValue([{ entityType: 'customers', recordsSynced: 1, complete: true }]);
+    sync.syncCustomersLight.mockResolvedValue([{ entityType: 'customers', recordsSynced: 1, complete: true }]);
     render(<CustomersClient customers={customers} canSync={true} billcom={billcomOn({ isAdmin: false })} />);
     fireEvent.click(screen.getByRole('button', { name: /sync now/i }));
     expect(await screen.findByText('Complete')).toBeInTheDocument();
@@ -134,19 +134,19 @@ describe('Sync keeps going until everything is complete', () => {
   const clickSync = () => fireEvent.click(screen.getByRole('button', { name: /sync now/i }));
 
   it('runs another round while something is incomplete and moving, then stops when all complete', async () => {
-    sync.syncBusinessCentralReceivables
+    sync.syncCustomersLight
       .mockResolvedValueOnce([r('customer', 1, true), r('sales_invoice_line', 300, false, 'inv-50')])
       .mockResolvedValueOnce([r('customer', 0, true), r('sales_invoice_line', 120, true, 'inv-80')]);
     render(<CustomersClient customers={customers} canSync={true} />);
     clickSync();
     await waitFor(() => expect(screen.getAllByText('Complete')).toHaveLength(2));
-    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+    expect(sync.syncCustomersLight).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled();
   });
 
   it('shows the round while running, and Stop finishes the current round then stops', async () => {
     let finishRound2: (v: unknown) => void = () => {};
-    sync.syncBusinessCentralReceivables
+    sync.syncCustomersLight
       .mockResolvedValueOnce([r('sales_invoice_line', 300, false, 'inv-50')])
       .mockImplementationOnce(() => new Promise((res) => { finishRound2 = res; }));
     render(<CustomersClient customers={customers} canSync={true} />);
@@ -155,20 +155,20 @@ describe('Sync keeps going until everything is complete', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
     finishRound2([r('sales_invoice_line', 300, false, 'inv-100')]);
     expect(await screen.findByText('Incomplete — click Sync again to continue')).toBeInTheDocument();
-    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+    expect(sync.syncCustomersLight).toHaveBeenCalledTimes(2);
   });
 
   it('stops when a round makes no progress (nothing synced, same place)', async () => {
-    sync.syncBusinessCentralReceivables.mockResolvedValue([r('sales_invoice_line', 0, false, 'inv-50')]);
+    sync.syncCustomersLight.mockResolvedValue([r('sales_invoice_line', 0, false, 'inv-50')]);
     render(<CustomersClient customers={customers} canSync={true} />);
     clickSync();
     expect(await screen.findByText('Incomplete — click Sync again to continue')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled());
-    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+    expect(sync.syncCustomersLight).toHaveBeenCalledTimes(2);
   });
 
   it('does not repeat for an error alone (e.g. a missing BC page), and shows it', async () => {
-    sync.syncBusinessCentralReceivables.mockResolvedValue([
+    sync.syncCustomersLight.mockResolvedValue([
       r('customer', 0, false, null, 'Ship-to addresses: 404'),
       r('sales_invoice_line', 10, true, 'inv-9'),
     ]);
@@ -176,27 +176,27 @@ describe('Sync keeps going until everything is complete', () => {
     clickSync();
     expect(await screen.findByText('Ship-to addresses: 404')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeEnabled());
-    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(1);
+    expect(sync.syncCustomersLight).toHaveBeenCalledTimes(1);
   });
 
   it('keeps going past an error while another part is still moving', async () => {
-    sync.syncBusinessCentralReceivables
+    sync.syncCustomersLight
       .mockResolvedValueOnce([r('customer', 0, false, null, 'Ship-to addresses: 404'), r('customer_ledger_entry', 500, false, 'e500')])
       .mockResolvedValueOnce([r('customer', 0, false, null, 'Ship-to addresses: 404'), r('customer_ledger_entry', 20, true, 'e520')]);
     render(<CustomersClient customers={customers} canSync={true} />);
     clickSync();
     expect(await screen.findByText('Complete')).toBeInTheDocument();
-    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+    expect(sync.syncCustomersLight).toHaveBeenCalledTimes(2);
   });
 
   it('a failed round stops and shows the error', async () => {
-    sync.syncBusinessCentralReceivables
+    sync.syncCustomersLight
       .mockResolvedValueOnce([r('sales_invoice_line', 300, false, 'inv-50')])
       .mockRejectedValueOnce(new Error('Sync already in progress by someone'));
     render(<CustomersClient customers={customers} canSync={true} />);
     clickSync();
     expect(await screen.findByText('Sync already in progress by someone')).toBeInTheDocument();
-    expect(sync.syncBusinessCentralReceivables).toHaveBeenCalledTimes(2);
+    expect(sync.syncCustomersLight).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -238,5 +238,16 @@ describe('customer form popup', () => {
     render(<CustomersClient customers={customers} canSync={false} edit={edit} />);
     fireEvent.click(screen.getByRole('button', { name: 'Edit Acme' }));
     expect(screen.getByRole('dialog', { name: 'Edit customer' })).toBeInTheDocument();
+  });
+});
+
+describe('Customers page Sync now is the light sync', () => {
+  it('calls the light sync, never the full one', async () => {
+    sync.syncCustomersLight.mockResolvedValue([{ entityType: 'customer', recordsSynced: 1, complete: true, cursor: null, error: null }]);
+    render(<CustomersClient customers={customers} canSync={true} />);
+    fireEvent.click(screen.getByRole('button', { name: /sync now/i }));
+    expect(await screen.findByText('Complete')).toBeInTheDocument();
+    expect(sync.syncCustomersLight).toHaveBeenCalledTimes(1);
+    expect(sync.syncBusinessCentralReceivables).not.toHaveBeenCalled();
   });
 });

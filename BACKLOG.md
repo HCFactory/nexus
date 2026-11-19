@@ -48,7 +48,12 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
      - `staleTimes.dynamic = 30` (app-wide): Back within 30 s reuses the page. The sync revalidates `/customers` and `/receivables` as layouts.
      - Local check (3,642 production customers): server ~1.4 s, and Back from a profile made no new request.
    - **To do (code): the customer profile is slow** (~2.8 s locally): invoices, ledger entries, card, Bill.com and ship-tos load one after another. Load them in parallel, or trim columns the same way.
-   - **To do (code): "Sync all lists" button.** In a new environment the customer form has no templates or dropdown values until an admin syncs ten Customer Lists one by one (Production, 2026-11-18). Add one button that syncs them in order (payment terms … customer templates), or include them in Customers → Sync now.
+   - **Built 2026-11-18 (branch `feat/scheduled-sync`): Admin → Sync.**
+     - Rows: Customers & Receivables (full), Customer lists (all lists in order) and Customers (quick).
+     - The Customers page button is now the light sync, open to anyone who can view customers.
+     - Automatic syncs via Supabase pg_cron: light every 15 min, full every 2 h, only for environments with **Sync automatically** ticked.
+     - Spec: `docs/superpowers/specs/2026-11-18-scheduled-sync-design.md`. Setup: onboarding guide section 5b.
+     - **To do (user):** migration 072, `CRON_SECRET`, pg_cron/pg_net, schedule SQL, then tick Production.
    - **Built 2026-11-18 (branch `fix/card-host-node-runtime`, not pushed): a faster first sync.** Three changes:
      1. Invoice lines come 50 invoices per BC request (`salesInvoices?$filter=id eq … or …&$expand=salesInvoiceLines`) instead of one request per invoice.
      2. Lines get their own 40-second window. Before, they got the leftovers, which meant one batch of 25 invoices (~150 lines) per click.

@@ -12,6 +12,8 @@ import {
   type ServiceDeps,
 } from '@/lib/businessCentral/customerReferences/service';
 import { createReferenceTransport } from '@/lib/businessCentral/customerReferences/transport';
+import { syncAllLists, type ListSyncResult } from '@/lib/businessCentral/customerReferences/syncAllLists';
+import { recordSyncRun } from '@/lib/businessCentral/sync/syncRuns';
 import { createUsageCounter } from '@/lib/businessCentral/customerReferences/usage';
 import { createClient, createServiceClient } from '@/lib/supabase/server';
 import type { ListKey, ListPageData, ReferenceEntry } from '@/types/customerReferences';
@@ -190,6 +192,24 @@ function listsToSync(key: ListKey): ListKey[] {
   // Templates pick their number series from this read-only list.
   if (key === 'customerTemplates') return ['noSeries', 'customerTemplates'];
   return [key];
+}
+
+/** Admin → Sync → Customer lists: every list, in order, for the active environment. */
+export async function syncAllCustomerLists(): Promise<{ ok: true; results: ListSyncResult[] } | Fail> {
+  try {
+    const scope = await requireActiveBusinessCentralScope();
+    if (!scope.access.isAdmin) return { ok: false, error: ADMIN_ONLY };
+    const deps = await buildDeps(scope);
+    const results = await recordSyncRun(
+      deps.supabase,
+      { orgId: scope.orgId, connectionId: scope.bcConnectionId, kind: 'lists', trigger: 'manual', triggeredBy: scope.user.id },
+      () => syncAllLists(deps, syncList),
+    );
+    revalidateLists();
+    return { ok: true, results };
+  } catch (e) {
+    return { ok: false, error: errorMessage(e) };
+  }
 }
 
 export async function syncReferenceList(

@@ -47,6 +47,8 @@ export interface UpdateBcConnectionInput {
   apiBaseUrl?: string | null;
   timeZone?: string | null;
   billcomViaConnector?: boolean;
+  /** Sync this environment on the schedule (Supabase pg_cron). */
+  autoSync?: boolean;
   /** The Bill.com connection this environment uses; null = none (Bill.com off here). */
   billcomConnectionId?: string | null;
   /** The Stripe connection this environment uses; null = none (Stripe off here). */
@@ -284,6 +286,9 @@ export async function updateBcConnection(
   }
   if (input.timeZone !== undefined) {
     updates.time_zone = validateTimeZone(input.timeZone);
+  }
+  if (input.autoSync !== undefined) {
+    updates.auto_sync = input.autoSync === true;
   }
   if (input.billcomViaConnector !== undefined) {
     updates.billcom_via_connector = input.billcomViaConnector === true;

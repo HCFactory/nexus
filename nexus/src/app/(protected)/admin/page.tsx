@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation';
 import { UserList } from '@/components/admin';
+import { SyncSection } from '@/components/admin/SyncSection';
+import { getSyncOverview } from '@/app/actions/syncAdmin';
 import { BcCredentialsCard } from '@/components/businessCentral/BcCredentialsCard';
 import { BcEnvironmentsCard } from '@/components/businessCentral/BcEnvironmentsCard';
 import { BillcomConnectionsCard } from '@/components/billcom/BillcomConnectionsCard';
@@ -16,7 +18,7 @@ export default async function AdminPage() {
     redirect('/');
   }
 
-  const users = await getAllUsers();
+  const [users, syncOverview] = await Promise.all([getAllUsers(), getSyncOverview()]);
   const orgs = await getUserOrganizations(currentUser.id).catch(() => []);
   const own = orgs.find((o) => o.id === currentUser.organization_id) ?? orgs[0];
   const organization = currentUser.organization_id
@@ -26,6 +28,14 @@ export default async function AdminPage() {
   return (
     <div className="flex flex-col flex-1 overflow-y-auto">
       <main className="max-w-6xl mx-auto p-6 w-full">
+        <div className="mb-10">
+          <h1 className="text-xl lg:text-2xl font-bold text-foreground">Sync</h1>
+          <p className="text-foreground-muted mt-1 mb-4">
+            Copy data from Business Central into Nexus for the environment you&apos;re on. Syncs only read from Business Central.
+          </p>
+          <SyncSection overview={syncOverview} />
+        </div>
+
         <div className="mb-8">
           <h1 className="text-xl lg:text-2xl font-bold text-foreground">User Management</h1>
           <p className="text-foreground-muted mt-1">

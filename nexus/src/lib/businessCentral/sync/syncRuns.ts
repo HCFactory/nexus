@@ -1,6 +1,5 @@
 import 'server-only';
 
-import type { SyncEntityResult } from '@/lib/businessCentral/syncRunner';
 import type { createServiceClient } from '@/lib/supabase/server';
 
 type Db = ReturnType<typeof createServiceClient>;
@@ -10,6 +9,14 @@ import { SyncInProgressError } from './syncRunsError';
 export { SyncInProgressError };
 
 export type SyncRunKind = 'light' | 'full' | 'lists';
+
+/** What a sync round returns per part (receivables entities or Customer lists). */
+export interface SyncRunResult {
+  entityType: string;
+  recordsSynced: number;
+  complete: boolean;
+  error: string | null;
+}
 
 export interface SyncRunMeta {
   orgId: string;
@@ -24,11 +31,11 @@ export interface SyncRunMeta {
  * outcome). Logging is best effort: it never stops or fails the sync. A round
  * that found the lock held leaves no row behind.
  */
-export async function recordSyncRun(
+export async function recordSyncRun<T extends SyncRunResult>(
   db: Db,
   meta: SyncRunMeta,
-  run: () => Promise<SyncEntityResult[]>,
-): Promise<SyncEntityResult[]> {
+  run: () => Promise<T[]>,
+): Promise<T[]> {
   let runId: string | null = null;
   try {
     const { data, error } = await db

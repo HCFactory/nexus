@@ -220,6 +220,8 @@ export interface BusinessCentralConnection {
   time_zone: string | null;
   /** Invoices reach Bill.com through Bill.com's own BC connector: Nexus posts in BC only. */
   billcom_via_connector: boolean;
+  /** Synced on the schedule (migration 072). */
+  auto_sync?: boolean;
   /** Bill.com connection this environment uses; null = Bill.com off here. */
   billcom_connection_id: string | null;
   /** Stripe connection this environment uses; null = Stripe off here. */
