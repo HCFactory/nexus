@@ -106,6 +106,18 @@ describe('SalesInvoiceDetail', () => {
     expect(screen.getByTestId('invoice-main')).toBeInTheDocument();
   });
 
+  it('on a phone each line is a stacked row: description, item, qty × price and amount (the table is for wider screens)', () => {
+    render(<SalesInvoiceDetail invoice={invoice()} lines={[line()]} salesOrder={null} billcom={null} />);
+    const phone = screen.getByTestId('invoice-lines-phone');
+    expect(phone).toHaveClass('sm:hidden');
+    const item = within(phone).getByRole('listitem');
+    expect(item).toHaveTextContent('Bursts - Da Pouch');
+    expect(item).toHaveTextContent('P-1001');
+    expect(item).toHaveTextContent('10 × $4.50');
+    expect(item).toHaveTextContent('$45.00');
+    expect(screen.getByRole('table')).toHaveClass('hidden', 'sm:table');
+  });
+
   it('shows No lines when there are none', () => {
     render(<SalesInvoiceDetail invoice={invoice()} lines={[]} salesOrder={null} billcom={null} />);
     expect(screen.getByText('No lines')).toBeInTheDocument();

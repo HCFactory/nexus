@@ -132,6 +132,8 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
           <Button
             type="button"
             size="sm"
+            aria-label="New customer"
+            title="New customer"
             onClick={() => {
               setFormFor("new");
               setNotice(null);
@@ -139,7 +141,8 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
             }}
           >
             <Plus className="size-4" />
-            New customer
+            {/* Icon only on a phone. */}
+            <span className="hidden sm:inline">New customer</span>
           </Button>
         )}
         {canSync && (
@@ -148,10 +151,12 @@ export function CustomersClient({ customers, canSync, initialSearch, edit, billc
             variant="outline"
             size="sm"
             disabled={syncing}
+            aria-label={syncing ? "Syncing…" : "Sync now"}
+            title={syncing ? "Syncing…" : "Sync now"}
             onClick={() => void runSync()}
           >
             <RefreshCw className={cn("size-4", syncing && "animate-spin")} />
-            {syncing ? "Syncing…" : "Sync now"}
+            <span className="hidden sm:inline">{syncing ? "Syncing…" : "Sync now"}</span>
           </Button>
         )}
         {syncing && (

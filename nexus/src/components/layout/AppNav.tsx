@@ -58,7 +58,7 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    title: 'Receivables',
+    title: 'Sales',
     items: [
       { label: 'Sales orders', href: '/sales-orders', icon: ClipboardList },
       { label: 'Customers', href: '/customers', icon: Users },

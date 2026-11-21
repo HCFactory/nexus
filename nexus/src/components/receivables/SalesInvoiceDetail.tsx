@@ -43,7 +43,7 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
   return (
     // The app shell clips its content, so the page scrolls in its own area (as customer pages do).
     <div data-testid="invoice-scroll" className="h-[calc(100vh-3.5rem)] overflow-y-auto">
-      <div className="mx-auto max-w-6xl space-y-4 p-5">
+      <div className="mx-auto max-w-6xl space-y-4 p-3 sm:p-5">
         <div>
           <Link href="/receivables/invoices" className="text-sm text-primary hover:underline">← Invoices</Link>
           <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -109,38 +109,55 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
         {changes}
 
         <section className={`${CARD} overflow-x-auto`}>
-          <table className="min-w-full text-sm">
-            <thead className={`text-left ${LABEL}`}>
-              <tr>
-                <th className="px-2 py-2 font-medium">Item</th>
-                <th className="px-2 py-2 font-medium">Description</th>
-                <th className="px-2 py-2 text-right font-medium">Qty</th>
-                <th className="px-2 py-2 text-right font-medium">Unit price</th>
-                <th className="px-2 py-2 text-right font-medium">Disc %</th>
-                <th className="px-2 py-2 text-right font-medium">Amount</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {lines.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-2 py-6 text-center text-foreground-muted">
-                    {linesError ? "Couldn't load lines from Business Central." : 'No lines'}
-                  </td>
-                </tr>
-              ) : (
-                lines.map((l) => (
-                  <tr key={l.id}>
-                    <td className="px-2 py-2 font-mono text-xs">{l.line_object_number ?? ''}</td>
-                    <td className="px-2 py-2">{l.description ?? ''}</td>
-                    <td className="px-2 py-2 text-right">{num(l.quantity)}</td>
-                    <td className="px-2 py-2 text-right">{money(l.unit_price, cur)}</td>
-                    <td className="px-2 py-2 text-right">{l.discount_percent ? l.discount_percent : ''}</td>
-                    <td className="px-2 py-2 text-right">{money(l.amount_excluding_tax, cur)}</td>
+          {lines.length === 0 ? (
+            <p className="px-2 py-6 text-center text-sm text-foreground-muted">
+              {linesError ? "Couldn't load lines from Business Central." : 'No lines'}
+            </p>
+          ) : (
+            <>
+              {/* Phone: each line stacked, so nothing is cut off at the side. */}
+              <ul data-testid="invoice-lines-phone" className="divide-y divide-border text-sm sm:hidden">
+                {lines.map((l) => (
+                  <li key={l.id} className="flex items-start justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <div className="text-foreground">{l.description ?? ''}</div>
+                      <div className="mt-0.5 text-xs text-foreground-muted">
+                        <span className="font-mono">{l.line_object_number ?? ''}</span>
+                        {l.line_object_number ? ' · ' : ''}
+                        {num(l.quantity)} × {money(l.unit_price, cur)}
+                        {l.discount_percent ? ` · ${l.discount_percent}% off` : ''}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right text-foreground">{money(l.amount_excluding_tax, cur)}</div>
+                  </li>
+                ))}
+              </ul>
+              <table className="hidden min-w-full text-sm sm:table">
+                <thead className={`text-left ${LABEL}`}>
+                  <tr>
+                    <th className="px-2 py-2 font-medium">Item</th>
+                    <th className="px-2 py-2 font-medium">Description</th>
+                    <th className="px-2 py-2 text-right font-medium">Qty</th>
+                    <th className="px-2 py-2 text-right font-medium">Unit price</th>
+                    <th className="px-2 py-2 text-right font-medium">Disc %</th>
+                    <th className="px-2 py-2 text-right font-medium">Amount</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {lines.map((l) => (
+                    <tr key={l.id}>
+                      <td className="whitespace-nowrap px-2 py-2 font-mono text-xs">{l.line_object_number ?? ''}</td>
+                      <td className="px-2 py-2">{l.description ?? ''}</td>
+                      <td className="px-2 py-2 text-right">{num(l.quantity)}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-right">{money(l.unit_price, cur)}</td>
+                      <td className="px-2 py-2 text-right">{l.discount_percent ? l.discount_percent : ''}</td>
+                      <td className="whitespace-nowrap px-2 py-2 text-right">{money(l.amount_excluding_tax, cur)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
           <dl className="ml-auto mt-3 w-full max-w-xs space-y-1 text-sm">
             <div className="flex justify-between text-foreground-muted"><dt>Subtotal</dt><dd>{money(invoice.total_amount_excluding_tax, cur)}</dd></div>
             <div className="flex justify-between text-foreground-muted"><dt>Tax</dt><dd>{money(invoice.total_tax_amount, cur)}</dd></div>

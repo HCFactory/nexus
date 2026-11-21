@@ -46,7 +46,7 @@ interface SalesInvoicesClientProps {
 const invoicePage = (invoice: SalesInvoiceListRow) => `/receivables/invoices/${encodeURIComponent(invoice.bc_invoice_id)}`;
 
 const SELECT_CLASSNAME =
-  "h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
+  "h-8 rounded-md border border-input bg-transparent px-2.5 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 const PAGE_BUTTON_CLASSNAME =
   "inline-flex h-8 items-center gap-1 rounded-md border border-border px-2.5 text-xs text-foreground transition-colors hover:bg-surface disabled:pointer-events-none disabled:opacity-40";
 
@@ -157,14 +157,14 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
       ) : (
         <div className="min-h-0 flex-1 overflow-hidden p-3 lg:p-4">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-surface-raised card-shadow">
-            <div className="space-y-3 border-b border-border p-3">
+            <div className="space-y-2 border-b border-border px-3 py-2.5">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
                 <Input
                   value={search}
                   onChange={(event) => onSearch(event.target.value)}
                   placeholder="Search by invoice number, customer, or document number"
-                  className="pl-9 pr-9"
+                  className="h-8 pl-9 pr-9 text-sm"
                 />
                 {search && (
                   <button
@@ -177,7 +177,7 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                   </button>
                 )}
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <select
                   value={view.status}
                   onChange={(event) => go({ status: event.target.value })}
@@ -205,24 +205,27 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                     <option value="unmatched">Not matched</option>
                   </select>
                 )}
-                <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
-                  From
-                  <Input
-                    type="date"
-                    value={view.from}
-                    onChange={(event) => onDate("from", event.target.value)}
-                    className="h-9 w-auto"
-                  />
-                </label>
-                <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
-                  To
-                  <Input
-                    type="date"
-                    value={view.to}
-                    onChange={(event) => onDate("to", event.target.value)}
-                    className="h-9 w-auto"
-                  />
-                </label>
+                {/* From and To share one row on a phone. */}
+                <div className="flex w-full items-center gap-1.5 sm:w-auto">
+                  <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-foreground-muted sm:flex-none">
+                    From
+                    <Input
+                      type="date"
+                      value={view.from}
+                      onChange={(event) => onDate("from", event.target.value)}
+                      className="h-8 min-w-0 flex-1 px-2 text-xs sm:w-auto sm:flex-none"
+                    />
+                  </label>
+                  <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-foreground-muted sm:flex-none">
+                    To
+                    <Input
+                      type="date"
+                      value={view.to}
+                      onChange={(event) => onDate("to", event.target.value)}
+                      className="h-8 min-w-0 flex-1 px-2 text-xs sm:w-auto sm:flex-none"
+                    />
+                  </label>
+                </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground-muted">
                 <span aria-live="polite">
@@ -247,7 +250,7 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                   No invoices match the current filters.
                 </p>
               ) : (
-                <table className="min-w-full divide-y divide-border text-sm">
+                <table className="min-w-full divide-y divide-border whitespace-nowrap text-sm">
                   <thead className="sticky top-0 bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
                     <tr>
                       <th className="px-4 py-2.5 font-medium">Invoice #</th>
