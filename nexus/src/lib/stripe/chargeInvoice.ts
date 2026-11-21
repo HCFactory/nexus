@@ -5,6 +5,7 @@ import type Stripe from 'stripe';
 
 import type { BillcomClient } from '@/lib/billcom/client';
 import { recordBillcomCardPayment } from '@/lib/billcom/recordPayment';
+import { LATE_CHARGE_PREFIX } from '@/lib/notifications/backupChargeEmail';
 import type { BillcomPanelInput } from '@/lib/receivables/salesInvoicePage';
 import { isChangeOpen, type ChangeState } from '@/types/invoiceChanges';
 import type {
@@ -35,7 +36,6 @@ export const RETRY_LESS_OWING =
   'Bill.com shows less owing on this invoice than this payment, so it may already be recorded. Check Bill.com; if the payment is there, use "I marked it paid in Bill.com".';
 export const RETRY_LESS_OWING_LATE =
   'Bill.com shows less owing on this invoice than this late charge, so the customer may have paid twice. Refund this charge in Stripe, then use "I marked it paid in Bill.com".';
-const LATE_CHARGE_PREFIX = 'Stripe charged this card (';
 const billcomAlreadyHas = (id: string) => `Bill.com already has this payment (${id}). Use "I marked it paid in Bill.com" instead of Retry.`;
 export const DUPLICATE_CHARGE_MESSAGE = 'A charge for this invoice is already in progress or needs attention.';
 export const AUTH_REQUIRED_MESSAGE = 'The bank needs the customer to approve this charge — send a new setup link.';
@@ -358,12 +358,27 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
   throw new Error(msg);
 }
 
-/** Never lets the staff email affect the charge. */
+/** The charge has already happened: staff never wait longer than this for its email. */
+const NOTIFY_TIMEOUT_MS = 5_000;
+
+/** Never lets the staff email affect the charge: errors are logged and a slow send is abandoned. */
 async function notifyCharged(deps: ChargeDeps, id: string): Promise<void> {
+  if (!deps.notifyCharged) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    await deps.notifyCharged?.(id);
+    await Promise.race([
+      deps.notifyCharged(id),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          console.error(`[chargeInvoice] card payment ${id}: the charge email took over ${NOTIFY_TIMEOUT_MS / 1000}s; not waiting for it.`);
+          resolve();
+        }, NOTIFY_TIMEOUT_MS);
+      }),
+    ]);
   } catch (e) {
     console.error(`[chargeInvoice] card payment ${id}: the charge email failed:`, e);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

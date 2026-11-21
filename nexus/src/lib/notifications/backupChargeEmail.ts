@@ -20,6 +20,9 @@ export interface BackupChargeEmailInput {
   chargedAt: string;
   /** card_payments.billcom_state when the email is built. */
   billcomState: string;
+  /** Set when Bill.com returned a payment id (even if Nexus failed to save "recorded"). */
+  billcomPaymentId?: string | null;
+  billcomError?: string | null;
   invoiceUrl: string;
 }
 
@@ -35,12 +38,24 @@ const hawaiiTime = (iso: string) =>
     minute: '2-digit',
   })} HST`;
 
+/** How chargeInvoice's late-charge note starts (it imports this). */
+export const LATE_CHARGE_PREFIX = 'Stripe charged this card (';
+
+function billcomLine(p: BackupChargeEmailInput): string {
+  if (p.billcomState === 'recorded' || p.billcomState === 'recorded_manually') return 'Recorded in Bill.com.';
+  // Bill.com has it even though the row isn't "recorded": recording again would pay it twice.
+  if (p.billcomPaymentId) return "Bill.com has this payment, but Nexus couldn't save that. Don't record it again; see the invoice in Nexus.";
+  if (p.billcomError?.startsWith(LATE_CHARGE_PREFIX)) {
+    return 'NOT recorded. The card was charged after Nexus had marked the charge failed. Check Stripe before recording it; see the invoice in Nexus.';
+  }
+  return 'NOT recorded in Bill.com yet. Open the invoice in Nexus to finish it.';
+}
+
 export function buildBackupChargeEmail(p: BackupChargeEmailInput): { subject: string; text: string } {
   const customer = p.customerName?.trim() || p.customerNumber;
   const customerLine = p.customerName?.trim() ? `${p.customerName.trim()} (${p.customerNumber})` : p.customerNumber;
   const card = p.cardLast4 ? `${cardBrandName(p.cardBrand)} •••• ${p.cardLast4}` : cardBrandName(p.cardBrand);
-  const inBillcom = p.billcomState === 'recorded' || p.billcomState === 'recorded_manually';
-  const billcom = inBillcom ? 'Recorded in Bill.com.' : 'NOT recorded in Bill.com yet. Open the invoice in Nexus to finish it.';
+  const billcom = billcomLine(p);
   return {
     subject: `Backup payment charged: ${p.invoiceNumber} · ${money(p.amount)} · ${customer} [NEXUS]`,
     text: [
@@ -76,6 +91,8 @@ interface ClaimedPayment {
   amount: number | string;
   card_id: string;
   billcom_state: string;
+  billcom_payment_id: string | null;
+  billcom_error: string | null;
   charged_by: string | null;
   charged_at: string;
 }
@@ -138,6 +155,8 @@ export async function notifyBackupCharge(deps: BackupChargeNotifyDeps, cardPayme
       chargedBy: user?.display_name?.trim() || user?.email || null,
       chargedAt: p.charged_at,
       billcomState: p.billcom_state,
+      billcomPaymentId: p.billcom_payment_id,
+      billcomError: p.billcom_error,
       invoiceUrl: `${deps.appUrl.replace(/\/$/, '')}/receivables/invoices/${encodeURIComponent(p.bc_invoice_id)}`,
     });
     await deps.send({ to, ...email });

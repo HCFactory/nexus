@@ -1,41 +1,50 @@
 'use client';
 
 import { X } from 'lucide-react';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { getNotificationSettings, saveNotificationSettings } from '@/app/actions/notificationSettings';
+import { EMAIL_PATTERN, MAX_NOTIFY_EMAILS } from '@/lib/notifications/settings';
 
 type View = NonNullable<Awaited<ReturnType<typeof getNotificationSettings>>>;
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX = 20;
+/** One list's addresses plus what is typed in its box (not yet added). */
+interface ListState {
+  emails: string[];
+  draft: string;
+  error: string | null;
+}
+
+const listOf = (emails: string[]): ListState => ({ emails, draft: '', error: null });
+
+/** Adds the typed address, if any. Returns null (with an error set) when it isn't valid. */
+function withDraft(l: ListState): ListState | null {
+  const e = l.draft.trim().toLowerCase();
+  if (!e) return { ...l, draft: '', error: null };
+  if (!EMAIL_PATTERN.test(e)) return null;
+  if (l.emails.length >= MAX_NOTIFY_EMAILS && !l.emails.includes(e)) return null;
+  return { emails: l.emails.includes(e) ? l.emails : [...l.emails, e], draft: '', error: null };
+}
+
+function draftError(l: ListState): string {
+  return EMAIL_PATTERN.test(l.draft.trim().toLowerCase()) ? `At most ${MAX_NOTIFY_EMAILS} addresses.` : 'Enter a valid email address.';
+}
 
 function EmailList({
   title,
   hint,
-  emails,
+  state,
   canEdit,
   onChange,
 }: {
   title: string;
   hint: string;
-  emails: string[];
+  state: ListState;
   canEdit: boolean;
-  onChange: (next: string[]) => void;
+  onChange: (next: ListState) => void;
 }) {
-  const [draft, setDraft] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const id = useId();
-
-  const add = () => {
-    const e = draft.trim().toLowerCase();
-    if (!e) return;
-    if (!EMAIL.test(e)) return setError('Enter a valid email address.');
-    if (emails.length >= MAX && !emails.includes(e)) return setError(`At most ${MAX} addresses.`);
-    if (!emails.includes(e)) onChange([...emails, e]);
-    setDraft('');
-    setError(null);
-  };
+  const add = () => onChange(withDraft(state) ?? { ...state, error: draftError(state) });
 
   return (
     <div role="group" aria-labelledby={`${id}-title`} className="space-y-2">
@@ -45,11 +54,11 @@ function EmailList({
         </h3>
         <p className="text-xs text-foreground-muted">{hint}</p>
       </div>
-      {emails.length === 0 ? (
+      {state.emails.length === 0 ? (
         <p className="text-sm text-foreground-muted">Nobody yet.</p>
       ) : (
         <ul className="flex flex-wrap gap-2">
-          {emails.map((e) => (
+          {state.emails.map((e) => (
             <li
               key={e}
               className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-raised px-2.5 py-1 text-sm text-foreground"
@@ -59,7 +68,7 @@ function EmailList({
                 <button
                   type="button"
                   aria-label={`Remove ${e}`}
-                  onClick={() => onChange(emails.filter((x) => x !== e))}
+                  onClick={() => onChange({ ...state, emails: state.emails.filter((x) => x !== e) })}
                   className="rounded-full p-0.5 text-foreground-muted hover:text-foreground"
                 >
                   <X className="h-3.5 w-3.5" />
@@ -75,11 +84,8 @@ function EmailList({
             type="text"
             inputMode="email"
             aria-label={`Add an email for ${title}`}
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setError(null);
-            }}
+            value={state.draft}
+            onChange={(e) => onChange({ ...state, draft: e.target.value, error: null })}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -98,9 +104,9 @@ function EmailList({
           </button>
         </div>
       )}
-      {error && (
+      {state.error && (
         <p role="alert" className="text-xs text-destructive">
-          {error}
+          {state.error}
         </p>
       )}
     </div>
@@ -111,11 +117,12 @@ function EmailList({
 export function ReceivablesNotificationsCard() {
   const [view, setView] = useState<View | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [charged, setCharged] = useState<string[]>([]);
-  const [saved, setSaved] = useState<string[]>([]);
+  const [charged, setCharged] = useState<ListState>(listOf([]));
+  const [saved, setSaved] = useState<ListState>(listOf([]));
   const [saving, setSaving] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     let live = true;
@@ -124,30 +131,41 @@ export function ReceivablesNotificationsCard() {
         if (!live) return;
         setView(v);
         if (v) {
-          setCharged(v.backupChargeEmails);
-          setSaved(v.cardSavedEmails);
+          setCharged(listOf(v.backupChargeEmails));
+          setSaved(listOf(v.cardSavedEmails));
         }
       })
       .catch((e) => live && setError(e instanceof Error ? e.message : 'Could not load the notification settings.'))
       .finally(() => live && setLoaded(true));
     return () => {
       live = false;
+      clearTimeout(savedTimer.current);
     };
   }, []);
 
   if (!loaded || (!view && !error)) return null;
 
   const save = async () => {
+    // An address typed but not added is saved too; an invalid one stops the save.
+    const nextCharged = withDraft(charged);
+    const nextSaved = withDraft(saved);
+    if (!nextCharged) setCharged({ ...charged, error: draftError(charged) });
+    if (!nextSaved) setSaved({ ...saved, error: draftError(saved) });
+    if (!nextCharged || !nextSaved) return;
+    setCharged(nextCharged);
+    setSaved(nextSaved);
+
     setSaving(true);
     setError(null);
     setJustSaved(false);
     try {
-      const next = await saveNotificationSettings({ backupChargeEmails: charged, cardSavedEmails: saved });
+      const next = await saveNotificationSettings({ backupChargeEmails: nextCharged.emails, cardSavedEmails: nextSaved.emails });
       setView(next);
-      setCharged(next.backupChargeEmails);
-      setSaved(next.cardSavedEmails);
+      setCharged(listOf(next.backupChargeEmails));
+      setSaved(listOf(next.cardSavedEmails));
       setJustSaved(true);
-      setTimeout(() => setJustSaved(false), 2000);
+      clearTimeout(savedTimer.current);
+      savedTimer.current = setTimeout(() => setJustSaved(false), 2000);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save.');
     } finally {
@@ -155,7 +173,7 @@ export function ReceivablesNotificationsCard() {
     }
   };
 
-  const edit = <T,>(set: (v: T) => void) => (v: T) => {
+  const edit = (set: (v: ListState) => void) => (v: ListState) => {
     set(v);
     setJustSaved(false);
   };
@@ -169,21 +187,23 @@ export function ReceivablesNotificationsCard() {
       <div className="space-y-6 px-6 py-5">
         {view && !view.available ? (
           <p className="text-sm text-foreground-muted">
-            Not available yet: the database update for notification emails hasn&apos;t been applied.
+            {view.problem === 'not_applied'
+              ? "Not available yet: the database update for notification emails hasn't been applied."
+              : "Couldn't load the notification emails. Refresh the page to try again."}
           </p>
         ) : view ? (
           <>
             <EmailList
               title="Backup payment charged"
               hint="Emailed when a customer's backup card is charged successfully: invoice, amount, customer and card."
-              emails={charged}
+              state={charged}
               canEdit={view.canEdit}
               onChange={edit(setCharged)}
             />
             <EmailList
               title="Backup payment method saved"
               hint="Emailed when a customer saves a card on file."
-              emails={saved}
+              state={saved}
               canEdit={view.canEdit}
               onChange={edit(setSaved)}
             />

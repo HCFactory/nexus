@@ -986,6 +986,24 @@ describe('the backup payment email', () => {
     errors.mockRestore();
   });
 
+  it('a hanging email gives up after 5 seconds; the charge still reports success', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const s = setup();
+      vi.mocked(s.deps.notifyCharged!).mockImplementation(() => new Promise<void>(() => {}));
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      let done = false;
+      const p = chargeInvoice(s.deps, ARGS).then((r) => { done = true; return r; });
+      await vi.advanceTimersByTimeAsync(4_900);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
+      await expect(p).resolves.toMatchObject({ status: 'succeeded', billcomState: 'recorded' });
+      errors.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a declined card sends nothing', async () => {
     const s = setup({
       create: async () => {

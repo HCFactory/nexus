@@ -23,6 +23,8 @@ Staff want an email whenever a customer's backup card (saved Stripe card) is cha
 
 - Emails for failed or declined charges (the user chose successful only).
 - Per-user notification preferences.
+- A late charge that stays failed because another charge for the invoice is open (possible double charge) sends no email; the invoice page already flags it.
+- If sending fails after the charge is marked as emailed, it is not retried (logged only), so a charge never emails twice.
 
 ## Anti-goals
 
@@ -32,8 +34,9 @@ Staff want an email whenever a customer's backup card (saved Stripe card) is cha
 
 ## Constraints
 
-- **Storage:** a new migration 077 adds `org_notification_settings` (one row per organization: `backup_charge_emails text[]`, `card_saved_emails text[]` (null = never set), updated_at, updated_by). Readable by org members; written only by a server action that checks the user is an admin. The user applies the migration.
+- **Storage:** a new migration 077 adds `org_notification_settings` (one row per organization: `backup_charge_emails text[]`, `card_saved_emails text[]` (null = never set), updated_at, updated_by). Read and written only by server code: shown to admins and staff with receivables access, saved only by admins. The user applies the migration.
   - The existing `app_settings` table is not used: any signed-in user can write it and it has no organization column.
+- **Waiting:** staff never wait more than 5 seconds for the email; a slower send is abandoned (logged).
 - **Sending:** Resend, with the same sender as the existing customer emails (CUSTOMER_EMAIL_FROM).
 - **Before 077 is applied:** Settings shows a short "not available yet" note; charges work and send no charge email; the card-saved email uses the old address.
 - Addresses are validated (simple email check) and de-duplicated, at most 20 per list.

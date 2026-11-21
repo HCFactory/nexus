@@ -15,8 +15,9 @@ import { createServiceClient } from '@/lib/supabase/server';
 // NOTE: only async functions are exported here.
 
 interface NotificationSettingsView {
-  /** False until migration 077 is applied. */
+  /** False until migration 077 is applied, or when the read failed (see problem). */
   available: boolean;
+  problem: 'not_applied' | 'error' | null;
   canEdit: boolean;
   backupChargeEmails: string[];
   /** Who it goes to today (the old address until someone saves the list). */
@@ -32,6 +33,7 @@ export async function getNotificationSettings(): Promise<NotificationSettingsVie
   const settings = await readNotificationSettings(createServiceClient(), ctx.orgId);
   return {
     available: settings.available,
+    problem: settings.problem,
     canEdit: Boolean(ctx.access.isAdmin),
     backupChargeEmails: settings.backupChargeEmails,
     cardSavedEmails: cardSavedRecipients(settings),
@@ -59,5 +61,5 @@ export async function saveNotificationSettings(input: {
 
   await saveNotificationSettingsRow(createServiceClient(), ctx.orgId, ctx.user.id as string, lists, new Date());
   revalidatePath('/settings');
-  return { available: true, canEdit: true, ...lists };
+  return { available: true, problem: null, canEdit: true, ...lists };
 }

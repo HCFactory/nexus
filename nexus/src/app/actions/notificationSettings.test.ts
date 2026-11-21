@@ -26,6 +26,7 @@ describe('getNotificationSettings', () => {
   it('nothing saved yet: no charge emails; saved-card shows the address it goes to today', async () => {
     expect(await getNotificationSettings()).toEqual({
       available: true,
+      problem: null,
       canEdit: true,
       backupChargeEmails: [],
       cardSavedEmails: ['fundraisers@hawaiicandyfactory.com'],
@@ -43,8 +44,8 @@ describe('getNotificationSettings', () => {
   });
 
   it('migration not applied: unavailable', async () => {
-    mocks.db.failOn = () => 'relation "org_notification_settings" does not exist';
-    expect(await getNotificationSettings()).toMatchObject({ available: false });
+    mocks.db.failOn = () => ({ message: 'relation "org_notification_settings" does not exist', code: '42P01' });
+    expect(await getNotificationSettings()).toMatchObject({ available: false, problem: 'not_applied' });
   });
 });
 
@@ -54,7 +55,7 @@ describe('saveNotificationSettings', () => {
       backupChargeEmails: [' AR@Example.com', 'ar@example.com', 'boss@example.com'],
       cardSavedEmails: [],
     });
-    expect(out).toEqual({ available: true, canEdit: true, backupChargeEmails: ['ar@example.com', 'boss@example.com'], cardSavedEmails: [] });
+    expect(out).toEqual({ available: true, problem: null, canEdit: true, backupChargeEmails: ['ar@example.com', 'boss@example.com'], cardSavedEmails: [] });
     expect(mocks.db.tables.org_notification_settings[0]).toMatchObject({
       organization_id: 'org-1',
       backup_charge_emails: ['ar@example.com', 'boss@example.com'],

@@ -79,6 +79,25 @@ describe('buildBackupChargeEmail', () => {
     }
   });
 
+  it('Bill.com has the payment but Nexus did not save that: never says to record it again', () => {
+    const { text } = buildBackupChargeEmail({ ...base, billcomState: 'not_started', billcomPaymentId: '0rp1' });
+    expect(text).toContain(
+      "Bill.com: Bill.com has this payment, but Nexus couldn't save that. Don't record it again; see the invoice in Nexus.",
+    );
+    expect(buildBackupChargeEmail({ ...base, billcomState: 'failed', billcomPaymentId: '0rp1' }).text).toContain('Bill.com has this payment');
+  });
+
+  it('a late charge says to check Stripe first', () => {
+    const { text } = buildBackupChargeEmail({
+      ...base,
+      billcomState: 'failed',
+      billcomError: 'Stripe charged this card (pi_late) after Nexus had marked the charge failed. …',
+    });
+    expect(text).toContain(
+      'Bill.com: NOT recorded. The card was charged after Nexus had marked the charge failed. Check Stripe before recording it; see the invoice in Nexus.',
+    );
+  });
+
   it('missing names fall back to staff and the customer number', () => {
     const { subject, text } = buildBackupChargeEmail({ ...base, chargedBy: null, customerName: null, cardBrand: null, cardLast4: null });
     expect(subject).toBe('Backup payment charged: W-116080 · $314.14 · C100 [NEXUS]');
@@ -95,6 +114,7 @@ describe('notifyBackupCharge', () => {
     await notifyBackupCharge(s.deps, 'cp-1');
     expect(s.send).toHaveBeenCalledTimes(1);
     const msg = s.send.mock.calls[0][0];
+    expect(msg.text).toContain('Bill.com: Recorded in Bill.com.');
     expect(msg.to).toEqual(['ar@example.com', 'boss@example.com']);
     expect(msg.subject).toBe('Backup payment charged: W-116080 · $314.14 · Aloha School [NEXUS]');
     expect(msg.text).toContain('Card: Visa •••• 4242');
@@ -110,6 +130,12 @@ describe('notifyBackupCharge', () => {
       expect(s.send).not.toHaveBeenCalled();
       expect(s.db.tables.card_payments[0].charge_email_sent_at).toBeNull();
     }
+  });
+
+  it("passes Bill.com's payment id and error from the row", async () => {
+    const s = setup({ payment: payment({ billcom_state: 'not_started', billcom_payment_id: '0rp1' }) });
+    await notifyBackupCharge(s.deps, 'cp-1');
+    expect(s.send.mock.calls[0][0].text).toContain('Bill.com has this payment');
   });
 
   it('only for a succeeded charge', async () => {
