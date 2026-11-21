@@ -113,8 +113,9 @@ export function SyncSection({ overview }: { overview: SyncOverview | null }) {
   };
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-surface">
-      <table className="w-full text-sm">
+    // On a phone the table scrolls sideways inside its box rather than squashing or being cut off.
+    <div className="overflow-x-auto rounded-xl border border-border bg-surface">
+      <table className="w-full min-w-[44rem] text-sm">
         <thead className="border-b border-border text-left text-xs uppercase tracking-wide text-foreground-subtle">
           <tr>
             <th className="px-4 py-3 font-medium">Sync</th>
