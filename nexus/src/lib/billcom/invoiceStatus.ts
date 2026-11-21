@@ -1,4 +1,5 @@
 import type { BillcomClient } from './client';
+import { billcomListQuery } from './listQuery';
 
 const PAGE = 100;
 const MAX_PAGES = 50;
@@ -82,9 +83,8 @@ export async function readBillcomInvoiceStatus(
   let page: string | undefined;
   for (let i = 0; ; i++) {
     if (i === MAX_PAGES) throw new Error(`Bill.com invoice list has more than ${MAX_PAGES} pages.`);
-    const qs = new URLSearchParams({ filters: `customerId:eq:${q.billcomCustomerId}`, max: String(PAGE) });
-    if (page) qs.set('page', page);
-    const res = await client.request<{ results?: RawInvoice[]; nextPage?: string }>(`/v3/invoices?${qs.toString()}`);
+    const qs = billcomListQuery({ filters: `customerId:eq:${q.billcomCustomerId}`, max: String(PAGE) }, page);
+    const res = await client.request<{ results?: RawInvoice[]; nextPage?: string }>(`/v3/invoices?${qs}`);
     for (const r of res.results ?? []) {
       const rank = numbers.indexOf((r.invoiceNumber ?? '').trim());
       if (rank >= 0) matches[rank].push(r);

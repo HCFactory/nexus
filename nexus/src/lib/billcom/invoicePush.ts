@@ -1,4 +1,5 @@
 import type { BillcomClient } from './client';
+import { billcomListQuery } from './listQuery';
 import { BillcomApiError } from './errors';
 
 const PAGE = 100;
@@ -64,9 +65,8 @@ export async function findBillcomInvoice(
 ): Promise<BillcomInvoiceSummary | null> {
   let page: string | undefined;
   for (let i = 0; i < MAX_PAGES; i++) {
-    const qs = new URLSearchParams({ filters: `customerId:eq:${customerId}`, max: String(PAGE) });
-    if (page) qs.set('page', page);
-    const res = await client.request<{ results?: RawInvoice[]; nextPage?: string }>(`/v3/invoices?${qs.toString()}`);
+    const qs = billcomListQuery({ filters: `customerId:eq:${customerId}`, max: String(PAGE) }, page);
+    const res = await client.request<{ results?: RawInvoice[]; nextPage?: string }>(`/v3/invoices?${qs}`);
     const hit = (res.results ?? []).find((r) => r.invoiceNumber === invoiceNumber);
     if (hit) return summaryOf(hit);
     page = res.nextPage || undefined;

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { billcomListQuery } from './listQuery';
 
 import type { BillcomClient } from './client';
 import {
@@ -146,11 +147,9 @@ async function listBillcomCustomersRaw(deps: PushDeps): Promise<BillcomCustomer[
     const seen = new Set<string>();
     do {
       if (++pages > MAX_LIST_PAGES) throw new Error(`Bill.com customer list has more than ${MAX_LIST_PAGES} pages.`);
-      const qs = new URLSearchParams({ max: String(BILLCOM_PAGE) });
-      if (filter) qs.set('filters', filter);
-      if (page) qs.set('page', page);
+      const qs = billcomListQuery({ max: String(BILLCOM_PAGE), filters: filter ?? undefined }, page);
       const res = await deps.billcom.request<{ results?: BillcomCustomer[]; nextPage?: string }>(
-        `/v3/customers?${qs.toString()}`,
+        `/v3/customers?${qs}`,
       );
       const results = res.results ?? [];
       for (const c of results) byId.set(c.id, c);

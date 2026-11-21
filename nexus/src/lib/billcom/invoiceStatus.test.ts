@@ -180,3 +180,15 @@ describe('findConnectorInvoice (Bill.com invoices copied by its BC connector)', 
     expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], bcTotal: 45.23, customerName: '' })).toEqual({ kind: 'mismatch' });
   });
 });
+
+describe('readBillcomInvoiceStatus paging', () => {
+  it('asks for later pages with only the page token (Bill.com refuses filters with page)', async () => {
+    const { client, request } = fakeClient((path: string) =>
+      path.includes('page=') ? { results: [{ ...RAW, invoiceNumber: 'W-9' }] } : { results: [], nextPage: 'tok-2' },
+    );
+    await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-9'] });
+    const second = new URLSearchParams(request.mock.calls[1][0].split('?')[1]);
+    expect(second.get('page')).toBe('tok-2');
+    expect(second.get('filters')).toBeNull();
+  });
+});

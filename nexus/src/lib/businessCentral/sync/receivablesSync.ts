@@ -1,4 +1,5 @@
 import 'server-only';
+import { billcomListQuery } from '@/lib/billcom/listQuery';
 
 import { revalidatePath } from 'next/cache';
 
@@ -361,11 +362,9 @@ async function runBillcomStatusStep(supabase: SupabaseServiceClient, orgId: stri
     return await syncBillcomInvoiceStatus(
       {
         async listChanged(since, page) {
-          const qs = new URLSearchParams({ max: '100', sort: 'updatedTime:asc' });
           // A time must be quoted: its colons would otherwise break Bill.com's field:op:value filter.
-          if (since) qs.set('filters', `updatedTime:gte:"${since}"`);
-          if (page) qs.set('page', page);
-          return client.request<{ results: BillcomListInvoice[]; nextPage?: string }>(`/v3/invoices?${qs.toString()}`);
+          const qs = billcomListQuery({ max: '100', sort: 'updatedTime:asc', filters: since ? `updatedTime:gte:"${since}"` : undefined }, page);
+          return client.request<{ results: BillcomListInvoice[]; nextPage?: string }>(`/v3/invoices?${qs}`);
         },
         async findNexusInvoices(numbers) {
           const read = async (column: 'external_document_number' | 'bc_invoice_number') => {
