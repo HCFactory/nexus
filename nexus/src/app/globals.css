@@ -104,7 +104,7 @@
   color-scheme: dark;
 
   --background:        oklch(0.18 0.012 240);   /* #1e2130 */
-  --field:             oklch(0.25 0.014 240);   /* inputs a touch lighter than the panels */
+  --field:             oklch(0.225 0.014 240);  /* inputs close to the panel shade */
   --surface:           oklch(0.22 0.014 240);
   --surface-raised:    oklch(0.26 0.016 240);
   --surface-overlay:   oklch(0.30 0.018 240);
