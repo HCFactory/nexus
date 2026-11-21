@@ -1,10 +1,13 @@
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import type { BusinessCentralSalesInvoice, BusinessCentralSalesInvoiceLine } from '@/types/database';
 import { BillcomInvoicePanel } from './BillcomInvoicePanel';
 import { SalesInvoiceDetail } from './SalesInvoiceDetail';
 import { SalesInvoicesClient } from './SalesInvoicesClient';
+import { parseSalesInvoiceListParams, type SalesInvoiceListRow } from '@/lib/receivables/salesInvoiceList';
+
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn() }), usePathname: () => '/receivables/invoices' }));
 
 afterEach(cleanup);
 
@@ -141,10 +144,11 @@ describe('BillcomInvoicePanel', () => {
 });
 
 describe('SalesInvoicesClient numbering', () => {
-  const invoices = [invoice(), invoice({ id: 'row-2', bc_invoice_id: 'inv-2', bc_invoice_number: 'INV-77', external_document_number: null })];
+  const invoices = [invoice(), invoice({ id: 'row-2', bc_invoice_id: 'inv-2', bc_invoice_number: 'INV-77', external_document_number: null })] as unknown as SalesInvoiceListRow[];
+  const list = () => render(<SalesInvoicesClient invoices={invoices} total={2} params={parseSalesInvoiceListParams({})} />);
 
   it('lists Invoice # then BC Invoice No., each row opening the invoice page', () => {
-    render(<SalesInvoicesClient invoices={invoices} />);
+    list();
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
     expect(headers.slice(0, 2)).toEqual(['Invoice #', 'BC Invoice No.']);
     const first = screen.getByRole('row', { name: /INV-100412/ });
@@ -152,13 +156,11 @@ describe('SalesInvoicesClient numbering', () => {
     expect(within(first).getByRole('link', { name: 'INV-100412' })).toHaveAttribute('href', '/receivables/invoices/inv-guid');
   });
 
-  it('a blank Invoice # shows — and the row is still found by its BC Invoice No.', () => {
-    render(<SalesInvoicesClient invoices={invoices} />);
-    fireEvent.change(screen.getByPlaceholderText(/Search by invoice number/), { target: { value: 'INV-77' } });
-    const rows = screen.getAllByRole('row').slice(1);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toHaveTextContent('—');
-    expect(within(rows[0]).getByRole('link', { name: 'INV-77' })).toHaveAttribute('href', '/receivables/invoices/inv-2');
+  it('a blank Invoice # shows — and the row still opens by its BC Invoice No.', () => {
+    list();
+    const row = screen.getByRole('row', { name: /INV-77/ });
+    expect(row).toHaveTextContent('—');
+    expect(within(row).getByRole('link', { name: 'INV-77' })).toHaveAttribute('href', '/receivables/invoices/inv-2');
   });
 });
 
