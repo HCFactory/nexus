@@ -1,5 +1,6 @@
 'use client';
 
+import { pageTitle } from '@/lib/layout/pageTitle';
 import { Fragment, useTransition } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
@@ -87,14 +88,6 @@ export function Header({
     router.refresh();
   };
 
-  // Generate breadcrumb from pathname
-  const getBreadcrumb = () => {
-    if (pathname === '/') return 'Dashboard';
-    const segment = pathname.split('/').filter(Boolean)[0];
-    if (segment === 'admin') return 'Admin Panel';
-    return segment.charAt(0).toUpperCase() + segment.slice(1);
-  };
-
   return (
     <header className="bg-surface border-b border-border h-14 flex-shrink-0 flex items-center px-4 justify-between">
       {/* Left side - mobile menu + page title */}
@@ -107,7 +100,7 @@ export function Header({
         >
           <Menu className="size-5" />
         </button>
-        <span className="text-foreground font-medium text-sm">{getBreadcrumb()}</span>
+        <span className="text-foreground font-medium text-sm">{pageTitle(pathname)}</span>
       </div>
 
       {/* Right side - notifications, org dropdown, user avatar */}
