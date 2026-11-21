@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   pullShipTos: vi.fn(),
   pullPriceLists: vi.fn(),
   calls: [] as string[],
+  resolveBillcom: vi.fn(),
+  statusSync: vi.fn(),
   lockFree: true,
   lastLight: null as null | { started_at: string; complete: boolean | null },
   connUpdates: [] as Record<string, unknown>[],
@@ -71,7 +73,10 @@ vi.mock('@/lib/businessCentral/priceLists/priceListSync', () => ({
 }));
 vi.mock('@/lib/billcom/customerSyncHooks', () => ({
   queueChangedCustomers: (...a: unknown[]) => (mocks.calls.push('queue'), mocks.queueChanged(...a)),
+  resolveBillcomConnection: (...a: unknown[]) => mocks.resolveBillcom(...a),
 }));
+vi.mock('@/lib/billcom/connection', () => ({ createBillcomClientForConnection: vi.fn().mockResolvedValue({ request: vi.fn() }) }));
+vi.mock('@/lib/billcom/invoiceStatusSync', () => ({ syncBillcomInvoiceStatus: (...a: unknown[]) => mocks.statusSync(...a) }));
 
 import { syncBusinessCentralReceivables, syncCustomersLight } from './businessCentralReceivables';
 
@@ -80,6 +85,8 @@ beforeEach(() => {
   mocks.queueChanged.mockReset().mockResolvedValue(3);
   mocks.fillCards.mockReset().mockResolvedValue({ filled: 0, cursor: null, complete: true });
   mocks.list.mockReset().mockResolvedValue([]);
+  mocks.resolveBillcom.mockReset().mockResolvedValue(null);
+  mocks.statusSync.mockReset().mockResolvedValue({ entityType: 'billcom_invoice_status', recordsSynced: 3, complete: true, cursor: 'c', error: null });
   mocks.runAll.mockReset().mockResolvedValue([]);
   mocks.syncLines.mockReset().mockResolvedValue({ entityType: 'sales_invoice_line', recordsSynced: 0, complete: true, cursor: null, error: null });
   mocks.checkpoint = null;
@@ -256,5 +263,36 @@ describe('quick sync cooldown', () => {
     mocks.lastLight = { started_at: new Date(Date.now() - 61_000).toISOString(), complete: true };
     await syncCustomersLight();
     expect(mocks.runAll).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Bill.com payment status step', () => {
+  it('runs in the full sync when the environment has an enabled Bill.com connection, with its own 30 s window', async () => {
+    mocks.resolveBillcom.mockResolvedValue({ id: 'b1', enabled: true });
+    const results = await syncBusinessCentralReceivables();
+    expect(mocks.statusSync).toHaveBeenCalledTimes(1);
+    expect(mocks.statusSync.mock.calls[0][1]).toBe(30_000);
+    expect(results).toContainEqual({ entityType: 'billcom_invoice_status', recordsSynced: 3, complete: true, cursor: 'c', error: null });
+  });
+
+  it('is skipped (no line) when Bill.com is not picked or is off', async () => {
+    mocks.resolveBillcom.mockResolvedValue(null);
+    let results = await syncBusinessCentralReceivables();
+    mocks.resolveBillcom.mockResolvedValue({ id: 'b1', enabled: false });
+    results = results.concat(await syncBusinessCentralReceivables());
+    expect(mocks.statusSync).not.toHaveBeenCalled();
+    expect(results.some((r) => r.entityType === 'billcom_invoice_status')).toBe(false);
+  });
+
+  it('never runs in the light sync', async () => {
+    mocks.resolveBillcom.mockResolvedValue({ id: 'b1', enabled: true });
+    await syncCustomersLight();
+    expect(mocks.statusSync).not.toHaveBeenCalled();
+  });
+
+  it('a failure to start the step is reported and the sync still finishes', async () => {
+    mocks.resolveBillcom.mockRejectedValue(new Error('db down'));
+    const results = await syncBusinessCentralReceivables();
+    expect(results).toContainEqual(expect.objectContaining({ entityType: 'billcom_invoice_status', error: 'Bill.com payment status: db down' }));
   });
 });

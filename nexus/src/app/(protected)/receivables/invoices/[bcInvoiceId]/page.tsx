@@ -87,6 +87,7 @@ export default async function SalesInvoicePage({ params }: { params: Promise<{ b
               invoiceNumbers: [data.invoice.external_document_number ?? '', data.invoice.bc_invoice_number ?? ''],
               bcTotal: data.invoice.total_amount_including_tax ?? null,
               customerName: data.invoice.customer_name ?? null,
+              bcInvoiceId: data.invoice.bc_invoice_id,
               billcomInvoiceId: data.salesOrder?.billcomInvoiceId ?? null,
             }}
           />

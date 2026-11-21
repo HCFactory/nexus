@@ -5,6 +5,6 @@ export const dynamic = 'force-dynamic';
 
 export default async function SalesInvoicesPage({ searchParams }: { searchParams: Promise<{ q?: string | string[] }> }) {
   const { q } = await searchParams;
-  const { invoices } = await getSalesInvoicesPageData();
-  return <SalesInvoicesClient invoices={invoices} initialSearch={Array.isArray(q) ? q[0] : q} />;
+  const { invoices, billcomStatus } = await getSalesInvoicesPageData();
+  return <SalesInvoicesClient invoices={invoices} billcomStatus={billcomStatus} initialSearch={Array.isArray(q) ? q[0] : q} />;
 }

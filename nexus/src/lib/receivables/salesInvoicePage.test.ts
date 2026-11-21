@@ -350,6 +350,20 @@ describe('Bill.com connector mode (invoices copied by Bill.com\'s own BC connect
     expect(mocks.findConnector).not.toHaveBeenCalled();
   });
 
+  it('stores what it found for the invoice list (best effort)', async () => {
+    mocks.findConnector.mockResolvedValue({ kind: 'found', status: { ...STATUS, id: '00eF', status: 'PAID_IN_FULL', dueAmount: 0, totalAmount: 120.5, dueDate: '2026-11-01', customerId: '0cuX' } });
+    await findBillcomInvoiceForCharge({ ...input, bcInvoiceId: 'inv-9' });
+    expect(db.tables.billcom_invoice_status).toEqual([
+      expect.objectContaining({ organization_id: 'org-1', bc_connection_id: 'conn-1', bc_invoice_id: 'inv-9', billcom_connection_id: 'bcom-1', match: 'found', billcom_invoice_id: '00eF', status: 'PAID_IN_FULL', due_amount: 0, total_amount: 120.5, due_date: '2026-11-01' }),
+    ]);
+  });
+
+  it('a mismatch replaces a stored status, so a stale Paid does not linger', async () => {
+    mocks.findConnector.mockResolvedValue({ kind: 'mismatch' });
+    await findBillcomInvoiceForCharge({ ...input, bcInvoiceId: 'inv-9' });
+    expect(db.tables.billcom_invoice_status).toEqual([expect.objectContaining({ bc_invoice_id: 'inv-9', match: 'mismatch', status: null })]);
+  });
+
   it('ambiguous and not found pass through', async () => {
     mocks.findConnector.mockResolvedValue({ kind: 'ambiguous' });
     expect(await findBillcomInvoiceForCharge(input)).toEqual({ kind: 'ambiguous' });

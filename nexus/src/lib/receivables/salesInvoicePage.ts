@@ -184,6 +184,8 @@ export interface BillcomPanelInput {
    * read it by id even in connector mode. A sales order's stored id is not trusted there.
    */
   trustBillcomInvoiceId?: boolean;
+  /** The BC invoice: when given, what is found is stored for the invoice list. */
+  bcInvoiceId?: string;
   /** BC total incl. tax and customer name: connector mode only matches when Bill.com agrees. */
   bcTotal?: number | null;
   customerName?: string | null;
@@ -197,6 +199,49 @@ export interface BillcomPanelInput {
  * Throws on Bill.com or database errors.
  */
 export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Promise<BillcomLookup> {
+  let where: { ctx: Ctx; billcomConnectionId: string } | null = null;
+  const found = await lookupBillcomInvoice(input, (ctx, billcomConnectionId) => {
+    where = { ctx, billcomConnectionId };
+  });
+  // Keep the invoice list's stored status current. Best effort: never blocks the page or a charge.
+  const at = where as { ctx: Ctx; billcomConnectionId: string } | null;
+  if (at && input.bcInvoiceId && (found.kind === 'found' || found.kind === 'mismatch')) {
+    await storeBillcomStatus(at.ctx, at.billcomConnectionId, input.bcInvoiceId, found).catch((e) =>
+      console.error(`[invoice page] could not store the Bill.com status of ${input.bcInvoiceId}:`, e),
+    );
+  }
+  return found;
+}
+
+/** Saves a live lookup into billcom_invoice_status (the same row the sync writes). */
+async function storeBillcomStatus(ctx: Ctx, billcomConnectionId: string, bcInvoiceId: string, found: BillcomLookup): Promise<void> {
+  const s = found.kind === 'found' ? found.status : null;
+  const row = {
+    billcom_connection_id: billcomConnectionId,
+    match: found.kind === 'found' ? 'found' : 'mismatch',
+    billcom_invoice_id: s?.id ?? null,
+    status: s?.status ?? null,
+    total_amount: s?.totalAmount ?? null,
+    due_amount: s?.dueAmount ?? null,
+    due_date: s?.dueDate ? s.dueDate.slice(0, 10) : null,
+    checked_at: new Date().toISOString(),
+  };
+  const { data, error } = await ctx.supabase
+    .from('billcom_invoice_status')
+    .update(row)
+    .eq('organization_id', ctx.orgId)
+    .eq('bc_connection_id', ctx.connection.id)
+    .eq('bc_invoice_id', bcInvoiceId)
+    .select('id');
+  if (error) throw new Error(error.message);
+  if ((data ?? []).length > 0) return;
+  const { error: insertError } = await ctx.supabase
+    .from('billcom_invoice_status')
+    .insert({ ...row, organization_id: ctx.orgId, bc_connection_id: ctx.connection.id, bc_invoice_id: bcInvoiceId });
+  if (insertError) throw new Error(insertError.message);
+}
+
+async function lookupBillcomInvoice(input: BillcomPanelInput, resolved: (ctx: Ctx, billcomConnectionId: string) => void): Promise<BillcomLookup> {
   const ctx = await context();
   if (!ctx) return { kind: 'not_found' };
 
@@ -209,6 +254,7 @@ export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Pro
     console.error('[invoice page] could not create the Bill.com client:', e);
     return { kind: 'off' };
   }
+  resolved(ctx, conn.id);
 
   const readLinkedCustomerId = async (): Promise<string | null> => {
     const { data: link, error } = await ctx.supabase
