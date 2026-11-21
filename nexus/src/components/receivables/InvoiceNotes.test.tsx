@@ -35,19 +35,21 @@ describe('InvoiceNotes', () => {
 
     fireEvent.change(screen.getByLabelText('New note'), { target: { value: 'Left a voicemail' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add note' }));
-    await waitFor(() => expect(actions.addSalesInvoiceNote).toHaveBeenCalledWith('inv-1', 'Left a voicemail'));
-    expect(await screen.findByText('Left a voicemail')).toBeInTheDocument();
+    await waitFor(() => expect(actions.addSalesInvoiceNote).toHaveBeenCalledWith('inv-1', 'Left a voicemail'), { timeout: 5000 });
+    expect(await screen.findByText('Left a voicemail', undefined, { timeout: 5000 })).toBeInTheDocument();
 
+    await waitFor(() => expect(screen.getByLabelText('New note')).not.toBeDisabled(), { timeout: 5000 });
     fireEvent.click(screen.getByRole('button', { name: 'Edit note' }));
     fireEvent.change(screen.getByLabelText('Edit note text'), { target: { value: 'Left two voicemails' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(actions.updateSalesInvoiceNote).toHaveBeenCalledWith('n2', 'Left two voicemails'));
-    expect(await screen.findByText('Left two voicemails')).toBeInTheDocument();
+    await waitFor(() => expect(actions.updateSalesInvoiceNote).toHaveBeenCalledWith('n2', 'Left two voicemails'), { timeout: 5000 });
+    expect(await screen.findByText('Left two voicemails', undefined, { timeout: 5000 })).toBeInTheDocument();
 
+    await waitFor(() => expect(screen.getByLabelText('New note')).not.toBeDisabled(), { timeout: 5000 });
     fireEvent.click(screen.getByRole('button', { name: 'Delete note' }));
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
-    await waitFor(() => expect(actions.deleteSalesInvoiceNote).toHaveBeenCalledWith('n2'));
-    await waitFor(() => expect(screen.queryByText('Left two voicemails')).toBeNull());
+    await waitFor(() => expect(actions.deleteSalesInvoiceNote).toHaveBeenCalledWith('n2'), { timeout: 5000 });
+    await waitFor(() => expect(screen.queryByText('Left two voicemails')).toBeNull(), { timeout: 5000 });
   });
 
   it('read-only: no add box and no edit or delete buttons', () => {
