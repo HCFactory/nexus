@@ -9,7 +9,7 @@
 
   /* Core palette — light, cool blue-tinted */
   --background:        oklch(0.985 0.003 240);   /* near-white, slight blue */
-  --field:             oklch(0.985 0.003 240);   /* input/textarea/select fill */
+  --field:             oklch(1 0 0);             /* input/textarea/select fill: white */
   --surface:           oklch(0.97 0.004 240);    /* panel surface */
   --surface-raised:    oklch(1 0 0);             /* elevated card — pure white */
   --surface-overlay:   oklch(0.995 0.002 240);   /* dropdown/modal */
@@ -51,6 +51,8 @@
   --border:            oklch(0.88 0.01 240 / 0.9);
   --input:             oklch(0.94 0.006 240);
   --ring:              var(--primary);
+  /* Form field outline: clearly darker than the white fill. */
+  --field-border:      oklch(0.62 0.02 240);
 
   /* Chart colors */
   --chart-1: var(--primary);
@@ -101,7 +103,7 @@
   color-scheme: dark;
 
   --background:        oklch(0.18 0.012 240);   /* #1e2130 */
-  --field:             oklch(0.215 0.014 240);  /* inputs a step lighter than the page */
+  --field:             oklch(0.14 0.01 240);    /* inputs darker than the panels */
   --surface:           oklch(0.22 0.014 240);
   --surface-raised:    oklch(0.26 0.016 240);
   --surface-overlay:   oklch(0.30 0.018 240);
@@ -140,6 +142,8 @@
   --border:            oklch(0.34 0.018 240 / 0.7);
   --input:             var(--surface-raised);
   --ring:              var(--primary);
+  /* Form field outline: clearly lighter than the dark fill. */
+  --field-border:      oklch(0.66 0.02 240);
 
   --chart-1: var(--primary);
   --chart-2: var(--info);
@@ -221,6 +225,7 @@
 
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-field-border: var(--field-border);
   --color-ring: var(--ring);
 
   --color-chart-1: var(--chart-1);
@@ -444,4 +449,22 @@
   html body .po-table-zoom :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]), textarea, select) {
     font-size: 16px !important;
   }
+}
+
+/*
+ * Every text box, dropdown and text area gets the same high-contrast outline
+ * and fill (--field / --field-border), however the component styled it.
+ * Deliberately unlayered so it wins over utility classes; a field styled as
+ * something else (e.g. the sales order status pill) opts out with
+ * data-plain-field. Focus and error outlines still show.
+ */
+:is(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden],[type=submit],[type=button],[type=reset],[type=image]),select,textarea):not([data-plain-field]) {
+  border-color: var(--field-border);
+  background-color: var(--field);
+}
+:is(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden],[type=submit],[type=button],[type=reset],[type=image]),select,textarea):not([data-plain-field]):focus-visible {
+  border-color: var(--ring);
+}
+:is(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden],[type=submit],[type=button],[type=reset],[type=image]),select,textarea):not([data-plain-field])[aria-invalid="true"] {
+  border-color: var(--destructive);
 }
