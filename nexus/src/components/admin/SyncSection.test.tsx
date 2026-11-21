@@ -105,3 +105,12 @@ describe('SyncSection', () => {
     expect(screen.queryByRole('row')).toBeNull();
   });
 });
+
+describe('SyncSection on narrow screens', () => {
+  it('the table scrolls sideways inside its box instead of being cut off', () => {
+    render(<SyncSection overview={overview()} />);
+    const table = screen.getByRole('table');
+    expect(table.parentElement).toHaveClass('overflow-x-auto');
+    expect(table.className).toMatch(/min-w-\[/);
+  });
+});
