@@ -1,10 +1,11 @@
 // In-memory Supabase query builder for tests. Supports the subset the sales
 // order code uses: select/insert/update/delete, eq/in/or (is.null + lt),
-// (is.null, lt, eq, not.like) order, limit, range, maybeSingle/single and awaiting the builder.
+// (is.null, lt, eq, not.like) order, limit, range, maybeSingle/single and awaiting the builder;
+// also ilike, gt/gte/lt/lte and select(..., { count: 'exact' }).
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type Row = Record<string, unknown>;
-type Result = { data: Row[] | null; error: { message: string; code?: string } | null };
+type Result = { data: Row[] | null; error: { message: string; code?: string } | null; count?: number | null };
 type Op = 'select' | 'insert' | 'update' | 'delete';
 
 export interface FakeSupabase {
@@ -16,6 +17,22 @@ export interface FakeSupabase {
   failOn?: (table: string, op: Op, payload: unknown) => string | { message: string; code?: string } | null;
 }
 
+/** SQL ILIKE: % and _ are wildcards unless escaped with a backslash. */
+function ilikeMatches(cur: unknown, pattern: string): boolean {
+  if (cur === null || cur === undefined) return false;
+  let re = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === '\\' && i + 1 < pattern.length) re += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    else if (c === '%') re += '.*';
+    else if (c === '_') re += '.';
+    else re += c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp('^' + re + '$', 'is').test(String(cur));
+}
+
+const cmp = (cur: unknown, test: (s: string) => boolean) => cur !== null && cur !== undefined && test(String(cur));
+
 function orMatches(row: Row, expr: string): boolean {
   return expr.split(',').some((part) => {
     const [col, op, ...rest] = part.split('.');
@@ -23,6 +40,7 @@ function orMatches(row: Row, expr: string): boolean {
     const cur = row[col];
     if (op === 'is' && value === 'null') return cur === null || cur === undefined;
     if (op === 'lt') return cur !== null && cur !== undefined && String(cur) < value;
+    if (op === 'gte') return cur !== null && cur !== undefined && String(cur) >= value;
     if (op === 'eq') return String(cur) === value;
     if (op === 'not' && rest[0] === 'like') {
       // SQL semantics: NULL NOT LIKE x is not true. `*` is PostgREST's wildcard.
@@ -46,6 +64,7 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
     const orders: [string, boolean][] = [];
     let limit: number | null = null;
     let range: [number, number] | null = null;
+    let counted = false;
     const exec = (): Result => {
       const failure = fake.failOn?.(table, op, payload);
       if (op !== 'select') fake.writes.push([table, op, payload]);
@@ -68,12 +87,17 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
           return asc ? c : -c;
         });
       }
+      const count = counted ? out.length : null;
+      // Real PostgREST (with count) refuses an offset past the end: HTTP 416, PGRST103.
+      if (counted && range && range[0] > 0 && range[0] >= out.length) {
+        return { data: null, error: { message: 'Requested range not satisfiable', code: 'PGRST103' }, count: null };
+      }
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limit !== null) out = out.slice(0, limit);
-      return { data: out, error: null };
+      return { data: out, error: null, count };
     };
     const b = {
-      select: () => b,
+      select: (_cols?: string, o?: { count?: string }) => { counted = o?.count === 'exact'; return b; },
       insert: (p: Row | Row[]) => { op = 'insert'; payload = p; return b; },
       update: (p: Row) => { op = 'update'; payload = p; return b; },
       delete: () => { op = 'delete'; return b; },
@@ -89,6 +113,11 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
         filters.push((r) => r[k] === null || r[k] === undefined);
         return b;
       },
+      ilike: (k: string, p: string) => { filters.push((r) => ilikeMatches(r[k], p)); return b; },
+      gt: (k: string, v: string) => { filters.push((r) => cmp(r[k], (x) => x > v)); return b; },
+      gte: (k: string, v: string) => { filters.push((r) => cmp(r[k], (x) => x >= v)); return b; },
+      lt: (k: string, v: string) => { filters.push((r) => cmp(r[k], (x) => x < v)); return b; },
+      lte: (k: string, v: string) => { filters.push((r) => cmp(r[k], (x) => x <= v)); return b; },
       in: (k: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[k])); return b; },
       or: (expr: string) => { filters.push((r) => orMatches(r, expr)); return b; },
       order: (k: string, o?: { ascending?: boolean }) => { orders.push([k, o?.ascending !== false]); return b; },

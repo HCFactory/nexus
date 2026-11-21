@@ -12,38 +12,65 @@ vi.mock('@/lib/businessCentral/sync/receivablesSync', () => ({ runReceivablesSyn
 
 import { getSalesInvoicesPageData } from './businessCentralReceivables';
 
-const inv = (id: string): Row => ({ id: `row-${id}`, organization_id: 'org-1', bc_connection_id: 'conn-1', bc_invoice_id: id, posting_date: '2026-11-15' });
-const st = (id: string, extra: Row = {}): Row => ({
-  organization_id: 'org-1', bc_connection_id: 'conn-1', bc_invoice_id: id, match: 'found', status: 'PAID_IN_FULL', due_amount: 0, due_date: '2026-11-01', ...extra,
+import { parseSalesInvoiceListParams } from '@/lib/receivables/salesInvoiceList';
+
+const base = parseSalesInvoiceListParams({});
+const inv = (id: string, extra: Row = {}): Row => ({
+  id: `row-${id}`, organization_id: 'org-1', bc_connection_id: 'conn-1', bc_invoice_id: id, posting_date: '2026-11-15', bc_invoice_number: `INV-${id}`,
+  search_text: `INV-${id}`, billcom_group: 'unmatched', billcom_owed_due_date: null,
+  billcom_match: null, billcom_status: null, billcom_due_amount: null, billcom_due_date: null, ...extra,
 });
 
 beforeEach(() => {
   mocks.db = fakeSupabase({
-    business_central_sales_invoices: [inv('a'), inv('b')],
-    billcom_invoice_status: [st('a'), st('b', { match: 'mismatch', status: null }), st('a', { bc_connection_id: 'conn-2', status: 'OPEN' }), st('zz')],
+    sales_invoice_list: [
+      inv('a', { billcom_match: 'found', billcom_status: 'PAID_IN_FULL', billcom_due_amount: '0', billcom_due_date: '2026-11-01', billcom_group: 'paid' }),
+      inv('b', { billcom_match: 'mismatch' }),
+      inv('c'),
+      inv('x', { bc_connection_id: 'conn-2' }),
+    ],
   });
 });
 
-describe('getSalesInvoicesPageData Bill.com status', () => {
-  it('adds the stored Bill.com status of the listed invoices, for this environment only', async () => {
+describe('getSalesInvoicesPageData', () => {
+  it('one page of this environment’s invoices with the total, and each listed invoice’s stored Bill.com status', async () => {
     mocks.resolveBillcom.mockResolvedValue({ id: 'b1', enabled: true });
-    const { billcomStatus } = await getSalesInvoicesPageData();
-    expect(billcomStatus).toEqual({
+    const r = await getSalesInvoicesPageData(base);
+    expect(r.total).toBe(3);
+    expect(r.invoices.map((i) => i.bc_invoice_id).sort()).toEqual(['a', 'b', 'c']);
+    expect(r.billcomStatus).toEqual({
       a: { match: 'found', status: 'PAID_IN_FULL', dueAmount: 0, dueDate: '2026-11-01' },
-      b: { match: 'mismatch', status: null, dueAmount: 0, dueDate: '2026-11-01' },
+      b: { match: 'mismatch', status: null, dueAmount: null, dueDate: null },
     });
+    expect(r.error).toBeNull();
   });
 
-  it('null (no column) when the environment has no enabled Bill.com connection', async () => {
+  it('filters on the server (here: Bill.com Paid)', async () => {
+    mocks.resolveBillcom.mockResolvedValue({ id: 'b1', enabled: true });
+    const r = await getSalesInvoicesPageData({ ...base, billcom: 'paid' }, '2026-11-20');
+    expect(r.invoices.map((i) => i.bc_invoice_id)).toEqual(['a']);
+    expect(r.total).toBe(1);
+  });
+
+  it('null (no column) and no Bill.com filtering when the environment has no enabled Bill.com connection', async () => {
     mocks.resolveBillcom.mockResolvedValue(null);
-    expect((await getSalesInvoicesPageData()).billcomStatus).toBeNull();
+    const r = await getSalesInvoicesPageData({ ...base, billcom: 'paid' });
+    expect(r.billcomStatus).toBeNull();
+    expect(r.total).toBe(3);
   });
 
-  it('a failure to read statuses never breaks the list', async () => {
+  it('a failure to look up Bill.com never breaks the list', async () => {
     mocks.resolveBillcom.mockRejectedValue(new Error('db down'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    const r = await getSalesInvoicesPageData();
-    expect(r.invoices).toHaveLength(2);
+    const r = await getSalesInvoicesPageData(base);
+    expect(r.invoices).toHaveLength(3);
     expect(r.billcomStatus).toBeNull();
+  });
+
+  it('a list read failure comes back as a message', async () => {
+    mocks.resolveBillcom.mockResolvedValue(null);
+    mocks.db.failOn = () => 'boom';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await getSalesInvoicesPageData(base)).toEqual({ invoices: [], total: 0, page: 1, billcomStatus: null, error: 'Could not load invoices: boom' });
   });
 });

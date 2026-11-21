@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { resolveUserAccess } from '@/lib/auth/permissions';
 import { User, Organization, BusinessCentralConnection } from '@/types/database';
 import { BusinessCentralConnectionStatusData } from '@/types/businessCentralItems';
-import { Search, Bell, ChevronDown, Settings, Shield, LogOut, Check, Menu, AlertCircle, RefreshCw } from 'lucide-react';
+import { Bell, ChevronDown, Settings, Shield, LogOut, Check, Menu, AlertCircle, RefreshCw } from 'lucide-react';
 import { switchOrganization } from '@/app/actions/organizations';
 import { switchBcEnvironment } from '@/app/actions/businessCentralConnections';
 import {
@@ -110,25 +110,8 @@ export function Header({
         <span className="text-foreground font-medium text-sm">{getBreadcrumb()}</span>
       </div>
 
-      {/* Right side - search, sparkle, org dropdown, user avatar */}
+      {/* Right side - notifications, org dropdown, user avatar */}
       <div className="flex items-center gap-3">
-        {/* Search */}
-        <div className="relative hidden sm:flex items-center">
-          <Search className="absolute left-3 size-4 text-foreground-subtle" />
-          <input
-            type="text"
-            placeholder="Search..."
-            className={cn(
-              'w-52 h-9 pl-9 pr-12 rounded-full text-sm',
-              'bg-surface border border-border',
-              'text-foreground placeholder:text-foreground-subtle',
-              'focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50',
-              'transition-all duration-150'
-            )}
-          />
-
-        </div>
-
         {/* Notification bell */}
         <button
           className="size-9 flex items-center justify-center text-foreground-muted hover:text-foreground transition-colors"

@@ -15,6 +15,12 @@ import { createServiceClient } from '@/lib/supabase/server';
 import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
 import { runReceivablesSync, type ReceivablesSyncKind } from '@/lib/businessCentral/sync/receivablesSync';
 import { recordSyncRun } from '@/lib/businessCentral/sync/syncRuns';
+import { hawaiiToday } from '@/lib/billcom/paymentDisplay';
+import {
+  querySalesInvoiceList,
+  type SalesInvoiceListParams,
+  type SalesInvoiceListRow,
+} from '@/lib/receivables/salesInvoiceList';
 import {
   BusinessCentralCustomer,
   BusinessCentralCustomerLedgerEntry,
@@ -213,10 +219,22 @@ export async function getAgingPageData(): Promise<{ rows: AgingRow[]; asOfDate: 
   return { rows, asOfDate: rows[0]?.as_of_date ?? null };
 }
 
-export async function getSalesInvoicesPageData(): Promise<{
-  invoices: BusinessCentralSalesInvoice[];
-  /** Stored Bill.com status by BC invoice id; null when this environment has no Bill.com. */
+/**
+ * Sales invoices list: one page (100) matching the search/filters, searched
+ * and filtered in the database across every invoice, newest first.
+ */
+export async function getSalesInvoicesPageData(
+  params: SalesInvoiceListParams,
+  today: string = hawaiiToday(),
+): Promise<{
+  invoices: SalesInvoiceListRow[];
+  /** How many invoices match the search/filters in total. */
+  total: number;
+  /** The page shown (the last page when the one asked for is past the end). */
+  page: number;
+  /** Stored Bill.com status by BC invoice id for this page; null when this environment has no Bill.com. */
   billcomStatus: Record<string, { match: 'found' | 'mismatch'; status: string | null; dueAmount: number | null; dueDate: string | null }> | null;
+  error: string | null;
 }> {
   const { orgId, user } = await requirePermission(
     canViewReceivables,
@@ -224,55 +242,36 @@ export async function getSalesInvoicesPageData(): Promise<{
   );
   const supabase = createServiceClient();
   const connection = await resolveActiveBcConnection(orgId, user.id);
-  if (!connection) return { invoices: [], billcomStatus: null };
+  if (!connection) return { invoices: [], total: 0, page: 1, billcomStatus: null, error: null };
 
-  const { data } = await supabase
-    .from('business_central_sales_invoices')
-    .select('*')
-    .eq('organization_id', orgId)
-    .eq('bc_connection_id', connection.id)
-    // nullsFirst: false ensures NULLs sort last on DESC, preventing null posting_dates
-    // from consuming result slots and pushing recent invoices out of the top 500.
-    .order('posting_date', { ascending: false, nullsFirst: false })
-    .limit(500);
-
-  const invoices = (data ?? []) as BusinessCentralSalesInvoice[];
-  return { invoices, billcomStatus: await readStoredBillcomStatus(supabase, orgId, connection.id, invoices) };
-}
-
-/** Bill.com statuses stored for these invoices (in chunks: ids go in the URL). Never throws. */
-async function readStoredBillcomStatus(
-  supabase: ReturnType<typeof createServiceClient>,
-  orgId: string,
-  bcConnectionId: string,
-  invoices: BusinessCentralSalesInvoice[],
-) {
+  let billcomEnabled = false;
   try {
-    const conn = await resolveBillcomConnection(supabase, orgId, bcConnectionId);
-    if (!conn?.enabled) return null;
-    const ids = invoices.map((i) => i.bc_invoice_id);
-    const chunks = Array.from({ length: Math.ceil(ids.length / 100) }, (_, i) => ids.slice(i * 100, i * 100 + 100));
-    const rows = (
-      await Promise.all(
-        chunks.map(async (chunk) => {
-          const { data, error } = await supabase
-            .from('billcom_invoice_status')
-            .select('bc_invoice_id, match, status, due_amount, due_date')
-            .eq('organization_id', orgId)
-            .eq('bc_connection_id', bcConnectionId)
-            .in('bc_invoice_id', chunk);
-          if (error) throw new Error(error.message);
-          return (data ?? []) as { bc_invoice_id: string; match: 'found' | 'mismatch'; status: string | null; due_amount: number | null; due_date: string | null }[];
-        }),
-      )
-    ).flat();
-    return Object.fromEntries(
-      rows.map((r) => [r.bc_invoice_id, { match: r.match, status: r.status, dueAmount: r.due_amount === null ? null : Number(r.due_amount), dueDate: r.due_date }]),
-    );
+    billcomEnabled = Boolean((await resolveBillcomConnection(supabase, orgId, connection.id))?.enabled);
   } catch (e) {
-    console.error('[invoices] could not read stored Bill.com status:', e instanceof Error ? e.message : e);
-    return null;
+    console.error('[invoices] could not look up Bill.com:', e instanceof Error ? e.message : e);
   }
+
+  const { invoices, total, page, error } = await querySalesInvoiceList(supabase, orgId, connection.id, params, today, billcomEnabled);
+  if (error) {
+    console.error('[invoices] list read failed:', error);
+    return { invoices: [], total: 0, page: 1, billcomStatus: null, error: `Could not load invoices: ${error}` };
+  }
+  const billcomStatus = billcomEnabled
+    ? Object.fromEntries(
+        invoices
+          .filter((i) => i.billcom_match)
+          .map((i) => [
+            i.bc_invoice_id,
+            {
+              match: i.billcom_match as 'found' | 'mismatch',
+              status: i.billcom_status,
+              dueAmount: i.billcom_due_amount === null ? null : Number(i.billcom_due_amount),
+              dueDate: i.billcom_due_date,
+            },
+          ]),
+      )
+    : null;
+  return { invoices, total, page, billcomStatus, error: null };
 }
 
 // No type re-exports here. A 'use server' module may only export async
