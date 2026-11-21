@@ -103,7 +103,7 @@
   color-scheme: dark;
 
   --background:        oklch(0.18 0.012 240);   /* #1e2130 */
-  --field:             oklch(0.14 0.01 240);    /* inputs darker than the panels */
+  --field:             oklch(0.185 0.012 240);  /* inputs a little darker than the panels */
   --surface:           oklch(0.22 0.014 240);
   --surface-raised:    oklch(0.26 0.016 240);
   --surface-overlay:   oklch(0.30 0.018 240);
@@ -143,7 +143,7 @@
   --input:             var(--surface-raised);
   --ring:              var(--primary);
   /* Form field outline: clearly lighter than the dark fill. */
-  --field-border:      oklch(0.66 0.02 240);
+  --field-border:      oklch(0.46 0.02 240);
 
   --chart-1: var(--primary);
   --chart-2: var(--info);
