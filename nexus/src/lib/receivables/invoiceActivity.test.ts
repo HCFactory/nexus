@@ -187,4 +187,13 @@ describe('review fixes', () => {
     const kinds = r.activity.map((e) => e.kind);
     expect(kinds.indexOf('payment')).toBeLessThan(kinds.indexOf('note'));
   });
+
+  it('on the same day, posting comes first in time (shown below) and the payment after it', async () => {
+    const r = await run({
+      billcom_invoice_status: [status({ status: 'PAID_IN_FULL', due_amount: 0 })],
+      billcom_received_payments: [payment('rp-1', { payment_date: '2026-11-01' })],
+      billcom_received_payment_invoices: [app('p-rp-1', { amount: 300, payment_date: '2026-11-01' })],
+    });
+    expect(r.activity.map((e) => e.kind)).toEqual(['payment', 'posted']);
+  });
 });

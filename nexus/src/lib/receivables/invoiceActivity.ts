@@ -290,6 +290,8 @@ export async function getInvoicePaymentsAndActivity(
 
   // Whole days count as midday in Hawaii, so they sit among same-day times correctly.
   const sortKey = (at: string) => Date.parse(at.length <= 10 ? `${at}T12:00:00-10:00` : at) || 0;
-  activity.sort((a, b) => sortKey(b.at) - sortKey(a.at));
+  // Same moment: the invoice's life order (posted, then sent, then everything else).
+  const STAGE: Record<ActivityKind, number> = { posted: 0, sent_to_billcom: 1, past_due: 2, payment: 3, card_charge: 3, status: 4, correction: 4, note: 5 };
+  activity.sort((a, b) => sortKey(b.at) - sortKey(a.at) || STAGE[b.kind] - STAGE[a.kind]);
   return { payments, activity };
 }
