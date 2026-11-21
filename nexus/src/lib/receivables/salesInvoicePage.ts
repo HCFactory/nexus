@@ -17,6 +17,9 @@ import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnectio
 import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { fetchAndMirrorSalesInvoice, mirrorSalesInvoiceLines, type InvoiceMirrorDeps } from '@/lib/businessCentral/invoiceMirror';
 import { createServiceClient } from '@/lib/supabase/server';
+import { hawaiiToday } from '@/lib/billcom/paymentDisplay';
+import { getInvoicePaymentsAndActivity, type ActivityInvoice } from './invoiceActivity';
+import { readPaymentDetail, type PaymentDetail } from './paymentDetail';
 import type { BusinessCentralConnection, BusinessCentralSalesInvoice, BusinessCentralSalesInvoiceLine } from '@/types/database';
 import type { InvoiceChangeRow } from '@/types/invoiceChanges';
 import type { BillcomLookup } from '@/types/stripe';
@@ -325,4 +328,26 @@ export async function getSalesInvoiceBillcomPanel(input: BillcomPanelInput): Pro
   } catch (e) {
     return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/** Payments and the activity timeline for the invoice page. Never throws. */
+export async function getSalesInvoiceActivity(invoice: ActivityInvoice) {
+  try {
+    const ctx = await context();
+    if (!ctx) return { payments: [], activity: [] };
+    return await getInvoicePaymentsAndActivity(ctx.supabase, { orgId: ctx.orgId, bcConnectionId: ctx.connection.id, invoice, today: hawaiiToday() });
+  } catch (e) {
+    console.error(`[invoice page] could not load activity of ${invoice.bc_invoice_id}:`, e);
+    return { payments: [], activity: [] };
+  }
+}
+
+/** One Bill.com payment of this environment, for its details page; null when not found. */
+export async function getBillcomPaymentPage(billcomPaymentId: string): Promise<PaymentDetail | null> {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(billcomPaymentId)) return null;
+  const ctx = await context();
+  if (!ctx) return null;
+  const conn = await resolveBillcomConnection(ctx.supabase, ctx.orgId, ctx.connection.id);
+  if (!conn) return null;
+  return readPaymentDetail(ctx.supabase, { orgId: ctx.orgId, bcConnectionId: ctx.connection.id, billcomConnectionId: conn.id, billcomPaymentId });
 }

@@ -1,7 +1,10 @@
 import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 
-import { getSalesInvoiceBillcomPanel, getSalesInvoicePage, type BillcomPanelInput } from '@/lib/receivables/salesInvoicePage';
+import { getSalesInvoiceActivity, getSalesInvoiceBillcomPanel, getSalesInvoicePage, type BillcomPanelInput } from '@/lib/receivables/salesInvoicePage';
+import type { ActivityInvoice } from '@/lib/receivables/invoiceActivity';
+import { InvoicePaymentsCard } from '@/components/receivables/InvoicePaymentsCard';
+import { InvoiceActivityCard } from '@/components/receivables/InvoiceActivityCard';
 import { getInvoiceChargeView } from '@/app/actions/cardPayments';
 import { listSalesInvoiceNotes } from '@/app/actions/salesInvoiceNotes';
 import { requireOrganizationContext } from '@/lib/auth/currentUserAccess';
@@ -40,6 +43,17 @@ async function CardChargeSide({ bcInvoiceId, invoiceNumber }: { bcInvoiceId: str
   );
 }
 
+/** Payments and the activity timeline, streamed in. */
+async function ActivitySide({ invoice }: { invoice: ActivityInvoice }) {
+  const { payments, activity } = await getSalesInvoiceActivity(invoice);
+  return (
+    <>
+      <InvoicePaymentsCard payments={payments} />
+      <InvoiceActivityCard activity={activity} />
+    </>
+  );
+}
+
 /** Notes on the invoice, streamed in. A failure (e.g. the table isn't set up yet) never breaks the page. */
 async function NotesSide({ bcInvoiceId }: { bcInvoiceId: string }) {
   let loaded: { notes: Awaited<ReturnType<typeof listSalesInvoiceNotes>>; canEdit: boolean } | null = null;
@@ -65,6 +79,21 @@ export default async function SalesInvoicePage({ params }: { params: Promise<{ b
       salesOrder={data.salesOrder}
       replacedBy={data.replacedBy}
       changes={<InvoiceChangesCard changes={data.changes} />}
+      activity={
+        <Suspense fallback={<section className={CARD}><p className="text-sm text-foreground-muted">Loading payments and activity…</p></section>}>
+          <ActivitySide
+            invoice={{
+              bc_invoice_id: data.invoice.bc_invoice_id,
+              bc_invoice_number: data.invoice.bc_invoice_number,
+              external_document_number: data.invoice.external_document_number,
+              posting_date: data.invoice.posting_date,
+              due_date: data.invoice.due_date,
+              total_amount_including_tax: data.invoice.total_amount_including_tax,
+              status: data.invoice.status,
+            }}
+          />
+        </Suspense>
+      }
       notes={
         <Suspense fallback={<p className="text-sm text-foreground-muted">Loading notes…</p>}>
           <NotesSide bcInvoiceId={data.invoice.bc_invoice_id} />
