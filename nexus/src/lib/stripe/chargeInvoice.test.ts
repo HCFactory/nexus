@@ -158,6 +158,7 @@ function setup(opts: {
     ),
     findBillcomInvoice,
     now: () => NOW,
+    notifyCharged: vi.fn(async () => {}),
   };
   return { db, deps, log, create, search, list, retrieve, findBillcomInvoice };
 }
@@ -942,5 +943,88 @@ describe('connector mode safety check reaches the Bill.com lookup', () => {
     await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow("The Bill.com invoice with this number doesn't match this invoice's total or customer.");
     expect(s.create).not.toHaveBeenCalled();
     expect(s.db.tables.card_payments).toHaveLength(0);
+  });
+});
+
+describe('the backup payment email', () => {
+  const notified = (s: ReturnType<typeof setup>) => vi.mocked(s.deps.notifyCharged!).mock.calls.map((c) => c[0]);
+
+  it('is asked for once, after the Bill.com step, when a charge succeeds', async () => {
+    const s = setup();
+    vi.mocked(s.deps.notifyCharged!).mockImplementation(async () => { s.log.push('notify'); });
+    const row = await chargeInvoice(s.deps, ARGS);
+    expect(notified(s)).toEqual([row.id]);
+    expect(s.log.indexOf('notify')).toBeGreaterThan(s.log.indexOf('billcom'));
+  });
+
+  it('is still asked for when Bill.com refuses the payment', async () => {
+    const s = setup();
+    mocks.record.mockRejectedValue(new Error('BDC_1234: not allowed'));
+    const row = await chargeInvoice(s.deps, ARGS);
+    expect(row.billcomState).toBe('failed');
+    expect(notified(s)).toEqual([row.id]);
+  });
+
+  it('is still asked for when Nexus cannot save the Bill.com result (the charge reports that error)', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const s = setup();
+    const base = s.db.failOn!;
+    s.db.failOn = (table, op, payload) => {
+      base(table, op, payload);
+      return table === 'card_payments' && op === 'update' && (payload as Row).billcom_state === 'recorded' ? 'db down' : null;
+    };
+    await expect(chargeInvoice(s.deps, ARGS)).rejects.toThrow('Nexus could not save that');
+    expect(notified(s)).toHaveLength(1);
+    errors.mockRestore();
+  });
+
+  it('a failing email never fails the charge', async () => {
+    const s = setup();
+    vi.mocked(s.deps.notifyCharged!).mockRejectedValue(new Error('Resend down'));
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(chargeInvoice(s.deps, ARGS)).resolves.toMatchObject({ status: 'succeeded', billcomState: 'recorded' });
+    errors.mockRestore();
+  });
+
+  it('a declined card sends nothing', async () => {
+    const s = setup({
+      create: async () => {
+        throw stripeError('StripeCardError', 'Your card has insufficient funds.', 'card_declined', { id: 'pi_dec' });
+      },
+    });
+    await chargeInvoice(s.deps, ARGS);
+    expect(notified(s)).toEqual([]);
+  });
+
+  it('a Bill.com Retry sends nothing more', async () => {
+    const s = setup({
+      tables: { card_payments: [paymentRow({ status: 'succeeded', billcom_state: 'failed', stripe_payment_intent_id: 'pi_1', amount: 100 })] },
+    });
+    await retryBillcomRecord(s.deps, 'cp-1');
+    expect(notified(s)).toEqual([]);
+  });
+
+  it('Check status that finds the charge succeeded asks for it (once, as the winner)', async () => {
+    const s = setup({ tables: { card_payments: [paymentRow({ stripe_payment_intent_id: 'pi_1' })] } });
+    await checkChargeStatus(s.deps, 'cp-1');
+    await checkChargeStatus(s.deps, 'cp-1');
+    expect(notified(s)).toEqual(['cp-1']);
+  });
+
+  it('a late charge (row was marked failed) asks for it too', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const tables: Record<string, Row[]> = { card_payments: [] };
+    const s = setup({
+      tables,
+      create: async () => {
+        tables.card_payments[0].status = 'failed';
+        tables.card_payments[0].failure_message = 'Marked as not charged by staff after checking Stripe.';
+        return { id: 'pi_late', status: 'succeeded' };
+      },
+    });
+    const row = await chargeInvoice(s.deps, ARGS);
+    expect(row.status).toBe('succeeded');
+    expect(notified(s)).toEqual([row.id]);
+    errors.mockRestore();
   });
 });

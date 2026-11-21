@@ -6,6 +6,8 @@ import { requireOrganizationContext } from '@/lib/auth/currentUserAccess';
 import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnection';
 import { createBillcomClientForConnection } from '@/lib/billcom/connection';
 import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
+import { sendStaffEmail } from '@/lib/email';
+import { notifyBackupCharge } from '@/lib/notifications/backupChargeEmail';
 import { findBillcomInvoiceForCharge, getSalesInvoicePage } from '@/lib/receivables/salesInvoicePage';
 import {
   chargeInvoice,
@@ -71,6 +73,17 @@ async function scope(requireCharge: boolean): Promise<{ deps: ChargeDeps; userId
     },
     findBillcomInvoice: findBillcomInvoiceForCharge,
     now: () => new Date(),
+    notifyCharged: (cardPaymentId) =>
+      notifyBackupCharge(
+        {
+          supabase,
+          orgId,
+          now: () => new Date(),
+          send: sendStaffEmail,
+          appUrl: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        },
+        cardPaymentId,
+      ),
   };
   return { deps, userId: ctx.user.id as string };
 }

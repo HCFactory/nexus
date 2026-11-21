@@ -131,6 +131,8 @@ export interface ChargeDeps {
   /** A live Bill.com read: the amount due is never taken from the page. */
   findBillcomInvoice: (input: BillcomPanelInput) => Promise<BillcomLookup>;
   now: () => Date;
+  /** Staff email for a succeeded charge; sends at most once per payment. Its failures are only logged. */
+  notifyCharged?: (cardPaymentId: string) => Promise<void>;
 }
 
 /** YYYY-MM-DD in Hawaii. */
@@ -356,7 +358,16 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
   throw new Error(msg);
 }
 
-/** processing → succeeded, then Bill.com. Only the caller that wins the transition records. */
+/** Never lets the staff email affect the charge. */
+async function notifyCharged(deps: ChargeDeps, id: string): Promise<void> {
+  try {
+    await deps.notifyCharged?.(id);
+  } catch (e) {
+    console.error(`[chargeInvoice] card payment ${id}: the charge email failed:`, e);
+  }
+}
+
+/** processing → succeeded, then Bill.com. Only the caller that wins the transition records (and emails staff). */
 async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
   let won: boolean;
   const attemptAt = deps.now().toISOString();
@@ -374,7 +385,12 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
     );
   }
   if (won) {
-    await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId, attemptAt);
+    try {
+      await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId, attemptAt);
+    } finally {
+      // After the Bill.com step, so the email can say whether it is in Bill.com.
+      await notifyCharged(deps, p.id);
+    }
     return;
   }
   // Lost the transition. If the row was marked failed meanwhile, money moved anyway: say so loudly.
@@ -387,13 +403,14 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
   // Charged, not in Bill.com: this state blocks another charge (unique index) until staff resolve it.
   // Never recorded in Bill.com automatically: staff check Stripe first.
   try {
-    await transition(deps, p.id, { status: 'failed' }, {
+    const moved = await transition(deps, p.id, { status: 'failed' }, {
       status: 'succeeded',
       stripe_payment_intent_id: intentId,
       billcom_state: 'failed',
       billcom_error: lateChargeNote(intentId),
       billcom_attempt_at: deps.now().toISOString(),
     });
+    if (moved) await notifyCharged(deps, p.id);
   } catch (e) {
     const err = e as { code?: string; message?: string };
     if (err.code !== UNIQUE_VIOLATION || !err.message?.includes('card_payments_one_open_per_invoice')) throw e;
