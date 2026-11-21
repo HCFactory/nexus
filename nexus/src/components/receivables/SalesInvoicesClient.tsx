@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText, Search, X } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
+import { LoadingOverlay } from "@/components/ui/Loader";
 import { ColumnResizeHandle, useColumnWidths } from "@/components/ui/ResizableColumns";
 import { billcomPaymentDisplay, hawaiiToday } from "@/lib/billcom/paymentDisplay";
 import { customerByNumberHref } from "@/lib/customers/customerProfilePath";
@@ -266,97 +267,100 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                 </div>
               </div>
             </div>
-            <div className={`min-h-0 flex-1 overflow-auto transition-opacity ${pending ? "opacity-60" : ""}`}>
-              {error ? null : invoices.length === 0 ? (
-                <p className="px-4 py-10 text-center text-sm text-foreground-muted">
-                  No invoices match the current filters.
-                </p>
-              ) : (
-                <table
-                  className="divide-y divide-border whitespace-nowrap text-sm"
-                  // Fixed layout: each column is exactly the width set by its header edge.
-                  style={{ tableLayout: "fixed", width: columns.reduce((sum, c) => sum + widths[c.key], 0) }}
-                >
-                  <colgroup>
-                    {columns.map((c) => (
-                      <col key={c.key} style={{ width: widths[c.key] }} />
-                    ))}
-                  </colgroup>
-                  <thead className="sticky top-0 z-10 bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
-                    <tr>
+            <div className="relative min-h-0 flex-1">
+              <div className={`h-full overflow-auto transition-opacity ${pending ? "opacity-50" : ""}`}>
+                {error ? null : invoices.length === 0 ? (
+                  <p className="px-4 py-10 text-center text-sm text-foreground-muted">
+                    No invoices match the current filters.
+                  </p>
+                ) : (
+                  <table
+                    className="divide-y divide-border whitespace-nowrap text-sm"
+                    // Fixed layout: each column is exactly the width set by its header edge.
+                    style={{ tableLayout: "fixed", width: columns.reduce((sum, c) => sum + widths[c.key], 0) }}
+                  >
+                    <colgroup>
                       {columns.map((c) => (
-                        <th key={c.key} aria-label={c.label} className={`relative px-4 py-2.5 font-medium ${"right" in c ? "text-right" : ""}`}>
-                          {/* Only the label is clipped, so the edge handle stays fully grabbable. */}
-                          <span className="block truncate">{c.label}</span>
-                          <ColumnResizeHandle
-                            label={c.label}
-                            width={widths[c.key]}
-                            onResize={(w) => setWidth(c.key, w)}
-                            onReset={() => resetWidth(c.key)}
-                          />
-                        </th>
+                        <col key={c.key} style={{ width: widths[c.key] }} />
                       ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {invoices.map((invoice) => (
-                      <tr key={invoice.id} className="transition-colors hover:bg-surface">
-                        <td className="truncate p-0">
-                          {invoice.external_document_number ? (
-                            <Link href={invoicePage(invoice)} className="block truncate px-4 py-2.5 font-medium text-primary hover:underline">
-                              {invoice.external_document_number}
-                            </Link>
-                          ) : (
-                            <span className="block truncate px-4 py-2.5 text-foreground-muted">—</span>
-                          )}
-                        </td>
-                        <td className="truncate p-0">
-                          <Link href={invoicePage(invoice)} className="block truncate px-4 py-2.5 font-mono text-xs text-foreground-muted hover:underline">
-                            {invoice.bc_invoice_number ?? "—"}
-                          </Link>
-                        </td>
-                        <td className="truncate p-0">
-                          {invoice.customer_number ? (
-                            <Link
-                              href={customerByNumberHref(invoice.customer_number)}
-                              className="block truncate px-4 py-2.5 font-medium text-primary hover:underline"
-                            >
-                              {invoice.customer_name ?? invoice.customer_number}
-                            </Link>
-                          ) : (
-                            <span className="block truncate px-4 py-2.5 text-foreground">
-                              {invoice.customer_name ?? "—"}
-                            </span>
-                          )}
-                        </td>
-                        <td className="truncate px-4 py-2.5 text-foreground-muted">
-                          {formatDate(invoice.posting_date)}
-                        </td>
-                        <td className="truncate px-4 py-2.5 text-foreground-muted">
-                          {formatDate(invoice.due_date)}
-                        </td>
-                        <td className="truncate px-4 py-2.5 text-foreground-muted">
-                          {invoice.currency_code ?? "—"}
-                        </td>
-                        <td className="truncate px-4 py-2.5 text-right text-foreground">
-                          {formatMoney(invoice.total_amount_including_tax, invoice.currency_code)}
-                        </td>
-                        <td className="truncate px-4 py-2.5 text-foreground-muted">
-                          {invoice.status ?? "—"}
-                        </td>
-                        {billcomStatus && (() => {
-                          const cell = billcomCell(invoice);
-                          return (
-                            <td className="truncate px-4 py-2.5">
-                              <span className={cell.className}>{cell.label}</span>
-                            </td>
-                          );
-                        })()}
+                    </colgroup>
+                    <thead className="sticky top-0 z-10 bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
+                      <tr>
+                        {columns.map((c) => (
+                          <th key={c.key} aria-label={c.label} className={`relative px-4 py-2.5 font-medium ${"right" in c ? "text-right" : ""}`}>
+                            {/* Only the label is clipped, so the edge handle stays fully grabbable. */}
+                            <span className="block truncate">{c.label}</span>
+                            <ColumnResizeHandle
+                              label={c.label}
+                              width={widths[c.key]}
+                              onResize={(w) => setWidth(c.key, w)}
+                              onReset={() => resetWidth(c.key)}
+                            />
+                          </th>
+                        ))}
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {invoices.map((invoice) => (
+                        <tr key={invoice.id} className="transition-colors hover:bg-surface">
+                          <td className="truncate p-0">
+                            {invoice.external_document_number ? (
+                              <Link href={invoicePage(invoice)} className="block truncate px-4 py-2.5 font-medium text-primary hover:underline">
+                                {invoice.external_document_number}
+                              </Link>
+                            ) : (
+                              <span className="block truncate px-4 py-2.5 text-foreground-muted">—</span>
+                            )}
+                          </td>
+                          <td className="truncate p-0">
+                            <Link href={invoicePage(invoice)} className="block truncate px-4 py-2.5 font-mono text-xs text-foreground-muted hover:underline">
+                              {invoice.bc_invoice_number ?? "—"}
+                            </Link>
+                          </td>
+                          <td className="truncate p-0">
+                            {invoice.customer_number ? (
+                              <Link
+                                href={customerByNumberHref(invoice.customer_number)}
+                                className="block truncate px-4 py-2.5 font-medium text-primary hover:underline"
+                              >
+                                {invoice.customer_name ?? invoice.customer_number}
+                              </Link>
+                            ) : (
+                              <span className="block truncate px-4 py-2.5 text-foreground">
+                                {invoice.customer_name ?? "—"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="truncate px-4 py-2.5 text-foreground-muted">
+                            {formatDate(invoice.posting_date)}
+                          </td>
+                          <td className="truncate px-4 py-2.5 text-foreground-muted">
+                            {formatDate(invoice.due_date)}
+                          </td>
+                          <td className="truncate px-4 py-2.5 text-foreground-muted">
+                            {invoice.currency_code ?? "—"}
+                          </td>
+                          <td className="truncate px-4 py-2.5 text-right text-foreground">
+                            {formatMoney(invoice.total_amount_including_tax, invoice.currency_code)}
+                          </td>
+                          <td className="truncate px-4 py-2.5 text-foreground-muted">
+                            {invoice.status ?? "—"}
+                          </td>
+                          {billcomStatus && (() => {
+                            const cell = billcomCell(invoice);
+                            return (
+                              <td className="truncate px-4 py-2.5">
+                                <span className={cell.className}>{cell.label}</span>
+                              </td>
+                            );
+                          })()}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              <LoadingOverlay show={pending} label="Loading invoices…" />
             </div>
           </div>
         </div>
