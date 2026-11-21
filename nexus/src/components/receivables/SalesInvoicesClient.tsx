@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileText, Search, X } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
+import { ColumnResizeHandle, useColumnWidths } from "@/components/ui/ResizableColumns";
 import { billcomPaymentDisplay, hawaiiToday } from "@/lib/billcom/paymentDisplay";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
@@ -27,6 +28,21 @@ export interface StoredBillcomStatus {
 
 const TONE_CLASS = { success: "font-medium text-success", destructive: "font-medium text-destructive", plain: "text-foreground-muted" } as const;
 const SEARCH_PAUSE_MS = 300;
+
+/** Table columns and their starting widths (px); each can be resized from its header edge. */
+const COLUMNS = [
+  { key: "invoice", label: "Invoice #", width: 190 },
+  { key: "bcNo", label: "BC Invoice No.", width: 130 },
+  { key: "customer", label: "Customer", width: 280 },
+  { key: "posting", label: "Posting date", width: 120 },
+  { key: "due", label: "Due date", width: 115 },
+  { key: "currency", label: "Currency", width: 95 },
+  { key: "total", label: "Total incl. tax", width: 135, right: true },
+  { key: "status", label: "Status", width: 105 },
+  { key: "billcom", label: "Bill.com", width: 115 },
+] as const;
+type ColumnKey = (typeof COLUMNS)[number]["key"];
+const DEFAULT_WIDTHS = Object.fromEntries(COLUMNS.map((c) => [c.key, c.width])) as Record<ColumnKey, number>;
 
 interface SalesInvoicesClientProps {
   /** This page of invoices (searched, filtered and paged on the server). */
@@ -54,6 +70,8 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
+  const { widths, setWidth, reset: resetWidth } = useColumnWidths("nexus.salesInvoices.columns", DEFAULT_WIDTHS);
+  const columns = COLUMNS.filter((c) => c.key !== "billcom" || billcomStatus);
   // What the boxes show and the next address builds on: the last change asked
   // for, even while the server is still loading it.
   const [view, setView] = useState(params);
@@ -250,70 +268,82 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                   No invoices match the current filters.
                 </p>
               ) : (
-                <table className="min-w-full divide-y divide-border whitespace-nowrap text-sm">
-                  <thead className="sticky top-0 bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
+                <table
+                  className="divide-y divide-border whitespace-nowrap text-sm"
+                  // Fixed layout: each column is exactly the width set by its header edge.
+                  style={{ tableLayout: "fixed", width: columns.reduce((sum, c) => sum + widths[c.key], 0) }}
+                >
+                  <colgroup>
+                    {columns.map((c) => (
+                      <col key={c.key} style={{ width: widths[c.key] }} />
+                    ))}
+                  </colgroup>
+                  <thead className="sticky top-0 z-10 bg-surface-raised text-left text-xs uppercase tracking-wide text-foreground-subtle">
                     <tr>
-                      <th className="px-4 py-2.5 font-medium">Invoice #</th>
-                      <th className="px-4 py-2.5 font-medium">BC Invoice No.</th>
-                      <th className="px-4 py-2.5 font-medium">Customer</th>
-                      <th className="px-4 py-2.5 font-medium">Posting date</th>
-                      <th className="px-4 py-2.5 font-medium">Due date</th>
-                      <th className="px-4 py-2.5 font-medium">Currency</th>
-                      <th className="px-4 py-2.5 text-right font-medium">Total incl. tax</th>
-                      <th className="px-4 py-2.5 font-medium">Status</th>
-                      {billcomStatus && <th className="px-4 py-2.5 font-medium">Bill.com</th>}
+                      {columns.map((c) => (
+                        <th key={c.key} aria-label={c.label} className={`relative px-4 py-2.5 font-medium ${"right" in c ? "text-right" : ""}`}>
+                          {/* Only the label is clipped, so the edge handle stays fully grabbable. */}
+                          <span className="block truncate">{c.label}</span>
+                          <ColumnResizeHandle
+                            label={c.label}
+                            width={widths[c.key]}
+                            onResize={(w) => setWidth(c.key, w)}
+                            onReset={() => resetWidth(c.key)}
+                          />
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {invoices.map((invoice) => (
                       <tr key={invoice.id} className="transition-colors hover:bg-surface">
-                        <td className="p-0">
+                        <td className="truncate p-0">
                           {invoice.external_document_number ? (
-                            <Link href={invoicePage(invoice)} className="block px-4 py-2.5 font-medium text-primary hover:underline">
+                            <Link href={invoicePage(invoice)} className="block truncate px-4 py-2.5 font-medium text-primary hover:underline">
                               {invoice.external_document_number}
                             </Link>
                           ) : (
-                            <span className="block px-4 py-2.5 text-foreground-muted">—</span>
+                            <span className="block truncate px-4 py-2.5 text-foreground-muted">—</span>
                           )}
                         </td>
-                        <td className="p-0">
-                          <Link href={invoicePage(invoice)} className="block px-4 py-2.5 font-mono text-xs text-foreground-muted hover:underline">
+                        <td className="truncate p-0">
+                          <Link href={invoicePage(invoice)} className="block truncate px-4 py-2.5 font-mono text-xs text-foreground-muted hover:underline">
                             {invoice.bc_invoice_number ?? "—"}
                           </Link>
                         </td>
-                        <td className="p-0">
+                        <td className="truncate p-0">
                           {invoice.customer_number ? (
                             <Link
                               href={`/customers?search=${encodeURIComponent(invoice.customer_number)}`}
-                              className="block px-4 py-2.5 font-medium text-primary hover:underline"
+                              className="block truncate px-4 py-2.5 font-medium text-primary hover:underline"
                             >
                               {invoice.customer_name ?? invoice.customer_number}
                             </Link>
                           ) : (
-                            <span className="block px-4 py-2.5 text-foreground">
+                            <span className="block truncate px-4 py-2.5 text-foreground">
                               {invoice.customer_name ?? "—"}
                             </span>
                           )}
                         </td>
-                        <td className="px-4 py-2.5 text-foreground-muted">
+                        <td className="truncate px-4 py-2.5 text-foreground-muted">
                           {formatDate(invoice.posting_date)}
                         </td>
-                        <td className="px-4 py-2.5 text-foreground-muted">
+                        <td className="truncate px-4 py-2.5 text-foreground-muted">
                           {formatDate(invoice.due_date)}
                         </td>
-                        <td className="px-4 py-2.5 text-foreground-muted">
+                        <td className="truncate px-4 py-2.5 text-foreground-muted">
                           {invoice.currency_code ?? "—"}
                         </td>
-                        <td className="px-4 py-2.5 text-right text-foreground">
+                        <td className="truncate px-4 py-2.5 text-right text-foreground">
                           {formatMoney(invoice.total_amount_including_tax, invoice.currency_code)}
                         </td>
-                        <td className="px-4 py-2.5 text-foreground-muted">
+                        <td className="truncate px-4 py-2.5 text-foreground-muted">
                           {invoice.status ?? "—"}
                         </td>
                         {billcomStatus && (() => {
                           const cell = billcomCell(invoice);
                           return (
-                            <td className="px-4 py-2.5">
+                            <td className="truncate px-4 py-2.5">
                               <span className={cell.className}>{cell.label}</span>
                             </td>
                           );

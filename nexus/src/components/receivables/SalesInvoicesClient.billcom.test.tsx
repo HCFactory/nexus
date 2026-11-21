@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseSalesInvoiceListParams, type SalesInvoiceListRow } from '@/lib/receivables/salesInvoiceList';
 import { SalesInvoicesClient, type StoredBillcomStatus } from './SalesInvoicesClient';
+import { forgetColumnWidthsForTests } from '@/components/ui/ResizableColumns';
 
 const nav = vi.hoisted(() => ({ replace: vi.fn() }));
 vi.mock('next/navigation', () => ({ useRouter: () => nav, usePathname: () => '/receivables/invoices' }));
 
-beforeEach(() => nav.replace.mockReset());
+beforeEach(() => { nav.replace.mockReset(); window.localStorage.clear(); forgetColumnWidthsForTests(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 const invoice = (id: string, number: string) =>
@@ -137,5 +138,33 @@ describe('SalesInvoicesClient search, filters and pages', () => {
     show({ invoices: [], total: 0, error: 'Could not load invoices: boom', params: { ...base, search: 'x' } });
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load invoices: boom');
     expect(screen.queryByText('No invoices match the current filters.')).toBeNull();
+  });
+});
+
+describe('SalesInvoicesClient column widths', () => {
+  it('every column can be resized from its header edge (Bill.com included when shown)', () => {
+    show();
+    const names = screen.getAllByRole('separator').map((h) => h.getAttribute('aria-label'));
+    expect(names).toEqual(['Invoice #', 'BC Invoice No.', 'Customer', 'Posting date', 'Due date', 'Currency', 'Total incl. tax', 'Status', 'Bill.com'].map((n) => `Resize ${n} column`));
+  });
+
+  it('dragging the Customer edge widens the Customer column, without sorting or opening anything', () => {
+    const { container } = show();
+    const cols = () => Array.from(container.querySelectorAll('col')).map((c) => (c as HTMLElement).style.width);
+    const before = cols();
+    const edge = screen.getByRole('separator', { name: 'Resize Customer column' });
+    fireEvent.pointerDown(edge, { clientX: 300, pointerId: 1 });
+    fireEvent.pointerMove(edge, { clientX: 400, pointerId: 1 });
+    fireEvent.pointerUp(edge, { clientX: 400, pointerId: 1 });
+    const after = cols();
+    expect(parseInt(after[2])).toBe(parseInt(before[2]) + 100);
+    expect(after.filter((_, i) => i !== 2)).toEqual(before.filter((_, i) => i !== 2));
+    expect(nav.replace).not.toHaveBeenCalled();
+  });
+
+  it('long text is cut with … instead of spilling into the next column', () => {
+    show();
+    expect(screen.getByRole('table')).toHaveStyle({ tableLayout: 'fixed' });
+    expect(within(row('W-1')).getAllByRole('cell')[2]).toHaveClass('truncate');
   });
 });
