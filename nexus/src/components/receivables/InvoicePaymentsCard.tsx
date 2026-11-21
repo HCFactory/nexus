@@ -38,8 +38,8 @@ export function InvoicePaymentsCard({ payments }: { payments: InvoicePaymentRow[
         <p className="text-sm text-foreground-muted">No payments yet.</p>
       ) : (
         <ul className="divide-y divide-border">
-          {payments.map((p) => (
-            <li key={p.key}>
+          {payments.map((p, i) => (
+            <li key={`${p.key}-${i}`}>
               {p.href ? (
                 <Link href={p.href} className="block rounded-md transition-colors hover:bg-surface">
                   <Row p={p} />

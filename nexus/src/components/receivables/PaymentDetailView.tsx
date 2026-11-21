@@ -35,6 +35,7 @@ export function PaymentDetailView({ detail }: { detail: PaymentDetail }) {
           <Field label="Date">{day(p.date)}</Field>
           <Field label="Status">{p.status}</Field>
           <Field label="How it was paid">{p.typeLabel}{p.online ? ' · paid online' : ''}</Field>
+          {p.reference ? <Field label="Reference">{p.reference}</Field> : null}
           <Field label="Deposited to">{p.deposit ?? '—'}</Field>
           <Field label="Customer">
             {customer?.number ? (
@@ -65,8 +66,8 @@ export function PaymentDetailView({ detail }: { detail: PaymentDetail }) {
             <p className="text-sm text-foreground-muted">Not applied to any invoice.</p>
           ) : (
             <ul className="divide-y divide-border text-sm">
-              {invoices.map((i) => (
-                <li key={i.billcomInvoiceId} className="flex items-center justify-between gap-3 py-2">
+              {invoices.map((i, n) => (
+                <li key={`${i.billcomInvoiceId}-${n}`} className="flex items-center justify-between gap-3 py-2">
                   {i.href ? (
                     <Link href={i.href} className="font-medium text-primary hover:underline">{i.number ?? 'Invoice'}</Link>
                   ) : (

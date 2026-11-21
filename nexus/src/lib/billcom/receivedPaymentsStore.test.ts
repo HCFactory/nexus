@@ -29,6 +29,20 @@ describe('saveReceivedPayments', () => {
     expect(db.tables.billcom_received_payment_invoices.map((a) => a.billcom_invoice_id)).toEqual(['bi-3']);
   });
 
+  it('a payment listed without its invoices keeps the invoices already stored', async () => {
+    const db = fakeSupabase();
+    await saveReceivedPayments(db.client, 'org-1', 'bcom-1', [toStoredPayment(pay([['bi-1', 100]]))]);
+    await saveReceivedPayments(db.client, 'org-1', 'bcom-1', [toStoredPayment(pay([], { invoicePayments: undefined, status: 'CANCELED' }))]);
+    expect(db.tables.billcom_received_payment_invoices.map((a) => a.billcom_invoice_id)).toEqual(['bi-1']);
+  });
+
+  it('the same payment twice in one batch is saved once (the last copy)', async () => {
+    const db = fakeSupabase();
+    await saveReceivedPayments(db.client, 'org-1', 'bcom-1', [toStoredPayment(pay([['bi-1', 100]])), toStoredPayment(pay([['bi-2', 100]]))]);
+    expect(db.writes.filter(([t, op]) => t === 'billcom_received_payments' && op === 'upsert')[0][2]).toHaveLength(1);
+    expect(db.tables.billcom_received_payment_invoices.map((a) => a.billcom_invoice_id)).toEqual(['bi-2']);
+  });
+
   it('a database error is thrown with a clear message', async () => {
     const db = fakeSupabase();
     db.failOn = (t) => (t === 'billcom_received_payments' ? 'down' : null);

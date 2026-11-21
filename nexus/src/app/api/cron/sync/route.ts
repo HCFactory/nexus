@@ -14,7 +14,8 @@ import type { BusinessCentralConnection } from '@/types/database';
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 const LIMIT_MS = 270_000;
-// Each Bill.com step can run one request past its window (client timeout + retry).
+// Each Bill.com step can run one request past its window; with the sync's
+// 10 s request timeout that is at most ~33 s (two retries), so ≈ 255 s in all.
 const WORST_ROUND_MS = { full: 255_000, light: 90_000 } as const;
 
 function authorized(header: string | null, secret: string): boolean {

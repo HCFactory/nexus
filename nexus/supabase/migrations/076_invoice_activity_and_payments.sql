@@ -105,3 +105,7 @@ drop trigger if exists billcom_invoice_status_change on public.billcom_invoice_s
 create trigger billcom_invoice_status_change
   after update of status on public.billcom_invoice_status
   for each row execute function public.log_billcom_invoice_status_change();
+
+-- Trigger functions are only for the triggers: nobody may call them directly.
+revoke execute on function public.log_bc_invoice_status_change() from public, anon, authenticated;
+revoke execute on function public.log_billcom_invoice_status_change() from public, anon, authenticated;

@@ -28,7 +28,8 @@ Staff want to see, on each sales invoice, everything that happened to it and who
 
 - Who created or posted invoices made directly in BC (BC's API does not say).
 - Status history before this ships (only current status was ever stored).
-- Who changed a status in BC or Bill.com (shown as "in Business Central" / "in Bill.com"). Who is known only for actions taken in Nexus.
+- Who changed a status in BC or Bill.com (shown as "in Business Central" / "in Bill.com"). Status events record no user even for Nexus actions (triggers can't see the user); the Nexus action itself (correction, card charge, note) shows who in its own timeline entry.
+- Status events show when a sync noticed the change, not the exact moment it happened in BC or Bill.com.
 - Editing payments or recording non-card payments from Nexus.
 - Payments for invoices Nexus hasn't matched to Bill.com yet (they appear once the status sync matches the invoice).
 
@@ -45,7 +46,7 @@ Staff want to see, on each sales invoice, everything that happened to it and who
   - Paging and filters behave as for invoices: first page `sort=updatedTime:asc` plus a quoted `updatedTime:gte` filter; later pages send only `page` and `max` (use `billcomListQuery`).
   - Rate limit BDC_1144: stop the round, finish next time.
 - One database for local and live; migrations are applied by the user.
-- Cron full sync round has a fixed time budget. The payments step gets its own budget (like the status step's 30 s) and resumes from a checkpoint.
+- Cron full sync round has a fixed time budget. The payments step gets its own budget (20 s, with a 10 s per-request timeout) and resumes from a checkpoint.
 
 ## Approaches considered
 

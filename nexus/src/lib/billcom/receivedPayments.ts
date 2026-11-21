@@ -58,8 +58,12 @@ const num = (v: unknown): number | null => {
 const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
 const date = (v: unknown): string | null => text(v)?.slice(0, 10) ?? null;
 
-/** A Bill.com payment as Nexus stores it; only the last 4 digits of the deposit account. */
-export function toStoredPayment(p: BillcomReceivedPayment): { payment: StoredPaymentRow; applications: StoredApplicationRow[] } {
+/**
+ * A Bill.com payment as Nexus stores it; only the last 4 digits of the deposit
+ * account. applications is null when Bill.com left the invoice list out, so the
+ * invoices already stored are kept.
+ */
+export function toStoredPayment(p: BillcomReceivedPayment): { payment: StoredPaymentRow; applications: StoredApplicationRow[] | null } {
   const digits = (p.receivablesAccount?.accountNumber ?? '').replace(/\D/g, '');
   return {
     payment: {
@@ -78,7 +82,9 @@ export function toStoredPayment(p: BillcomReceivedPayment): { payment: StoredPay
       billcom_created_time: text(p.createdTime),
       billcom_updated_time: text(p.updatedTime),
     },
-    applications: (p.invoicePayments ?? [])
+    applications: !Array.isArray(p.invoicePayments)
+      ? null
+      : p.invoicePayments
       .filter((a) => text(a?.invoiceId))
       .map((a) => ({
         billcom_invoice_id: a.invoiceId,

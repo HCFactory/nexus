@@ -15,7 +15,7 @@
 - Bill.com list paging: first page `sort=updatedTime:asc` + `filters=updatedTime:gte:"<ISO>"`; later pages only `page`+`max` (`billcomListQuery`). BDC_1144 = rate limit → incomplete, no error.
 - Store only the last 4 digits of any account number.
 - Status history records changes only (no event on first sighting).
-- Payments step budget 30 s; checkpoint entity `billcom_received_payment`; 24 h look-back on the cursor.
+- Payments step budget 20 s (Bill.com sync requests time out after 10 s); checkpoint entity `billcom_received_payment`; 24 h look-back on the cursor.
 - Migration is applied by the user; everything must degrade gracefully (no crash) before it is applied.
 
 ## Review Focus

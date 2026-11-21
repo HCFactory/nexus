@@ -43,6 +43,19 @@ describe('readPaymentDetail', () => {
     expect((await read(t))!.charge).toEqual({ chargedBy: 'Fahim', card: 'Visa •••• 4242', stripeReference: 'pi_123', billcomState: 'Recorded in Bill.com', chargedAt: '2026-11-12T01:00:00Z' });
   });
 
+  it('a charge merged by best match (no saved id) shows on the payment page too, as on the invoice', async () => {
+    const t = base();
+    t.billcom_received_payments[0] = { ...t.billcom_received_payments[0], receivables_type: 'CREDIT_CARD', reference_number: null };
+    t.card_payments = [{ id: 'cp-1', organization_id: ORG, bc_invoice_id: 'inv-1', amount: 100, status: 'succeeded', billcom_payment_id: null, billcom_state: 'recorded', charged_by: 'u-1', card_id: 'card-1', stripe_payment_intent_id: 'pi_9', charged_at: '2026-11-12T20:00:00Z' }];
+    expect((await read(t))!.charge).toMatchObject({ chargedBy: 'Fahim', stripeReference: 'pi_9' });
+  });
+
+  it('shows the reference for any payment type', async () => {
+    const t = base();
+    t.billcom_received_payments[0] = { ...t.billcom_received_payments[0], receivables_type: 'ACH', reference_number: 'TRX-77' };
+    expect((await read(t))!.payment.reference).toBe('TRX-77');
+  });
+
   it('a payment of another environment, or unknown: not found', async () => {
     expect(await read(base(), 'rp-2')).toBeNull();
     expect(await read(base(), 'nope')).toBeNull();

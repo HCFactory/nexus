@@ -105,7 +105,7 @@ describe('getInvoicePaymentsAndActivity — activity', () => {
       billcom_received_payment_invoices: [app('p-rp-1')],
       card_payments: [charge({ billcom_payment_id: null, billcom_state: 'failed' })],
       sales_invoice_notes: [{ organization_id: ORG, bc_connection_id: CONN, bc_invoice_id: 'inv-1', body: 'Called, will pay Friday', created_by: 'u-2', created_at: '2026-11-18T19:00:00Z' }],
-      sales_invoice_status_events: [{ organization_id: ORG, bc_connection_id: CONN, bc_invoice_id: 'inv-1', source: 'billcom', from_status: 'OPEN', to_status: 'PARTIALLY_PAID', changed_by: null, occurred_at: '2026-11-10T20:00:00Z' }],
+      sales_invoice_status_events: [{ organization_id: ORG, bc_connection_id: CONN, bc_invoice_id: 'inv-1', source: 'billcom', from_status: 'OPEN', to_status: 'PARTIALLY_PAID', changed_by: null, occurred_at: '2026-11-11T00:30:00Z' }],
       sales_orders: [{ id: 'so-1', organization_id: ORG, bc_connection_id: CONN, bc_posted_invoice_id: 'inv-1', bc_order_number: 'SO-9', invoice_started_by: 'u-1', posted_at: '2026-11-01T18:00:00Z', billcom_invoiced_at: '2026-11-01T18:05:00Z' }],
     });
     expect(activity.map((e) => e.kind)).toEqual(['card_charge', 'note', 'past_due', 'status', 'payment', 'sent_to_billcom', 'posted']);
@@ -136,5 +136,55 @@ describe('getInvoicePaymentsAndActivity — activity', () => {
     expect(old.activity.find((e) => e.kind === 'correction')).toMatchObject({ title: 'Cancelled and replaced by INV-2', detail: 'Corrected by Fahim: Wrong qty', href: '/receivables/invoices/inv-2' });
     const fresh = await getInvoicePaymentsAndActivity(fakeSupabase({ sales_invoice_changes: [change] }).client, { orgId: ORG, bcConnectionId: CONN, invoice: { ...invoice, bc_invoice_id: 'inv-2' }, today: '2026-11-01' });
     expect(fresh.activity.find((e) => e.kind === 'correction')).toMatchObject({ title: 'Replaces INV-1', href: '/receivables/invoices/inv-1' });
+  });
+});
+
+describe('review fixes', () => {
+  it('a paid invoice whose payments Nexus has not synced yet is not called past due (no guessing)', async () => {
+    const paidNoHistory = await getInvoicePaymentsAndActivity(
+      fakeSupabase({ users, billcom_invoice_status: [status({ status: 'PAID_IN_FULL', due_amount: 0 })] }).client,
+      { orgId: ORG, bcConnectionId: CONN, invoice: { ...invoice, status: 'Paid' }, today: '2026-11-21' },
+    );
+    expect(paidNoHistory.activity.some((e) => e.kind === 'past_due')).toBe(false);
+    // Paid now, but the payments Nexus has don't add up (e.g. a credit): no guessing either.
+    const partial = await run({ billcom_invoice_status: [status({ status: 'PAID_IN_FULL', due_amount: 0 })], billcom_received_payments: [payment('rp-1')], billcom_received_payment_invoices: [app('p-rp-1', { amount: 100 })] });
+    expect(partial.activity.some((e) => e.kind === 'past_due')).toBe(false);
+    // Still unpaid with no payments at all: past due.
+    expect((await run({ billcom_invoice_status: [status({ status: 'OPEN', due_amount: 300 })] })).activity.some((e) => e.kind === 'past_due')).toBe(true);
+  });
+
+  it('a charge marked "recorded in Bill.com" by hand merges with the payment staff entered (any type, a few days later) — shown once, counted once', async () => {
+    const r = await run({
+      billcom_invoice_status: [status({ status: 'PARTIALLY_PAID', due_amount: 100 })],
+      billcom_received_payments: [payment('rp-o', { receivables_type: 'OTHER', reference_number: null, payment_date: '2026-11-12' })],
+      billcom_received_payment_invoices: [app('p-rp-o', { amount: 200, payment_date: '2026-11-12' })],
+      card_payments: [charge({ billcom_payment_id: null, billcom_state: 'recorded_manually', charged_at: '2026-11-10T20:00:00Z' })],
+    });
+    expect(r.payments).toHaveLength(1);
+    expect(r.payments[0]).toMatchObject({ key: 'rp-o', label: 'Card (Nexus) · Visa •••• 4242' });
+    expect(r.activity.filter((e) => e.kind === 'payment' || e.kind === 'card_charge')).toHaveLength(1);
+    expect(r.activity.find((e) => e.kind === 'past_due')).toMatchObject({ detail: 'Due Nov 15, 2026 · $100.00 unpaid' });
+  });
+
+  it('saved ids win over guesses, whatever the order (a guessed charge never steals or loses a payment)', async () => {
+    const r = await run({
+      billcom_invoice_status: [status()],
+      billcom_received_payments: [payment('rp-p', { receivables_type: 'CREDIT_CARD', reference_number: null, payment_date: '2026-11-19' })],
+      billcom_received_payment_invoices: [app('p-rp-p', { amount: 200, payment_date: '2026-11-19' })],
+      card_payments: [charge({ id: 'cp-a', billcom_payment_id: null }), charge({ id: 'cp-b', billcom_payment_id: 'rp-p' })],
+    });
+    expect(r.payments.map((p) => p.key).sort()).toEqual(['cp-a', 'rp-p']);
+  });
+
+  it('whole-day entries sort by the Hawaii day, not before every same-UTC-day timestamp', async () => {
+    const r = await run({
+      billcom_invoice_status: [status({ status: 'OPEN' })],
+      billcom_received_payments: [payment('rp-1', { payment_date: '2026-11-20' })],
+      billcom_received_payment_invoices: [app('p-rp-1', { payment_date: '2026-11-20' })],
+      // Nov 19, 7 pm in Hawaii: older than a payment dated Nov 20.
+      sales_invoice_notes: [{ organization_id: ORG, bc_connection_id: CONN, bc_invoice_id: 'inv-1', body: 'x', created_by: 'u-2', created_at: '2026-11-20T05:00:00Z' }],
+    });
+    const kinds = r.activity.map((e) => e.kind);
+    expect(kinds.indexOf('payment')).toBeLessThan(kinds.indexOf('note'));
   });
 });

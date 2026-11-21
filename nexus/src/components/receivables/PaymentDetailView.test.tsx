@@ -8,7 +8,7 @@ import { PaymentDetailView } from './PaymentDetailView';
 afterEach(cleanup);
 
 const detail: PaymentDetail = {
-  payment: { billcomPaymentId: 'rp-1', date: '2026-11-12', amount: 150, typeLabel: 'Check #10482', online: false, status: 'Paid', deposit: 'First Hawaiian ••••6789', convenienceFee: 0, unapplied: 0 },
+  payment: { billcomPaymentId: 'rp-1', date: '2026-11-12', amount: 150, typeLabel: 'Check #10482', reference: '10482', online: false, status: 'Paid', deposit: 'First Hawaiian ••••6789', convenienceFee: 0, unapplied: 0 },
   invoices: [
     { billcomInvoiceId: 'bi-1', amount: 100, number: 'W-1', href: '/receivables/invoices/inv-1' },
     { billcomInvoiceId: 'bi-9', amount: 50, number: null, href: null },

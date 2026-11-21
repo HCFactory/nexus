@@ -34,6 +34,16 @@ function stubSupabase(connectionRow: Record<string, unknown> | null, secrets: Re
 }
 
 describe('Bill.com connection factory', () => {
+  it('a caller can set a shorter request timeout (the sync uses it to stay within its time)', async () => {
+    const { supabase } = stubSupabase(row, { get_billcom_dev_key: 'dev-key', get_billcom_password: 'password' });
+    // A Bill.com that never answers: only the timeout ends the call.
+    const fetchImpl = vi.fn<typeof fetch>((_url, init) => new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })))));
+    const client = await createBillcomClientForConnection('conn-1', 'org-1', { supabase: supabase as never, fetchImpl, timeoutMs: 20 });
+    const started = Date.now();
+    await expect(client.login()).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   it('refuses to build a client for a disabled connection', async () => {
     const { supabase } = stubSupabase({ ...row, is_enabled: false }, {});
 

@@ -8,7 +8,13 @@ export const dynamic = 'force-dynamic';
 /** A Bill.com payment received: how it was paid and the invoices it paid. */
 export default async function PaymentPage({ params }: { params: Promise<{ paymentId: string }> }) {
   const { paymentId } = await params;
-  const detail = await getBillcomPaymentPage(decodeURIComponent(paymentId));
+  let id: string;
+  try {
+    id = decodeURIComponent(paymentId);
+  } catch {
+    notFound(); // a malformed address
+  }
+  const detail = await getBillcomPaymentPage(id);
   if (!detail) notFound();
   return <PaymentDetailView detail={detail} />;
 }

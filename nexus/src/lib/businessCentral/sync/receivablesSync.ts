@@ -59,6 +59,9 @@ const BILLCOM_STATUS_BUDGET_MS = 30_000;
 const BILLCOM_STATUS_CHECKPOINT = 'billcom_invoice_status';
 const BILLCOM_PAYMENTS_BUDGET_MS = 20_000;
 const BILLCOM_PAYMENTS_CHECKPOINT = 'billcom_received_payment';
+// Bill.com steps use a short per-request timeout, so one slow request (with
+// its retries) can't run a step far past its window: worst ≈ 10 + 1 + 10 + 2 + 10 s.
+const BILLCOM_SYNC_REQUEST_TIMEOUT_MS = 10_000;
 // Supabase returns at most this many rows per request.
 const ROW_CAP = 1000;
 // Sync checkpoint row that remembers where the card fill stopped.
@@ -364,7 +367,7 @@ async function runBillcomStatusStep(supabase: SupabaseServiceClient, orgId: stri
   try {
     const conn = await resolveBillcomConnection(supabase, orgId, bcConnectionId);
     if (!conn?.enabled) return null;
-    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase });
+    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase, timeoutMs: BILLCOM_SYNC_REQUEST_TIMEOUT_MS });
     const checkpoints = checkpointStore(supabase, orgId);
     const columns = 'bc_invoice_id, external_document_number, bc_invoice_number, customer_name, total_amount_including_tax';
     return await syncBillcomInvoiceStatus(
@@ -445,7 +448,7 @@ async function runBillcomPaymentsStep(supabase: SupabaseServiceClient, orgId: st
   try {
     const conn = await resolveBillcomConnection(supabase, orgId, bcConnectionId);
     if (!conn?.enabled) return null;
-    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase });
+    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase, timeoutMs: BILLCOM_SYNC_REQUEST_TIMEOUT_MS });
     const checkpoints = checkpointStore(supabase, orgId);
     return await syncBillcomReceivedPayments(
       {

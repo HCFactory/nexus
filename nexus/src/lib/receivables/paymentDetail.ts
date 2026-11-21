@@ -3,6 +3,7 @@
 // them) and, for a card charge made in Nexus, who charged which card.
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { matchChargesToPayments, type ChargeToMatch } from './chargeMatching';
 import { paymentTypeLabel } from './invoiceActivity';
 
 export interface PaymentDetail {
@@ -11,6 +12,8 @@ export interface PaymentDetail {
     date: string | null;
     amount: number | null;
     typeLabel: string;
+    /** Bill.com's reference (check number, transaction id…). */
+    reference: string | null;
     online: boolean | null;
     status: string;
     deposit: string | null;
@@ -47,10 +50,10 @@ export async function readPaymentDetail(
 
   const { data: appsData } = await supabase
     .from('billcom_received_payment_invoices')
-    .select('billcom_invoice_id, amount')
+    .select('billcom_invoice_id, amount, payment_date, status')
     .eq('organization_id', orgId)
     .eq('payment_id', p.id);
-  const apps = (appsData ?? []) as { billcom_invoice_id: string; amount: number | string | null }[];
+  const apps = (appsData ?? []) as { billcom_invoice_id: string; amount: number | string | null; payment_date: string | null; status: string | null }[];
 
   // Which BC invoice each Bill.com invoice is, in this environment.
   const billIds = [...new Set(apps.map((a) => a.billcom_invoice_id))];
@@ -78,14 +81,31 @@ export async function readPaymentDetail(
     return m ? invs.find((i) => i.bc_invoice_id === m.bc_invoice_id) ?? null : null;
   };
 
-  // A card charge made in Nexus that this payment records.
-  const { data: chargeData } = await supabase
-    .from('card_payments')
-    .select('charged_by, card_id, stripe_payment_intent_id, billcom_state, charged_at')
-    .eq('organization_id', orgId)
-    .eq('billcom_payment_id', billcomPaymentId)
-    .limit(1);
-  const c = (chargeData ?? [])[0] as { charged_by: string | null; card_id: string | null; stripe_payment_intent_id: string | null; billcom_state: string; charged_at: string } | undefined;
+  // A card charge made in Nexus that this payment records: by saved id, or by
+  // the same best-match rule the invoice page uses (charges on the invoices it paid).
+  type Charge = ChargeToMatch & { charged_by: string | null; card_id: string | null; stripe_payment_intent_id: string | null; bc_invoice_id?: string };
+  const chargeCols = 'id, amount, status, billcom_state, billcom_payment_id, charged_by, card_id, stripe_payment_intent_id, charged_at, bc_invoice_id';
+  const { data: byId } = await supabase.from('card_payments').select(chargeCols).eq('organization_id', orgId).eq('billcom_payment_id', billcomPaymentId).limit(1);
+  let c = ((byId ?? []) as Charge[])[0];
+  if (!c && matches.length) {
+    const { data: candidates } = await supabase
+      .from('card_payments')
+      .select(chargeCols)
+      .eq('organization_id', orgId)
+      .in('bc_invoice_id', matches.map((m) => m.bc_invoice_id));
+    for (const m of matches) {
+      const app = apps.find((a) => a.billcom_invoice_id === m.billcom_invoice_id);
+      const own = ((candidates ?? []) as Charge[]).filter((x) => x.bc_invoice_id === m.bc_invoice_id);
+      if (!app || own.length === 0) continue;
+      const hit = matchChargesToPayments(own, [
+        { billcomPaymentId, type: p.receivables_type ?? null, status: p.status === 'CANCELED' || app.status === 'CANCELED' ? 'CANCELED' : p.status, amount: num(app.amount), date: app.payment_date ?? p.payment_date ?? null },
+      ]).get(billcomPaymentId);
+      if (hit) {
+        c = hit;
+        break;
+      }
+    }
+  }
   let charge: PaymentDetail['charge'] = null;
   if (c) {
     const [{ data: who }, { data: cardRow }] = await Promise.all([
@@ -110,6 +130,7 @@ export async function readPaymentDetail(
       date: p.payment_date ?? null,
       amount: num(p.amount),
       typeLabel: c ? `Card (Nexus) · ${charge!.card}` : paymentTypeLabel(p.receivables_type ?? null, p.online_payment ?? null, p.reference_number ?? null),
+      reference: p.reference_number ?? null,
       online: p.online_payment ?? null,
       status: STATUS[p.status] ?? p.status ?? '—',
       deposit: p.deposit_bank_name || p.deposit_account_last4 ? [p.deposit_bank_name, p.deposit_account_last4 ? `••••${p.deposit_account_last4}` : null].filter(Boolean).join(' ') : null,

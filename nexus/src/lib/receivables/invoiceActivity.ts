@@ -8,6 +8,8 @@ import { hawaiiToday } from '@/lib/billcom/paymentDisplay';
 import { billcomStatusLabel } from '@/lib/billcom/invoiceStatus';
 import { formatMoney } from '@/lib/format';
 
+import { matchChargesToPayments } from './chargeMatching';
+
 export interface ActivityInvoice {
   bc_invoice_id: string;
   bc_invoice_number: string | null;
@@ -72,7 +74,7 @@ async function rows<T>(query: PromiseLike<{ data: unknown; error: unknown }>): P
   }
 }
 
-type StatusRow = { billcom_connection_id: string | null; match: string; billcom_invoice_id: string | null };
+type StatusRow = { billcom_connection_id: string | null; match: string; billcom_invoice_id: string | null; status: string | null; due_amount: number | string | null };
 type PaymentRowDb = { id: string; billcom_payment_id: string; payment_date: string | null; receivables_type: string | null; online_payment: boolean | null; reference_number: string | null; status: string | null };
 type AppRow = { payment_id: string; amount: number | string | null; payment_date: string | null; status: string | null };
 type ChargeRow = { id: string; amount: number | string; status: string; billcom_state: string; billcom_payment_id: string | null; card_id: string | null; charged_by: string | null; charged_at: string; failure_message: string | null };
@@ -91,7 +93,7 @@ export async function getInvoicePaymentsAndActivity(
     supabase.from(table).select(columns).eq('organization_id', orgId).eq('bc_connection_id', bcConnectionId);
 
   const [statusRows, charges, notes, events, orders, changesOld, changesNew] = await Promise.all([
-    rows<StatusRow>(scoped('billcom_invoice_status', 'billcom_connection_id, match, billcom_invoice_id').eq('bc_invoice_id', id).limit(1)),
+    rows<StatusRow>(scoped('billcom_invoice_status', 'billcom_connection_id, match, billcom_invoice_id, status, due_amount').eq('bc_invoice_id', id).limit(1)),
     rows<ChargeRow>(
       supabase
         .from('card_payments')
@@ -144,25 +146,19 @@ export async function getInvoicePaymentsAndActivity(
     return cardName(c?.brand ?? null, c?.last4 ?? null);
   };
 
-  // Match each Nexus card charge to its Bill.com payment: by saved id, else
-  // by same amount on the same (Hawaii) day as a Bill.com card payment.
-  const mergedCharge = new Map<string, ChargeRow>(); // billcom payment id -> charge
-  const unmerged: ChargeRow[] = [];
-  for (const c of charges) {
-    let hit = c.billcom_payment_id ? applied.find((a) => a.payment.billcom_payment_id === c.billcom_payment_id) : undefined;
-    if (!hit && c.status === 'succeeded') {
-      const day = hawaiiToday(new Date(c.charged_at));
-      hit = applied.find(
-        (a) =>
-          !mergedCharge.has(a.payment.billcom_payment_id) &&
-          a.payment.receivables_type === 'CREDIT_CARD' &&
-          Math.abs((num(a.app.amount) ?? NaN) - Number(c.amount)) < 0.005 &&
-          (a.app.payment_date ?? a.payment.payment_date) === day,
-      );
-    }
-    if (hit) mergedCharge.set(hit.payment.billcom_payment_id, c);
-    else unmerged.push(c);
-  }
+  // Each Nexus card charge shows once: merged with the Bill.com payment that records it.
+  const mergedCharge = matchChargesToPayments(
+    charges,
+    applied.map(({ payment: p, app }) => ({
+      billcomPaymentId: p.billcom_payment_id,
+      type: p.receivables_type,
+      status: p.status === 'CANCELED' || app.status === 'CANCELED' ? 'CANCELED' : p.status,
+      amount: num(app.amount),
+      date: app.payment_date ?? p.payment_date,
+    })),
+  );
+  const mergedSet = new Set(mergedCharge.values());
+  const unmerged = charges.filter((c) => !mergedSet.has(c));
 
   const payments: InvoicePaymentRow[] = [
     ...applied.map(({ payment: p, app }) => {
@@ -272,19 +268,28 @@ export async function getInvoicePaymentsAndActivity(
   }
 
   // Past due: the day after the due date, if money was still owed then.
+  // Payments Bill.com already has count from Bill.com; a Nexus charge counts
+  // only while Bill.com has no record of it (so nothing counts twice).
   const due = invoice.due_date?.slice(0, 10);
   const total = num(invoice.total_amount_including_tax);
-  const knowsPayments = Boolean(match) || charges.length > 0;
-  if (due && total !== null && today > due && invoice.status !== 'Canceled' && (knowsPayments || invoice.status !== 'Paid')) {
-    const paidByDue =
-      applied
-        .filter(({ payment: p, app }) => p.status !== 'CANCELED' && app.status !== 'CANCELED' && (app.payment_date ?? p.payment_date ?? '9999') <= due)
-        .reduce((s, { app }) => s + (num(app.amount) ?? 0), 0) +
-      unmerged.filter((c) => c.status === 'succeeded' && hawaiiToday(new Date(c.charged_at)) <= due).reduce((s, c) => s + Number(c.amount), 0);
-    const unpaid = Math.round((total - paidByDue) * 100) / 100;
-    if (unpaid > 0.005) activity.push({ at: nextDay(due), kind: 'past_due', title: 'Past due', detail: `Due ${longDate(due)} · ${money(unpaid)} unpaid` });
+  if (due && total !== null && today > due && invoice.status !== 'Canceled') {
+    const live = applied.filter(({ payment: p, app }) => p.status !== 'CANCELED' && app.status !== 'CANCELED');
+    const countedCharges = unmerged.filter((c) => c.status === 'succeeded' && c.billcom_state !== 'recorded' && c.billcom_state !== 'recorded_manually');
+    const sum = (upTo: string) =>
+      live.filter(({ payment: p, app }) => (app.payment_date ?? p.payment_date ?? '9999') <= upTo).reduce((s, { app }) => s + (num(app.amount) ?? 0), 0) +
+      countedCharges.filter((c) => hawaiiToday(new Date(c.charged_at)) <= upTo).reduce((s, c) => s + Number(c.amount), 0);
+    const billcom = statusRows[0];
+    const paidNow =
+      invoice.status === 'Paid' || (match !== null && (billcom?.status === 'PAID_IN_FULL' || num(billcom?.due_amount) === 0));
+    // Paid now but the payments Nexus has don't add up (history still syncing,
+    // or paid by a credit): when it was paid is unknown, so say nothing.
+    const knowsWhenPaid = !paidNow || sum('9999-12-31') >= total - 0.005;
+    const unpaid = Math.round((total - sum(due)) * 100) / 100;
+    if (knowsWhenPaid && unpaid > 0.005) activity.push({ at: nextDay(due), kind: 'past_due', title: 'Past due', detail: `Due ${longDate(due)} · ${money(unpaid)} unpaid` });
   }
 
-  activity.sort((a, b) => b.at.localeCompare(a.at));
+  // Whole days count as midday in Hawaii, so they sit among same-day times correctly.
+  const sortKey = (at: string) => Date.parse(at.length <= 10 ? `${at}T12:00:00-10:00` : at) || 0;
+  activity.sort((a, b) => sortKey(b.at) - sortKey(a.at));
   return { payments, activity };
 }

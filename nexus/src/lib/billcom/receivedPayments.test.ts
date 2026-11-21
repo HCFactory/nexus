@@ -34,7 +34,9 @@ describe('toStoredPayment', () => {
   it('missing pieces become nulls (no account, no invoices, amounts as text)', () => {
     const { payment, applications } = toStoredPayment(pay({ receivablesAccount: undefined, invoicePayments: undefined, amount: '12.50' as unknown as number, referenceNumber: '' }));
     expect(payment).toMatchObject({ deposit_bank_name: null, deposit_account_last4: null, amount: 12.5, reference_number: null });
-    expect(applications).toEqual([]);
+    // No invoice list from Bill.com: null, so the invoices already stored are kept.
+    expect(applications).toBeNull();
+    expect(toStoredPayment(pay({ invoicePayments: [] })).applications).toEqual([]);
   });
 });
 

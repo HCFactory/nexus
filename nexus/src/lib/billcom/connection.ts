@@ -11,6 +11,8 @@ import { createDbSessionStore } from './sessionStore';
 export interface CreateBillcomClientOptions {
   supabase?: SupabaseClient;
   fetchImpl?: typeof fetch;
+  /** Per-request timeout (default 30 s); the sync uses a shorter one to stay within its time. */
+  timeoutMs?: number;
 }
 
 export async function loadBillcomConnection(
@@ -78,5 +80,6 @@ export async function createBillcomClientForConnection(
     billcomOrganizationId: connection.billcom_organization_id,
     sessionStore: createDbSessionStore(supabase, connectionId),
     fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs,
   });
 }
