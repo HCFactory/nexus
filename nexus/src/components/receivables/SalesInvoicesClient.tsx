@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, FileText, Search, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ColumnResizeHandle, useColumnWidths } from "@/components/ui/ResizableColumns";
 import { billcomPaymentDisplay, hawaiiToday } from "@/lib/billcom/paymentDisplay";
+import { customerByNumberHref } from "@/lib/customers/customerProfilePath";
 import { formatDate, formatMoney } from "@/lib/format";
 import {
   SALES_INVOICE_PAGE_SIZE,
@@ -32,12 +33,12 @@ const SEARCH_PAUSE_MS = 300;
 /** Table columns and their starting widths (px); each can be resized from its header edge. */
 const COLUMNS = [
   { key: "invoice", label: "Invoice #", width: 190 },
-  { key: "bcNo", label: "BC Invoice No.", width: 130 },
+  { key: "bcNo", label: "BC Invoice No.", width: 150 },
   { key: "customer", label: "Customer", width: 280 },
-  { key: "posting", label: "Posting date", width: 120 },
-  { key: "due", label: "Due date", width: 115 },
-  { key: "currency", label: "Currency", width: 95 },
-  { key: "total", label: "Total incl. tax", width: 135, right: true },
+  { key: "posting", label: "Posting date", width: 140 },
+  { key: "due", label: "Due date", width: 120 },
+  { key: "currency", label: "Currency", width: 115 },
+  { key: "total", label: "Total incl. tax", width: 155, right: true },
   { key: "status", label: "Status", width: 105 },
   { key: "billcom", label: "Bill.com", width: 115 },
 ] as const;
@@ -176,73 +177,76 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
         <div className="min-h-0 flex-1 overflow-hidden p-3 lg:p-4">
           <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border bg-surface-raised card-shadow">
             <div className="space-y-2 border-b border-border px-3 py-2.5">
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
-                <Input
-                  value={search}
-                  onChange={(event) => onSearch(event.target.value)}
-                  placeholder="Search by invoice number, customer, or document number"
-                  className="h-8 pl-9 pr-9 text-sm"
-                />
-                {search && (
-                  <button
-                    type="button"
-                    onClick={() => onSearch("")}
-                    className="absolute right-2 top-1/2 rounded-md p-1 -translate-y-1/2 text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground"
-                    aria-label="Clear search"
-                  >
-                    <X className="size-4" />
-                  </button>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <select
-                  value={view.status}
-                  onChange={(event) => go({ status: event.target.value })}
-                  className={SELECT_CLASSNAME}
-                  aria-label="Filter by status"
-                >
-                  <option value="all">All statuses</option>
-                  {SALES_INVOICE_STATUSES.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-                {billcomStatus && (
+              {/* Desktop: search and filters share one row. */}
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                <div className="relative lg:w-96 lg:shrink-0">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-foreground-subtle" />
+                  <Input
+                    value={search}
+                    onChange={(event) => onSearch(event.target.value)}
+                    placeholder="Search by invoice number or customer"
+                    className="h-8 pl-9 pr-9 text-sm"
+                  />
+                  {search && (
+                    <button
+                      type="button"
+                      onClick={() => onSearch("")}
+                      className="absolute right-2 top-1/2 rounded-md p-1 -translate-y-1/2 text-foreground-subtle transition-colors hover:bg-surface hover:text-foreground"
+                      aria-label="Clear search"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
                   <select
-                    value={view.billcom}
-                    onChange={(event) => go({ billcom: event.target.value as BillcomFilter })}
+                    value={view.status}
+                    onChange={(event) => go({ status: event.target.value })}
                     className={SELECT_CLASSNAME}
-                    aria-label="Bill.com status"
+                    aria-label="Filter by status"
                   >
-                    <option value="all">All Bill.com</option>
-                    <option value="paid">Paid</option>
-                    <option value="pastdue">Past due</option>
-                    <option value="open">Open</option>
-                    <option value="unmatched">Not matched</option>
+                    <option value="all">All statuses</option>
+                    {SALES_INVOICE_STATUSES.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
                   </select>
-                )}
-                {/* From and To share one row on a phone. */}
-                <div className="flex w-full items-center gap-1.5 sm:w-auto">
-                  <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-foreground-muted sm:flex-none">
-                    From
-                    <Input
-                      type="date"
-                      value={view.from}
-                      onChange={(event) => onDate("from", event.target.value)}
-                      className="h-8 min-w-0 flex-1 px-2 text-xs sm:w-auto sm:flex-none"
-                    />
-                  </label>
-                  <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-foreground-muted sm:flex-none">
-                    To
-                    <Input
-                      type="date"
-                      value={view.to}
-                      onChange={(event) => onDate("to", event.target.value)}
-                      className="h-8 min-w-0 flex-1 px-2 text-xs sm:w-auto sm:flex-none"
-                    />
-                  </label>
+                  {billcomStatus && (
+                    <select
+                      value={view.billcom}
+                      onChange={(event) => go({ billcom: event.target.value as BillcomFilter })}
+                      className={SELECT_CLASSNAME}
+                      aria-label="Bill.com status"
+                    >
+                      <option value="all">All Bill.com</option>
+                      <option value="paid">Paid</option>
+                      <option value="pastdue">Past due</option>
+                      <option value="open">Open</option>
+                      <option value="unmatched">Not matched</option>
+                    </select>
+                  )}
+                  {/* From and To share one row on a phone. */}
+                  <div className="flex w-full items-center gap-1.5 sm:w-auto">
+                    <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-foreground-muted sm:flex-none">
+                      From
+                      <Input
+                        type="date"
+                        value={view.from}
+                        onChange={(event) => onDate("from", event.target.value)}
+                        className="h-8 min-w-0 flex-1 px-2 text-xs sm:w-auto sm:flex-none"
+                      />
+                    </label>
+                    <label className="flex min-w-0 flex-1 items-center gap-1 text-xs text-foreground-muted sm:flex-none">
+                      To
+                      <Input
+                        type="date"
+                        value={view.to}
+                        onChange={(event) => onDate("to", event.target.value)}
+                        className="h-8 min-w-0 flex-1 px-2 text-xs sm:w-auto sm:flex-none"
+                      />
+                    </label>
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground-muted">
@@ -314,7 +318,7 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                         <td className="truncate p-0">
                           {invoice.customer_number ? (
                             <Link
-                              href={`/customers?search=${encodeURIComponent(invoice.customer_number)}`}
+                              href={customerByNumberHref(invoice.customer_number)}
                               className="block truncate px-4 py-2.5 font-medium text-primary hover:underline"
                             >
                               {invoice.customer_name ?? invoice.customer_number}

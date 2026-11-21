@@ -118,6 +118,14 @@ describe('SalesInvoiceDetail', () => {
     expect(screen.getByRole('table')).toHaveClass('hidden', 'sm:table');
   });
 
+  it('the customer opens their profile directly (invoice page and list)', () => {
+    render(<SalesInvoiceDetail invoice={invoice()} lines={[]} salesOrder={null} billcom={null} />);
+    expect(screen.getByRole('link', { name: 'Food Pantry' })).toHaveAttribute('href', '/customers/by-number/C1');
+    cleanup();
+    render(<SalesInvoicesClient invoices={[invoice()] as unknown as SalesInvoiceListRow[]} total={1} params={parseSalesInvoiceListParams({})} />);
+    expect(screen.getByRole('link', { name: 'Food Pantry' })).toHaveAttribute('href', '/customers/by-number/C1');
+  });
+
   it('shows No lines when there are none', () => {
     render(<SalesInvoiceDetail invoice={invoice()} lines={[]} salesOrder={null} billcom={null} />);
     expect(screen.getByText('No lines')).toBeInTheDocument();

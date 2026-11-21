@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
+import { customerByNumberHref } from '@/lib/customers/customerProfilePath';
 import { formatDate, formatMoney } from '@/lib/format';
 import type { BusinessCentralSalesInvoice, BusinessCentralSalesInvoiceLine } from '@/types/database';
 
@@ -69,7 +70,7 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
             <section className={`${CARD} grid grid-cols-2 gap-4 sm:grid-cols-3`}>
               <Field label="Customer">
                 {invoice.customer_number ? (
-                  <Link href={`/customers?search=${encodeURIComponent(invoice.customer_number)}`} className="text-primary hover:underline">
+                  <Link href={customerByNumberHref(invoice.customer_number)} className="text-primary hover:underline">
                     {invoice.customer_name ?? invoice.customer_number}
                   </Link>
                 ) : (
