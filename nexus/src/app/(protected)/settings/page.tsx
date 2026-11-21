@@ -7,6 +7,8 @@ import { ReceivablesNotificationsCard } from '@/components/settings/ReceivablesN
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
+  // Order Number Format is admin-only: the server returns no settings for anyone else.
+  const [showOrderSettings, setShowOrderSettings] = useState(false);
   const [orderPrefix, setOrderPrefix] = useState('PO');
   const [orderPadding, setOrderPadding] = useState(5);
   const [orderSettingsSaving, setOrderSettingsSaving] = useState(false);
@@ -17,6 +19,7 @@ export default function SettingsPage() {
       try {
         const orderSettings = await getOrgOrderSettings();
         if (orderSettings) {
+          setShowOrderSettings(true);
           setOrderPrefix(orderSettings.order_prefix);
           setOrderPadding(orderSettings.order_padding);
         }
@@ -57,7 +60,8 @@ export default function SettingsPage() {
         <div className="max-w-4xl mx-auto">
           <h1 className="text-xl lg:text-2xl font-bold text-foreground mb-6">Settings</h1>
 
-          {/* Order Number Format */}
+          {/* Order Number Format (admins only) */}
+          {showOrderSettings && (
           <div className="bg-surface rounded-lg border border-border shadow-sm">
             <div className="px-6 py-4 border-b border-border">
               <h2 className="text-lg font-semibold text-foreground">Order Number Format</h2>
@@ -103,6 +107,7 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+          )}
 
           <ReceivablesNotificationsCard />
         </div>
