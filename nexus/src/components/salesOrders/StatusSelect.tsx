@@ -50,6 +50,7 @@ export function StatusSelect({ value, onChange, disabled = false }: Props) {
     <span className="relative inline-flex">
       <select
         aria-label="Status"
+        data-plain-field
         value={value}
         disabled={disabled || fixed}
         onChange={(e) => onChange(e.target.value as OrderStatus)}

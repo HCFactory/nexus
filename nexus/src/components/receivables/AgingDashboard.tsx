@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { AGING_BUCKETS, type AgingBucket } from "@/lib/businessCentral/aging";
 import type { AgingRow } from "@/lib/businessCentral/agingSummary";
 import { summarizeAging } from "@/lib/businessCentral/agingSummary";
+import { customerByNumberHref } from "@/lib/customers/customerProfilePath";
 import { formatDate, formatMoney } from "@/lib/format";
 import type { BusinessCentralSyncCheckpoint } from "@/types/database";
 
@@ -246,7 +247,7 @@ export function AgingDashboard({ rows, asOfDate, syncStatus }: AgingDashboardPro
                       <tr key={row.id} className="transition-colors hover:bg-surface">
                         <td className="p-0">
                           <Link
-                            href={`/customers?search=${encodeURIComponent(row.customer_no)}`}
+                            href={customerByNumberHref(row.customer_no)}
                             className="block px-4 py-2.5 font-mono text-xs text-primary hover:underline"
                           >
                             {row.customer_no}
