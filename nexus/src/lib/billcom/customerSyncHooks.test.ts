@@ -17,6 +17,7 @@ import {
   pushCustomerAfterSave,
   queueChangedCustomers,
   resolveBillcomConnection,
+  openPushDeps,
 } from './customerSyncHooks';
 import type { BusinessCentralCustomer } from '@/types/database';
 
@@ -179,5 +180,38 @@ describe('queueChangedCustomers', () => {
     });
     expect(await queueChangedCustomers({ supabase: supabase as never, orgId: 'org-1', bcConnectionId: 'bc-1' })).toBe(1);
     expect(mocks.markPending.mock.calls[0][1]).toEqual(['GONE']);
+  });
+});
+
+describe('Bill.com connector mode (the environment has "invoices come from Bill.com\'s own BC connector")', () => {
+  const viaConnector = (conns: Row[]) => ({
+    billcom_connections: conns,
+    business_central_connections: [{ id: 'bc-1', organization_id: 'org-1', billcom_connection_id: 'b1', billcom_via_connector: true }],
+  });
+  const scope = (extra: Record<string, Row[]> = {}) => ({
+    supabase: fakeSupabase({ ...viaConnector([conn('b1', true)]), ...extra }) as never,
+    orgId: 'org-1',
+    bcConnectionId: 'bc-1',
+  });
+
+  it('a customer save never pushes or queues, and shows no Bill.com note', async () => {
+    expect(await pushCustomerAfterSave(scope(), 'C1')).toEqual({ status: 'off' });
+    expect(mocks.markPending).not.toHaveBeenCalled();
+    expect(mocks.pushCustomers).not.toHaveBeenCalled();
+    expect(mocks.createClient).not.toHaveBeenCalled();
+  });
+
+  it('the sync queues nothing', async () => {
+    expect(await queueChangedCustomers(scope({ business_central_customers: [] }))).toBeNull();
+    expect(mocks.markPending).not.toHaveBeenCalled();
+  });
+
+  it('no push deps (Push to Bill.com and Retry are off)', async () => {
+    expect(await openPushDeps(scope())).toBeNull();
+    expect(mocks.createClient).not.toHaveBeenCalled();
+  });
+
+  it('reading is still allowed: the connection still resolves for invoice lookups', async () => {
+    expect(await resolveBillcomConnection(scope().supabase, 'org-1', 'bc-1')).toEqual({ id: 'b1', enabled: true });
   });
 });

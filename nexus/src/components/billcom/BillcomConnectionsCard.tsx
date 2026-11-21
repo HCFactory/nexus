@@ -148,8 +148,12 @@ function BillcomConnectionForm({ connection, onSubmit, onCancel }: BillcomConnec
               <label htmlFor="billcomUsername" className="block text-sm font-medium text-foreground mb-1">
                 Username
               </label>
+              <p id="billcomUsernameTip" className="mb-1 text-xs text-foreground-subtle">
+                The name you gave your Bill.com API token (Settings → Sync & Integrations → Tokens).
+              </p>
               <input
                 id="billcomUsername"
+                aria-describedby="billcomUsernameTip"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -161,8 +165,12 @@ function BillcomConnectionForm({ connection, onSubmit, onCancel }: BillcomConnec
               <label htmlFor="billcomOrgId" className="block text-sm font-medium text-foreground mb-1">
                 Bill.com Organization ID
               </label>
+              <p id="billcomOrgIdTip" className="mb-1 text-xs text-foreground-subtle">
+                Starts with 008…. In Bill.com: Settings → Sync & Integrations → Manage Developer Keys, or your company profile.
+              </p>
               <input
                 id="billcomOrgId"
+                aria-describedby="billcomOrgIdTip"
                 type="text"
                 value={billcomOrganizationId}
                 onChange={(e) => setBillcomOrganizationId(e.target.value)}
@@ -175,8 +183,12 @@ function BillcomConnectionForm({ connection, onSubmit, onCancel }: BillcomConnec
               <label htmlFor="billcomDevKey" className="block text-sm font-medium text-foreground mb-1">
                 Developer Key
               </label>
+              <p id="billcomDevKeyTip" className="mb-1 text-xs text-foreground-subtle">
+                From the same Manage Developer Keys page. Sandbox and production have different keys; if production doesn&apos;t have one yet, request it there.
+              </p>
               <input
                 id="billcomDevKey"
+                aria-describedby="billcomDevKeyTip"
                 type="password"
                 value={devKey}
                 onChange={(e) => setDevKey(e.target.value)}
@@ -190,8 +202,12 @@ function BillcomConnectionForm({ connection, onSubmit, onCancel }: BillcomConnec
               <label htmlFor="billcomPassword" className="block text-sm font-medium text-foreground mb-1">
                 Password
               </label>
+              <p id="billcomPasswordTip" className="mb-1 text-xs text-foreground-subtle">
+                The token itself (the token password) — not your Bill.com login password.
+              </p>
               <input
                 id="billcomPassword"
+                aria-describedby="billcomPasswordTip"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

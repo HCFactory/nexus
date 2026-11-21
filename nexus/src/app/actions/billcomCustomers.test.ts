@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   requireScope: vi.fn(),
   openPushDeps: vi.fn(),
   resolveConnection: vi.fn(),
+  connectorMode: vi.fn(),
   pushAfterSave: vi.fn(),
   planInitialPush: vi.fn(),
   pushCustomers: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/billcom/customerSyncHooks', () => ({
   openPushDeps: mocks.openPushDeps,
   resolveBillcomConnection: mocks.resolveConnection,
+  isBillcomConnectorMode: (...a: unknown[]) => mocks.connectorMode(...a),
   pushCustomerAfterSave: mocks.pushAfterSave,
 }));
 vi.mock('@/lib/billcom/customerPush', () => ({
@@ -213,5 +215,22 @@ describe('getBillcomCustomerView', () => {
   it('never throws', async () => {
     mocks.requireScope.mockRejectedValue(new Error('no session'));
     expect((await getBillcomCustomerView()).on).toBe(false);
+  });
+});
+
+describe('connector mode hides customer push', () => {
+  beforeEach(() => {
+    mocks.requireScope.mockResolvedValue(editor);
+    mocks.resolveConnection.mockResolvedValue({ id: 'b1', enabled: true });
+    mocks.connectorMode.mockResolvedValue(true);
+    mocks.tables.billcom_customer_links = [];
+  });
+
+  it('the customer pages show no Bill.com push status', async () => {
+    expect((await getBillcomCustomerView()).on).toBe(false);
+  });
+
+  it('the push status reads off', async () => {
+    expect(await getBillcomPushStatus()).toMatchObject({ ok: true, on: false });
   });
 });

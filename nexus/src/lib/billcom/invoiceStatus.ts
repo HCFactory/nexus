@@ -99,6 +99,47 @@ export async function readBillcomInvoiceStatus(
   return ambiguous ? 'ambiguous' : null;
 }
 
+const toCents = (n: unknown) => Math.round(Number(n) * 100);
+const sameName = (a: string, b: string) => {
+  // Accents ignored ("Café" = "Cafe"), then only letters and digits compared.
+  const norm = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return norm(a) !== '' && norm(a) === norm(b);
+};
+
+/**
+ * Connector mode (Bill.com's own BC connector copied the invoice): find the
+ * Bill.com invoice directly by number, the BC External Doc. No. first, then the
+ * BC invoice no. A match needs exactly one invoice with the number AND the same
+ * total (to the cent) AND the same customer name (ignoring case, spaces and
+ * punctuation); otherwise 'mismatch', which is never charged. Production
+ * checks (2026-11-19): numbers, totals and names agreed 15/15.
+ */
+export async function findConnectorInvoice(
+  client: BillcomClient,
+  q: { invoiceNumbers: string[]; bcTotal: number | null; customerName: string | null },
+): Promise<{ kind: 'found'; status: BillcomInvoiceStatus } | { kind: 'ambiguous' | 'mismatch' | 'not_found' }> {
+  let ambiguous = false;
+  for (const n of q.invoiceNumbers.map((x) => x.trim()).filter(Boolean)) {
+    const qs = new URLSearchParams({ filters: `invoiceNumber:eq:${n}`, max: '5' });
+    const res = await client.request<{ results?: RawInvoice[] }>(`/v3/invoices?${qs.toString()}`);
+    // Every invoice Bill.com returns for the number counts toward "ambiguous" (its
+    // match may ignore case); exact equality only picks the one to use.
+    const all = (res.results ?? []).filter((r) => (r.invoiceNumber ?? '').trim().toLowerCase() === n.toLowerCase());
+    const hits = all.length > 1 ? all : all.filter((r) => (r.invoiceNumber ?? '').trim() === n);
+    if (hits.length > 1) {
+      ambiguous = true;
+      continue;
+    }
+    if (hits.length === 0) continue;
+    const inv = hits[0];
+    if (q.bcTotal === null || toCents(inv.totalAmount) !== toCents(q.bcTotal) || !inv.customerId || !q.customerName) return { kind: 'mismatch' };
+    const customer = await client.request<{ name?: string }>(`/v3/customers/${encodeURIComponent(inv.customerId)}`);
+    if (!sameName(customer.name ?? '', q.customerName)) return { kind: 'mismatch' };
+    return { kind: 'found', status: toStatus(inv) };
+  }
+  return { kind: ambiguous ? 'ambiguous' : 'not_found' };
+}
+
 /** The invoice page's Bill.com panel: what was found, or why nothing is shown. */
 export type BillcomPanel =
   | { kind: 'found'; status: BillcomInvoiceStatus }
@@ -106,4 +147,5 @@ export type BillcomPanel =
   | { kind: 'not_linked' }
   | { kind: 'not_found' }
   | { kind: 'ambiguous' }
+  | { kind: 'mismatch' }
   | { kind: 'error'; message: string };

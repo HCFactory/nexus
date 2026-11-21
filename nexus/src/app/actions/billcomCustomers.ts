@@ -5,6 +5,7 @@ import { markPending, planInitialPush, pushCustomers, type PushPreview, type Pus
 import {
   openPushDeps,
   pushCustomerAfterSave,
+  isBillcomConnectorMode,
   resolveBillcomConnection,
   type BillcomSaveStatus,
 } from '@/lib/billcom/customerSyncHooks';
@@ -120,6 +121,8 @@ export async function getBillcomPushStatus(): Promise<
     if (!scope.access.canViewCustomers) return { ok: false, error: "You don't have permission to view customers" };
     const counts: Record<BillcomCustomerLinkStatus, number> = { pending: 0, synced: 0, failed: 0, needs_attention: 0 };
     const supabase = createServiceClient();
+    // Connector mode: Bill.com's connector copies customers; Nexus shows no push status.
+    if (await isBillcomConnectorMode(supabase, scope.orgId, scope.bcConnectionId)) return { ok: true, on: false, counts };
     const conn = await resolveBillcomConnection(supabase, scope.orgId, scope.bcConnectionId);
     if (!conn) return { ok: true, on: false, counts };
     const links = await fetchAll<{ status: BillcomCustomerLinkStatus }>(() =>
@@ -158,6 +161,7 @@ export async function getBillcomCustomerView(customerNumber?: string): Promise<B
     const scope = await requireActiveBusinessCentralScope();
     if (!scope.access.canViewCustomers) return VIEW_OFF;
     const supabase = createServiceClient();
+    if (await isBillcomConnectorMode(supabase, scope.orgId, scope.bcConnectionId)) return VIEW_OFF;
     const conn = await resolveBillcomConnection(supabase, scope.orgId, scope.bcConnectionId);
     if (!conn || !conn.enabled) return VIEW_OFF;
     const rows = await fetchAll<{ bc_customer_number: string; status: BillcomCustomerLinkStatus; last_error: string | null }>(

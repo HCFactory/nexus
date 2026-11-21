@@ -30,6 +30,13 @@ import type {
  * app shows dates in: it decides "past due" and is the Bill.com payment date.
  */
 
+export const RETRY_CANNOT_CHECK = "Couldn't check this invoice in Bill.com, so nothing was recorded. Try again.";
+export const RETRY_LESS_OWING =
+  'Bill.com shows less owing on this invoice than this payment, so it may already be recorded. Check Bill.com; if the payment is there, use "I marked it paid in Bill.com".';
+export const RETRY_LESS_OWING_LATE =
+  'Bill.com shows less owing on this invoice than this late charge, so the customer may have paid twice. Refund this charge in Stripe, then use "I marked it paid in Bill.com".';
+const LATE_CHARGE_PREFIX = 'Stripe charged this card (';
+const billcomAlreadyHas = (id: string) => `Bill.com already has this payment (${id}). Use "I marked it paid in Bill.com" instead of Retry.`;
 export const DUPLICATE_CHARGE_MESSAGE = 'A charge for this invoice is already in progress or needs attention.';
 export const AUTH_REQUIRED_MESSAGE = 'The bank needs the customer to approve this charge — send a new setup link.';
 
@@ -39,6 +46,7 @@ const REASONS = {
   noCard: 'No card on file — send a setup link from the customer page.',
   notInBillcom: "This invoice isn't in Bill.com yet.",
   ambiguous: 'More than one Bill.com invoice matches this number.',
+  mismatch: "The Bill.com invoice with this number doesn't match this invoice's total or customer.",
   nothingDue: 'Nothing is due on this invoice.',
   notPastDue: "This invoice isn't past due yet.",
   replaced: 'This invoice was cancelled and replaced — charge the corrected invoice.',
@@ -104,6 +112,9 @@ export interface ChargeInvoiceContext {
   billcomInvoiceId: string | null;
   /** From the order's invoice changes; missing = 'live'. */
   status?: InvoiceChargeStatus;
+  /** BC total incl. tax and customer name: connector mode only matches a Bill.com invoice that agrees. */
+  bcTotal?: number | null;
+  customerName?: string | null;
 }
 
 /** Everything with side effects, injected so tests need no network. */
@@ -152,6 +163,7 @@ export function chargeEligibility(a: {
   if (a.stripe === 'off') return no(REASONS.stripeOff);
   if (!a.card) return no(REASONS.noCard);
   if (a.billcom.kind === 'ambiguous') return no(REASONS.ambiguous);
+  if (a.billcom.kind === 'mismatch') return no(REASONS.mismatch);
   if (a.billcom.kind !== 'found' || !a.billcom.billcomCustomerId) return no(REASONS.notInBillcom);
   const { dueAmount, dueDate } = a.billcom.status;
   if (dueAmount === null || toCents(dueAmount) <= 0) return no(REASONS.nothingDue);
@@ -266,20 +278,22 @@ async function receiptEmail(deps: ChargeDeps, customerNumber: string): Promise<s
 async function transition(
   deps: ChargeDeps,
   id: string,
-  guard: { status?: string; billcomStates?: string[] },
+  guard: { status?: string; billcomStates?: string[]; attemptAt?: string | null },
   values: Record<string, unknown>,
 ): Promise<boolean> {
   let q = deps.supabase.from('card_payments').update(values).eq('id', id).eq('organization_id', deps.orgId);
   if (guard.status) q = q.eq('status', guard.status);
   if (guard.billcomStates) q = q.in('billcom_state', guard.billcomStates);
+  if (guard.attemptAt !== undefined) q = guard.attemptAt === null ? q.is('billcom_attempt_at', null) : q.eq('billcom_attempt_at', guard.attemptAt);
   const { data, error } = await q.select('id');
-  if (error) throw new Error(`Could not update the card payment: ${error.message}`);
+  if (error) throw Object.assign(new Error(`Could not update the card payment: ${error.message}`), { code: error.code });
   return (data ?? []).length > 0;
 }
 
 /** Records a Stripe-succeeded payment in Bill.com. Never throws for a Bill.com error: it is stored. */
-async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
-  const notStarted = { status: 'succeeded', billcomStates: ['not_started'] };
+async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: string, attemptAt: string): Promise<void> {
+  // Every write is for this attempt only: a newer attempt (after Check status + Retry) is never overwritten.
+  const notStarted = { status: 'succeeded', billcomStates: ['not_started'], attemptAt };
   const client = await deps.billcom().catch(() => null);
   if (!client) {
     await transition(deps, p.id, notStarted, { billcom_state: 'failed', billcom_error: BILLCOM_OFF });
@@ -319,6 +333,12 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
     // which moves it to failed, where "I marked it paid in Bill.com" is shown.
     const msg = `${recordedIn} but Nexus could not save that. Do not press Retry: after 10 minutes use Check status, then "I marked it paid in Bill.com". ${e instanceof Error ? e.message : String(e)}`;
     console.error(`[chargeInvoice] card payment ${p.id}: ${msg}`);
+    // Best effort: keep Bill.com's payment id on the row (state unchanged) so Retry refuses later.
+    if (paymentId) {
+      await transition(deps, p.id, notStarted, { billcom_payment_id: paymentId }).catch((e2) =>
+        console.error(`[chargeInvoice] card payment ${p.id}: could not note the Bill.com payment ${paymentId} on the row:`, e2),
+      );
+    }
     throw new Error(msg);
   }
   if (saved) return;
@@ -339,13 +359,14 @@ async function recordInBillcom(deps: ChargeDeps, p: CardPayment, intentId: strin
 /** processing → succeeded, then Bill.com. Only the caller that wins the transition records. */
 async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: string): Promise<void> {
   let won: boolean;
+  const attemptAt = deps.now().toISOString();
   try {
     // The Bill.com step starts right after this, so its attempt time is set with it.
     won = await transition(deps, p.id, { status: 'processing' }, {
       status: 'succeeded',
       stripe_payment_intent_id: intentId,
       failure_message: null,
-      billcom_attempt_at: deps.now().toISOString(),
+      billcom_attempt_at: attemptAt,
     });
   } catch (e) {
     throw new Error(
@@ -353,7 +374,7 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
     );
   }
   if (won) {
-    await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId);
+    await recordInBillcom(deps, { ...p, status: 'succeeded' }, intentId, attemptAt);
     return;
   }
   // Lost the transition. If the row was marked failed meanwhile, money moved anyway: say so loudly.
@@ -362,11 +383,30 @@ async function settleSucceeded(deps: ChargeDeps, p: CardPayment, intentId: strin
   console.error(
     `[chargeInvoice] CARD WAS CHARGED but the row says failed: card payment ${p.id}, intent ${intentId}, amount ${Number(p.amount)} ${p.currency}. Refund or reconcile in Stripe.`,
   );
-  const note = `Stripe later reported this charge succeeded (${intentId}) — check Stripe and refund or reconcile.`;
   if (current.failure_message?.includes(intentId)) return;
-  await transition(deps, p.id, { status: 'failed' }, {
-    failure_message: current.failure_message ? `${current.failure_message} ${note}` : note,
-  });
+  // Charged, not in Bill.com: this state blocks another charge (unique index) until staff resolve it.
+  // Never recorded in Bill.com automatically: staff check Stripe first.
+  try {
+    await transition(deps, p.id, { status: 'failed' }, {
+      status: 'succeeded',
+      stripe_payment_intent_id: intentId,
+      billcom_state: 'failed',
+      billcom_error: lateChargeNote(intentId),
+      billcom_attempt_at: deps.now().toISOString(),
+    });
+  } catch (e) {
+    const err = e as { code?: string; message?: string };
+    if (err.code !== UNIQUE_VIOLATION || !err.message?.includes('card_payments_one_open_per_invoice')) throw e;
+    // Another charge for this invoice is open: the customer may have paid twice.
+    const note = `Stripe later charged this card (${intentId}) while another charge for this invoice was open — the customer may have been charged twice. Check Stripe and refund one.`;
+    await transition(deps, p.id, { status: 'failed' }, {
+      failure_message: current.failure_message ? `${current.failure_message} ${note}` : note,
+    });
+  }
+}
+
+function lateChargeNote(intentId: string): string {
+  return `${LATE_CHARGE_PREFIX}${intentId}) after Nexus had marked the charge failed. Check Stripe: if this is the only charge for the invoice, press Retry to record it in Bill.com; if the invoice was paid another way, refund this charge in Stripe, then use "I marked it paid in Bill.com".`;
 }
 
 async function settleFailed(deps: ChargeDeps, id: string, message: string, intentId: string | null): Promise<void> {
@@ -417,6 +457,8 @@ async function assess(deps: ChargeDeps, bcInvoiceId: string) {
           customerNumber: invoice.customerNumber,
           invoiceNumbers: invoice.invoiceNumbers,
           billcomInvoiceId: invoice.billcomInvoiceId,
+          bcTotal: invoice.bcTotal ?? null,
+          customerName: invoice.customerName ?? null,
         })
       : { kind: 'off' };
   const eligibility = chargeEligibility({ canCharge: deps.canCharge, invoice: status, stripe, card, billcom, today: businessDate(deps.now()) });
@@ -620,7 +662,8 @@ export async function checkChargeStatus(deps: ChargeDeps, cardPaymentId: string)
 
   // Measured from the current Bill.com attempt, so a fresh Retry is never cut off.
   if (isBillcomStuck(deps, p)) {
-    await transition(deps, p.id, { status: 'succeeded', billcomStates: ['not_started'] }, {
+    // Only the attempt this check looked at: a Retry started since then is left alone.
+    await transition(deps, p.id, { status: 'succeeded', billcomStates: ['not_started'], attemptAt: p.billcom_attempt_at ?? null }, {
       billcom_state: 'failed',
       billcom_error: BILLCOM_INTERRUPTED,
     });
@@ -663,16 +706,34 @@ export async function markNotCharged(deps: ChargeDeps, cardPaymentId: string, us
 export async function retryBillcomRecord(deps: ChargeDeps, cardPaymentId: string): Promise<CardPaymentRow> {
   const p = await readPayment(deps, cardPaymentId);
   if (p.status !== 'succeeded' || p.billcom_state !== 'failed') throw new Error(NOT_RETRYABLE);
+  if (p.billcom_payment_id) throw new Error(billcomAlreadyHas(p.billcom_payment_id));
   const client = await deps.billcom().catch(() => null);
   if (!client) throw new Error(BILLCOM_OFF);
+  // Bill.com may already have it (recorded, then Nexus failed to save): only record while
+  // Bill.com still shows at least this payment owing on this exact invoice.
+  const lookup = await deps
+    .findBillcomInvoice({
+      customerNumber: p.bc_customer_number,
+      invoiceNumbers: [p.invoice_number],
+      billcomInvoiceId: p.billcom_invoice_id,
+      // This payment's own invoice, found by a checked lookup when it was charged.
+      trustBillcomInvoiceId: true,
+    })
+    .catch(() => null);
+  const due = lookup?.kind === 'found' && lookup.status.id === p.billcom_invoice_id ? lookup.status.dueAmount : null;
+  if (due === null || due === undefined) throw new Error(RETRY_CANNOT_CHECK);
+  if (toCents(due) < toCents(Number(p.amount))) {
+    throw new Error(p.billcom_error?.startsWith(LATE_CHARGE_PREFIX) ? RETRY_LESS_OWING_LATE : RETRY_LESS_OWING);
+  }
   // Claim it (failed → not_started) so two clicks cannot both record it.
+  const attemptAt = deps.now().toISOString();
   const claimed = await transition(deps, p.id, { status: 'succeeded', billcomStates: ['failed'] }, {
     billcom_state: 'not_started',
     billcom_error: null,
-    billcom_attempt_at: deps.now().toISOString(),
+    billcom_attempt_at: attemptAt,
   });
   if (!claimed) throw new Error(NOT_RETRYABLE);
-  await recordInBillcom(deps, { ...p, billcom_state: 'not_started' }, p.stripe_payment_intent_id ?? '');
+  await recordInBillcom(deps, { ...p, billcom_state: 'not_started' }, p.stripe_payment_intent_id ?? '', attemptAt);
   return rowById(deps, p.id);
 }
 

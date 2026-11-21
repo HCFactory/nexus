@@ -27,7 +27,7 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
      4. Enable the live Stripe connection (Admin → Stripe) and pick it for Production (Admin → Business Central Environments → Production → Stripe).
      5. Do one real card save to confirm the webhook arrives.
      6. Turn on Charge saved cards only for the right people.
-   - **Charging in Production waits for Bill.com:** Charge card needs a Nexus-made Bill.com invoice, and today Bill.com's own connector makes them. It also waits for the switch away from the connector (see the duplicate-customer note under customer sync go-live prep).
+   - **Charging in Production:** Bill.com connector mode (branch `feat/billcom-connector-mode`) finds the connector's Bill.com invoices by number, so charging no longer needs Nexus-made invoices. Earlier note: Charge card needs a Nexus-made Bill.com invoice, and today Bill.com's own connector makes them. It also waits for the switch away from the connector (see the duplicate-customer note under customer sync go-live prep).
    - **Gap left (from review):** a Stripe charge that completes after the request that started it died is only noticed by Check status while the row is still processing. If the row was already marked not charged, nothing notices. A `payment_intent.succeeded` webhook would close this.
    - **Live Stripe connection added 2026-11-18** (live mode, webhook `checkout.session.completed`, snapshot). Left **disabled**, and Production → Stripe = None.
 4. **Payments** (#5.4): Bill.com payments into Nexus, reviewed, then recorded in BC. Big, high risk (writes to the general ledger); needs its own design, including the Bill.com rounding difference.

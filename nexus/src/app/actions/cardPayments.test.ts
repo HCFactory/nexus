@@ -116,6 +116,8 @@ it('chargeInvoiceCard passes the current user and the default Stripe connection'
     salesOrderId: 'so-1',
     billcomInvoiceId: '00e1',
     status: 'live',
+    bcTotal: null,
+    customerName: null,
   });
 });
 

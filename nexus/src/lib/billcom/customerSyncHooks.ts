@@ -70,8 +70,25 @@ function deps(scope: BillcomScope, billcomConnectionId: string, billcom: Billcom
   return { ...scope, billcomConnectionId, billcom };
 }
 
-/** Push deps for an enabled connection, or null when Bill.com is off. */
+/**
+ * True when this environment's Bill.com invoices (and customers) come from
+ * Bill.com's own BC connector. Nexus then only reads Bill.com and records card
+ * payments: it never pushes customers there.
+ */
+export async function isBillcomConnectorMode(supabase: SupabaseClient, orgId: string, bcConnectionId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('business_central_connections')
+    .select('billcom_via_connector')
+    .eq('id', bcConnectionId)
+    .eq('organization_id', orgId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read the BC environment: ${error.message}`);
+  return (data as { billcom_via_connector?: boolean } | null)?.billcom_via_connector === true;
+}
+
+/** Push deps for an enabled connection, or null when Bill.com is off (or in connector mode). */
 export async function openPushDeps(scope: BillcomScope): Promise<PushDeps | null> {
+  if (await isBillcomConnectorMode(scope.supabase, scope.orgId, scope.bcConnectionId)) return null;
   const conn = await resolveBillcomConnection(scope.supabase, scope.orgId, scope.bcConnectionId);
   if (!conn?.enabled) return null;
   try {
@@ -120,6 +137,8 @@ async function linkError(d: PushDeps, number: string): Promise<string | undefine
  */
 export async function pushCustomerAfterSave(scope: BillcomScope, number: string): Promise<BillcomSaveStatus> {
   try {
+    // Connector mode: Bill.com's connector copies customers; nothing to say on save.
+    if (await isBillcomConnectorMode(scope.supabase, scope.orgId, scope.bcConnectionId)) return { status: 'off' };
     const conn = await resolveBillcomConnection(scope.supabase, scope.orgId, scope.bcConnectionId);
     if (!conn) return { status: 'off', message: OFF_MESSAGE };
     await markPending(deps(scope, conn.id), [number]);
@@ -153,6 +172,7 @@ export async function pushCustomerAfterSave(scope: BillcomScope, number: string)
  * number queued, or null when Bill.com is off.
  */
 export async function queueChangedCustomers(scope: BillcomScope): Promise<number | null> {
+  if (await isBillcomConnectorMode(scope.supabase, scope.orgId, scope.bcConnectionId)) return null;
   const conn = await resolveBillcomConnection(scope.supabase, scope.orgId, scope.bcConnectionId);
   if (!conn?.enabled) return null;
   const [rows, links] = await Promise.all([

@@ -2,37 +2,13 @@
 
 import { requireActiveBusinessCentralScope } from '@/lib/businessCentral/environmentScope';
 import { editScope, NO_PERMISSION, type Fail, type Scope } from '@/lib/salesOrders/editScope';
+import { cleanNoteBody, errorMessage, withNoteAuthors } from '@/lib/notes/noteHelpers';
 import { createServiceClient } from '@/lib/supabase/server';
 import type { SalesOrderNoteRow, SalesOrderNoteView } from '@/types/salesOrders';
 
 const NOTES = 'sales_order_notes';
-const MAX_LENGTH = 4000;
-const EMPTY = 'Write something first.';
-const TOO_LONG = `Notes can be up to ${MAX_LENGTH} characters.`;
 const ORDER_NOT_FOUND = 'Sales order not found.';
 const NOTE_NOT_FOUND = 'Note not found.';
-
-const errorMessage = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/** The trimmed body, or an error message when it is empty or too long. */
-function cleanBody(body: string): { body: string } | { error: string } {
-  const trimmed = (body ?? '').trim();
-  if (!trimmed) return { error: EMPTY };
-  if (trimmed.length > MAX_LENGTH) return { error: TOO_LONG };
-  return { body: trimmed };
-}
-
-/** Attach each author's display name; '' when the user no longer exists. */
-async function withAuthors(rows: SalesOrderNoteRow[]): Promise<SalesOrderNoteView[]> {
-  const ids = [...new Set(rows.flatMap((r) => (r.created_by ? [r.created_by] : [])))];
-  const names = new Map<string, string>();
-  if (ids.length > 0) {
-    const { data, error } = await createServiceClient().from('users').select('id, display_name').in('id', ids);
-    if (error) throw new Error(`Could not load note authors: ${error.message}`);
-    for (const u of (data ?? []) as { id: string; display_name: string | null }[]) names.set(u.id, u.display_name ?? '');
-  }
-  return rows.map((r) => ({ ...r, author_name: (r.created_by && names.get(r.created_by)) || '' }));
-}
 
 async function loadNote(scope: Scope, id: string): Promise<SalesOrderNoteRow | null> {
   const { data, error } = await createServiceClient()
@@ -63,7 +39,7 @@ export async function listSalesOrderNotes(orderId: string): Promise<SalesOrderNo
     .eq('bc_connection_id', scope.bcConnectionId)
     .order('created_at', { ascending: false });
   if (error) throw new Error(`Could not load the notes: ${error.message}`);
-  return withAuthors((data ?? []) as SalesOrderNoteRow[]);
+  return withNoteAuthors((data ?? []) as SalesOrderNoteRow[]);
 }
 
 /** Add a note. Allowed in any order status; it is not part of the order's BC sync. */
@@ -74,7 +50,7 @@ export async function addSalesOrderNote(
   try {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
-    const clean = cleanBody(body);
+    const clean = cleanNoteBody(body);
     if ('error' in clean) return { ok: false, error: clean.error };
 
     const supabase = createServiceClient();
@@ -100,7 +76,7 @@ export async function addSalesOrderNote(
       .select('*')
       .single();
     if (error || !data) throw new Error(error?.message ?? 'no row returned');
-    const [note] = await withAuthors([data as SalesOrderNoteRow]);
+    const [note] = await withNoteAuthors([data as SalesOrderNoteRow]);
     return { ok: true, note };
   } catch (e) {
     return { ok: false, error: `Could not add the note: ${errorMessage(e)}` };
@@ -115,7 +91,7 @@ export async function updateSalesOrderNote(
   try {
     const scope = await editScope();
     if (!scope) return { ok: false, error: NO_PERMISSION };
-    const clean = cleanBody(body);
+    const clean = cleanNoteBody(body);
     if ('error' in clean) return { ok: false, error: clean.error };
     if (!(await loadNote(scope, noteId))) return { ok: false, error: NOTE_NOT_FOUND };
 
@@ -128,7 +104,7 @@ export async function updateSalesOrderNote(
       .select('*')
       .single();
     if (error || !data) throw new Error(error?.message ?? 'no row returned');
-    const [note] = await withAuthors([data as SalesOrderNoteRow]);
+    const [note] = await withNoteAuthors([data as SalesOrderNoteRow]);
     return { ok: true, note };
   } catch (e) {
     return { ok: false, error: `Could not save the note: ${errorMessage(e)}` };

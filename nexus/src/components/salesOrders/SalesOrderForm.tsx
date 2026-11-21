@@ -820,7 +820,7 @@ export function SalesOrderForm({ order, lines, context, shipTos: initialShipTos,
             </section>
 
             <Section title="Notes">
-              <NotesPanel orderId={order?.id ?? null} canEdit={canEdit} initialNotes={notes} />
+              <NotesPanel parentId={order?.id ?? null} canEdit={canEdit} initialNotes={notes} />
             </Section>
           </div>
 

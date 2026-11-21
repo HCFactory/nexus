@@ -185,6 +185,23 @@ export interface SalesOrderNoteRow {
 
 export type SalesOrderNoteView = SalesOrderNoteRow & { author_name: string }
 
+/** What the notes panel shows of a note (sales order and invoice notes alike). */
+export type NoteView = Pick<SalesOrderNoteView, 'id' | 'body' | 'created_at' | 'updated_at' | 'author_name'>
+
+export interface SalesInvoiceNoteRow {
+  id: string
+  organization_id: string
+  bc_connection_id: string
+  bc_invoice_id: string
+  body: string
+  created_by: string | null
+  created_at: string
+  updated_by: string | null
+  updated_at: string
+}
+
+export type SalesInvoiceNoteView = SalesInvoiceNoteRow & { author_name: string }
+
 /** Header values copied from the customer when an order is started. */
 export interface OrderHeaderDefaults {
   bill_name: string

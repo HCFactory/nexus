@@ -11,8 +11,8 @@ import 'server-only';
 import { requirePermission } from '@/lib/auth/currentUserAccess';
 import { canViewReceivables } from '@/lib/auth/permissions';
 import { createBillcomClientForConnection } from '@/lib/billcom/connection';
-import { resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
-import { readBillcomInvoiceStatus, type BillcomPanel } from '@/lib/billcom/invoiceStatus';
+import { isBillcomConnectorMode, resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
+import { findConnectorInvoice, readBillcomInvoiceStatus, type BillcomPanel } from '@/lib/billcom/invoiceStatus';
 import { resolveActiveBcConnection } from '@/lib/businessCentral/activeConnection';
 import { createBcClientForOrg } from '@/lib/businessCentral/client';
 import { fetchAndMirrorSalesInvoice, mirrorSalesInvoiceLines, type InvoiceMirrorDeps } from '@/lib/businessCentral/invoiceMirror';
@@ -179,6 +179,14 @@ export interface BillcomPanelInput {
   invoiceNumbers: string[];
   /** Set when Nexus created the Bill.com invoice. */
   billcomInvoiceId: string | null;
+  /**
+   * The id came from a checked lookup (a card payment's own invoice, e.g. Retry):
+   * read it by id even in connector mode. A sales order's stored id is not trusted there.
+   */
+  trustBillcomInvoiceId?: boolean;
+  /** BC total incl. tax and customer name: connector mode only matches when Bill.com agrees. */
+  bcTotal?: number | null;
+  customerName?: string | null;
 }
 
 /**
@@ -215,6 +223,19 @@ export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Pro
     const ready = link as { status: string; billcom_customer_id: string | null } | null;
     return ready?.status === 'synced' && ready.billcom_customer_id ? ready.billcom_customer_id : null;
   };
+
+  // Connector mode: Bill.com's own BC connector copied the invoice, so Nexus has
+  // no customer links. Find it by number; the invoice names its Bill.com customer.
+  // A sales order's stored id (from a Nexus-made invoice) is ignored here: always
+  // check by number, total and name. Only a card payment's own checked id is read directly.
+  if (!input.trustBillcomInvoiceId && (await isBillcomConnectorMode(ctx.supabase, ctx.orgId, ctx.connection.id))) {
+    const r = await findConnectorInvoice(client, {
+      invoiceNumbers: input.invoiceNumbers,
+      bcTotal: input.bcTotal ?? null,
+      customerName: input.customerName ?? null,
+    });
+    return r.kind === 'found' ? { kind: 'found', status: r.status, billcomCustomerId: r.status.customerId ?? null } : { kind: r.kind };
+  }
 
   if (input.billcomInvoiceId) {
     const found = await readBillcomInvoiceStatus(client, { billcomInvoiceId: input.billcomInvoiceId, invoiceNumbers: [] });

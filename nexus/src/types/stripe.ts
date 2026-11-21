@@ -197,7 +197,7 @@ export interface CardPaymentRow {
  */
 export type BillcomLookup =
   | { kind: 'found'; status: BillcomInvoiceStatus; billcomCustomerId: string | null }
-  | { kind: 'not_linked' | 'not_found' | 'ambiguous' | 'off' };
+  | { kind: 'not_linked' | 'not_found' | 'ambiguous' | 'mismatch' | 'off' };
 
 export type ChargeEligibility =
   | { ok: true; amount: number; dueDate: string }

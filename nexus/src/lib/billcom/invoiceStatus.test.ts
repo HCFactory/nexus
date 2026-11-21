@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { BillcomClient } from './client';
-import { billcomStatusLabel, readBillcomInvoiceStatus } from './invoiceStatus';
+import { billcomStatusLabel, findConnectorInvoice, readBillcomInvoiceStatus } from './invoiceStatus';
 
 function fakeClient(handler: (path: string) => unknown) {
   const request = vi.fn(async (path: string) => handler(path));
@@ -114,5 +114,63 @@ describe('readBillcomInvoiceStatus', () => {
     expect(await readBillcomInvoiceStatus(client, { invoiceNumbers: ['W-1'] })).toBeNull();
     expect(request).not.toHaveBeenCalled();
     expect(await readBillcomInvoiceStatus(client, { billcomCustomerId: '0cu1', invoiceNumbers: ['W-1', '', '  '] })).toBeNull();
+  });
+});
+
+describe('findConnectorInvoice (Bill.com invoices copied by its BC connector)', () => {
+  const expectBc = { bcTotal: 45.23, customerName: 'Aloha School, Inc.' };
+  const handler = (byNumber: Record<string, unknown[]>, customerName = 'ALOHA SCHOOL INC') => (path: string) => {
+    if (path.startsWith('/v3/customers/')) return { id: '0cu1', name: customerName };
+    const filters = new URL(`https://x${path}`).searchParams.get('filters') ?? '';
+    const key = filters.replace('invoiceNumber:eq:', '');
+    return { results: ((byNumber[key] ?? []) as Record<string, unknown>[]).map((r) => ({ ...r, invoiceNumber: key })) };
+  };
+
+  it('finds the invoice directly by its number (External Doc. No.) when total and customer name agree', async () => {
+    const { client, request } = fakeClient(handler({ 'W-115661/ PO#002043': [{ ...RAW, invoiceNumber: 'W-115661/ PO#002043' }] }));
+    const r = await findConnectorInvoice(client, { invoiceNumbers: ['W-115661/ PO#002043', 'INV-1'], ...expectBc });
+    expect(r).toMatchObject({ kind: 'found', status: { id: '00eX', customerId: '0cu1', dueAmount: 45.23 } });
+    expect(request.mock.calls[0][0]).toBe(`/v3/invoices?${new URLSearchParams({ filters: 'invoiceNumber:eq:W-115661/ PO#002043', max: '5' })}`);
+  });
+
+  it('falls back to the BC invoice number', async () => {
+    const { client } = fakeClient(handler({ 'INV-1': [RAW] }));
+    expect((await findConnectorInvoice(client, { invoiceNumbers: ['W-1', 'INV-1'], ...expectBc })).kind).toBe('found');
+  });
+
+  it('a different total is a mismatch (never charged)', async () => {
+    const { client } = fakeClient(handler({ 'W-1': [{ ...RAW, totalAmount: 45.24 }] }));
+    expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], ...expectBc })).toEqual({ kind: 'mismatch' });
+  });
+
+  it('a different customer name is a mismatch', async () => {
+    const { client } = fakeClient(handler({ 'W-1': [RAW] }, 'Someone Else LLC'));
+    expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], ...expectBc })).toEqual({ kind: 'mismatch' });
+  });
+
+  it('several invoices with the number are ambiguous; none is not found', async () => {
+    const amb = fakeClient(handler({ 'W-1': [RAW, { ...RAW, id: '00eY' }] }));
+    expect(await findConnectorInvoice(amb.client, { invoiceNumbers: ['W-1'], ...expectBc })).toEqual({ kind: 'ambiguous' });
+    const none = fakeClient(handler({}));
+    expect(await findConnectorInvoice(none.client, { invoiceNumbers: ['W-1', ''], ...expectBc })).toEqual({ kind: 'not_found' });
+  });
+
+  it('a twin that differs only in letter case counts as a second invoice with the number (ambiguous)', async () => {
+    const { client } = fakeClient((path: string) => {
+      if (path.startsWith('/v3/customers/')) return { id: '0cu1', name: 'Aloha School, Inc.' };
+      return { results: [{ ...RAW, invoiceNumber: 'W-1' }, { ...RAW, id: '00eY', invoiceNumber: 'w-1' }] };
+    });
+    expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], ...expectBc })).toEqual({ kind: 'ambiguous' });
+  });
+
+  it('accents do not make the same customer name a mismatch', async () => {
+    const { client } = fakeClient(handler({ 'W-1': [RAW] }, 'Café Aloha'));
+    expect((await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], bcTotal: 45.23, customerName: 'Cafe Aloha' })).kind).toBe('found');
+  });
+
+  it('without a BC total or customer name it refuses to call it a match', async () => {
+    const { client } = fakeClient(handler({ 'W-1': [RAW] }));
+    expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], bcTotal: null, customerName: 'Aloha School, Inc.' })).toEqual({ kind: 'mismatch' });
+    expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], bcTotal: 45.23, customerName: '' })).toEqual({ kind: 'mismatch' });
   });
 });
