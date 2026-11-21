@@ -88,6 +88,15 @@ describe('SalesInvoiceDetail', () => {
     expect(main.parentElement?.contains(screen.getByText('No lines'))).toBe(false);
   });
 
+  it('scrolls inside its own area when the invoice is taller than the screen', () => {
+    render(<SalesInvoiceDetail invoice={invoice()} lines={[line()]} salesOrder={null} billcom={null} />);
+    const area = screen.getByTestId('invoice-scroll');
+    expect(area).toHaveClass('overflow-y-auto');
+    expect(area.className).toMatch(/h-\[calc\(100vh-3\.5rem\)\]/);
+    expect(area).toContainElement(screen.getByRole('heading', { level: 1 }));
+    expect(area).toContainElement(screen.getByText('Total'));
+  });
+
   it('without a notes block the left column simply fills the row', () => {
     render(<SalesInvoiceDetail invoice={invoice()} lines={[]} salesOrder={null} billcom={null} />);
     expect(screen.queryByTestId('invoice-notes')).toBeNull();
