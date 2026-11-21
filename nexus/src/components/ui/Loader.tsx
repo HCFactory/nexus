@@ -1,28 +1,24 @@
-// Loading indicators: a candy-coloured spinning ring in a frosted pill, and a
-// thin candy bar sliding across the top of whatever is loading. Animations
-// live in globals.css (.candy-ring, .candy-bar, .loader-in); with "reduce
-// motion" turned on they gently pulse instead.
+// Loading indicators: a neon-blue spinning ring with a glow, and a thin neon
+// bar sliding across the top of whatever is loading. Graphic only; the label
+// is read out to screen readers. Animations live in globals.css (.neon-ring,
+// .neon-bar, .loader-in); with "reduce motion" turned on they gently pulse.
 import { cn } from "@/lib/utils";
 
-/** The spinning candy ring, with a soft glow behind it. */
-export function CandySpinner({ size = 22, className }: { size?: number; className?: string }) {
+/** The spinning neon ring: a glowing comet tail chasing round a faint track. */
+export function NeonSpinner({ size = 40, className }: { size?: number; className?: string }) {
   return (
-    <span data-loader="spinner" aria-hidden className={cn("relative inline-block shrink-0", className)} style={{ width: size, height: size }}>
-      <span className="candy-ring absolute inset-0 opacity-60 blur-[6px]" />
-      <span className="candy-ring absolute inset-0" />
+    <span data-loader="spinner" aria-hidden className={cn("neon-spinner relative inline-block shrink-0", className)} style={{ width: size, height: size }}>
+      <span className="neon-track absolute inset-0" />
+      <span className="neon-ring absolute inset-0" />
     </span>
   );
 }
 
-function LoaderPill({ label }: { label: string }) {
+function LoaderGraphic({ label }: { label: string }) {
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="flex items-center gap-2.5 rounded-full border border-border bg-surface-raised/95 px-4 py-2 text-sm font-medium text-foreground shadow-xl backdrop-blur-md"
-    >
-      <CandySpinner />
-      {label}
+    <div role="status" aria-live="polite">
+      <NeonSpinner />
+      <span className="sr-only">{label}</span>
     </div>
   );
 }
@@ -37,10 +33,10 @@ export function LoadingOverlay({ show, label = "Loading…" }: { show: boolean; 
   return (
     <div data-loader="overlay" className="loader-in pointer-events-none absolute inset-0 z-20">
       <div className="absolute inset-x-0 top-0 h-0.5 overflow-hidden">
-        <div data-loader="bar" className="candy-bar h-full w-2/5" />
+        <div data-loader="bar" className="neon-bar h-full w-2/5" />
       </div>
       <div className="flex justify-center pt-16">
-        <LoaderPill label={label} />
+        <LoaderGraphic label={label} />
       </div>
     </div>
   );
@@ -50,7 +46,7 @@ export function LoadingOverlay({ show, label = "Loading…" }: { show: boolean; 
 export function PageLoader({ label = "Loading…" }: { label?: string }) {
   return (
     <div className="loader-in flex h-full min-h-[50vh] items-center justify-center">
-      <LoaderPill label={label} />
+      <LoaderGraphic label={label} />
     </div>
   );
 }

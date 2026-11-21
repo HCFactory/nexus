@@ -7,9 +7,10 @@ import { LoadingOverlay, PageLoader } from './Loader';
 afterEach(cleanup);
 
 describe('LoadingOverlay', () => {
-  it('while loading: announces it, with the spinner, label and top bar', () => {
+  it('while loading: just the graphic (spinner and top bar); the label is for screen readers only', () => {
     const { container } = render(<LoadingOverlay show label="Loading invoices…" />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading invoices…');
+    expect(screen.getByText('Loading invoices…')).toHaveClass('sr-only');
     expect(container.querySelector('[data-loader="spinner"]')).toBeInTheDocument();
     expect(container.querySelector('[data-loader="bar"]')).toBeInTheDocument();
   });
