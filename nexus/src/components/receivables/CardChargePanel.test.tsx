@@ -48,7 +48,7 @@ beforeEach(() => {
 describe('CardChargePanel', () => {
   it('is titled Backup Payment Method', () => {
     ui();
-    expect(screen.getByRole('heading', { name: 'Backup Payment Method' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Backup Payment Method' }).tagName).toBe('H3');
   });
 
   it('eligible: Charge card opens the exact confirm text and Confirm charges', async () => {
