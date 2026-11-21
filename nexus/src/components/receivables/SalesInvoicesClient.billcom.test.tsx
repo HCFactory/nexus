@@ -62,7 +62,7 @@ describe('SalesInvoicesClient search, filters and pages', () => {
     fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'Paid' } });
     expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?status=Paid', { scroll: false });
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
-    expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?from=2026-01-01', { scroll: false });
+    expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?status=Paid&from=2026-01-01', { scroll: false });
   });
 
   it('shows which invoices of the total are on screen, with Next / Previous', () => {
@@ -71,7 +71,48 @@ describe('SalesInvoicesClient search, filters and pages', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?q=zaha&page=3', { scroll: false });
     fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
-    expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?q=zaha', { scroll: false });
+    expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?q=zaha&page=2', { scroll: false });
+  });
+
+  it('typing then quickly picking a filter keeps both', () => {
+    vi.useFakeTimers();
+    show();
+    fireEvent.change(screen.getByPlaceholderText(/Search by invoice number/), { target: { value: 'zaha' } });
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'Paid' } });
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?q=zaha&status=Paid', { scroll: false });
+  });
+
+  it('a filter picked while the last change is still loading builds on it', () => {
+    show();
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'Paid' } });
+    fireEvent.change(screen.getByLabelText('Bill.com status'), { target: { value: 'pastdue' } });
+    expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?status=Paid&billcom=pastdue', { scroll: false });
+    expect(screen.getByLabelText('Filter by status')).toHaveValue('Paid');
+  });
+
+  it('typing a date by keyboard waits for a real year', () => {
+    show();
+    const from = screen.getByLabelText('From');
+    fireEvent.change(from, { target: { value: '0002-01-01' } });
+    expect(nav.replace).not.toHaveBeenCalled();
+    fireEvent.change(from, { target: { value: '2026-01-01' } });
+    expect(nav.replace).toHaveBeenLastCalledWith('/receivables/invoices?from=2026-01-01', { scroll: false });
+  });
+
+  it('a trailing space does not search again or leave the page', () => {
+    vi.useFakeTimers();
+    show({ params: { ...base, search: 'zaha', page: 4 } });
+    fireEvent.change(screen.getByPlaceholderText(/Search by invoice number/), { target: { value: 'zaha ' } });
+    act(() => { vi.advanceTimersByTime(400); });
+    expect(nav.replace).not.toHaveBeenCalled();
+  });
+
+  it('when the address changes from elsewhere (e.g. the sidebar link), the boxes follow it', () => {
+    const { rerender } = show({ params: { ...base, search: 'acme', status: 'Paid' } });
+    rerender(<SalesInvoicesClient invoices={invoices} total={4} params={base} billcomStatus={status} today="2026-11-20" />);
+    expect(screen.getByPlaceholderText(/Search by invoice number/)).toHaveValue('');
+    expect(screen.getByLabelText('Filter by status')).toHaveValue('all');
   });
 
   it('no Previous on page 1 and no Next on the last page', () => {
@@ -93,7 +134,8 @@ describe('SalesInvoicesClient search, filters and pages', () => {
   });
 
   it('shows a read error', () => {
-    show({ invoices: [], total: 0, error: 'Could not load invoices: boom' });
+    show({ invoices: [], total: 0, error: 'Could not load invoices: boom', params: { ...base, search: 'x' } });
     expect(screen.getByRole('alert')).toHaveTextContent('Could not load invoices: boom');
+    expect(screen.queryByText('No invoices match the current filters.')).toBeNull();
   });
 });

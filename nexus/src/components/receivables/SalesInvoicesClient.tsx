@@ -54,19 +54,54 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
+  // What the boxes show and the next address builds on: the last change asked
+  // for, even while the server is still loading it.
+  const [view, setView] = useState(params);
   const [search, setSearch] = useState(params.search);
+  /** A typed search is waiting for the pause before it runs. */
+  const [typing, setTyping] = useState(false);
+  const requested = useRef(params);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (searchTimer.current) clearTimeout(searchTimer.current); }, []);
 
+  // A new address (this page's own change arriving, or a link like the sidebar's):
+  // the boxes follow it, except a search still being typed.
+  const [shownParams, setShownParams] = useState(params);
+  if (shownParams !== params) {
+    setShownParams(params);
+    setView(params);
+    if (!typing) setSearch(params.search);
+  }
+  useEffect(() => { requested.current = params; }, [params]);
+
   /** Show other invoices: the server searches, filters and pages; any filter change starts at page 1. */
   const go = (changes: Partial<SalesInvoiceListParams>) => {
-    const next = { ...params, page: 1, ...changes };
+    const next = { ...requested.current, page: 1, ...changes };
+    // A search still waiting to run goes along with this change.
+    if (searchTimer.current && !("search" in changes)) {
+      clearTimeout(searchTimer.current);
+      searchTimer.current = null;
+      setTyping(false);
+      next.search = search.trim();
+    }
+    requested.current = next;
+    setView(next);
     startTransition(() => router.replace(`${pathname}${salesInvoiceListSearch(next)}`, { scroll: false }));
   };
   const onSearch = (value: string) => {
     setSearch(value);
+    setTyping(true);
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => go({ search: value.trim() }), SEARCH_PAUSE_MS);
+    searchTimer.current = setTimeout(() => {
+      searchTimer.current = null;
+      setTyping(false);
+      if (value.trim() !== requested.current.search) go({ search: value.trim() });
+    }, SEARCH_PAUSE_MS);
+  };
+  /** Dates apply once complete: typing a year by keyboard passes through 0002, 0020… first. */
+  const onDate = (key: "from" | "to", value: string) => {
+    if (value === "" || value >= "1900-01-01") go({ [key]: value });
+    else setView((v) => ({ ...v, [key]: value }));
   };
 
   /** What the Bill.com column shows. */
@@ -144,7 +179,7 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <select
-                  value={params.status}
+                  value={view.status}
                   onChange={(event) => go({ status: event.target.value })}
                   className={SELECT_CLASSNAME}
                   aria-label="Filter by status"
@@ -158,7 +193,7 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                 </select>
                 {billcomStatus && (
                   <select
-                    value={params.billcom}
+                    value={view.billcom}
                     onChange={(event) => go({ billcom: event.target.value as BillcomFilter })}
                     className={SELECT_CLASSNAME}
                     aria-label="Bill.com status"
@@ -174,8 +209,8 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                   From
                   <Input
                     type="date"
-                    value={params.from}
-                    onChange={(event) => go({ from: event.target.value })}
+                    value={view.from}
+                    onChange={(event) => onDate("from", event.target.value)}
                     className="h-9 w-auto"
                   />
                 </label>
@@ -183,8 +218,8 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                   To
                   <Input
                     type="date"
-                    value={params.to}
-                    onChange={(event) => go({ to: event.target.value })}
+                    value={view.to}
+                    onChange={(event) => onDate("to", event.target.value)}
                     className="h-9 w-auto"
                   />
                 </label>
@@ -197,17 +232,17 @@ export function SalesInvoicesClient({ invoices, total, params, error = null, bil
                   {pending && " · Loading…"}
                 </span>
                 <div className="flex items-center gap-1.5">
-                  <button type="button" className={PAGE_BUTTON_CLASSNAME} aria-label="Previous page" disabled={params.page <= 1 || pending} onClick={() => go({ page: params.page - 1 })}>
+                  <button type="button" className={PAGE_BUTTON_CLASSNAME} aria-label="Previous page" disabled={params.page <= 1 || pending} onClick={() => go({ page: view.page - 1 })}>
                     <ChevronLeft className="size-3.5" /> Previous
                   </button>
-                  <button type="button" className={PAGE_BUTTON_CLASSNAME} aria-label="Next page" disabled={!hasNext || pending} onClick={() => go({ page: params.page + 1 })}>
+                  <button type="button" className={PAGE_BUTTON_CLASSNAME} aria-label="Next page" disabled={!hasNext || pending} onClick={() => go({ page: view.page + 1 })}>
                     Next <ChevronRight className="size-3.5" />
                   </button>
                 </div>
               </div>
             </div>
             <div className={`min-h-0 flex-1 overflow-auto transition-opacity ${pending ? "opacity-60" : ""}`}>
-              {invoices.length === 0 ? (
+              {error ? null : invoices.length === 0 ? (
                 <p className="px-4 py-10 text-center text-sm text-foreground-muted">
                   No invoices match the current filters.
                 </p>

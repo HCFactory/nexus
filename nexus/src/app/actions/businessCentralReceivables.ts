@@ -230,6 +230,8 @@ export async function getSalesInvoicesPageData(
   invoices: SalesInvoiceListRow[];
   /** How many invoices match the search/filters in total. */
   total: number;
+  /** The page shown (the last page when the one asked for is past the end). */
+  page: number;
   /** Stored Bill.com status by BC invoice id for this page; null when this environment has no Bill.com. */
   billcomStatus: Record<string, { match: 'found' | 'mismatch'; status: string | null; dueAmount: number | null; dueDate: string | null }> | null;
   error: string | null;
@@ -240,7 +242,7 @@ export async function getSalesInvoicesPageData(
   );
   const supabase = createServiceClient();
   const connection = await resolveActiveBcConnection(orgId, user.id);
-  if (!connection) return { invoices: [], total: 0, billcomStatus: null, error: null };
+  if (!connection) return { invoices: [], total: 0, page: 1, billcomStatus: null, error: null };
 
   let billcomEnabled = false;
   try {
@@ -249,10 +251,10 @@ export async function getSalesInvoicesPageData(
     console.error('[invoices] could not look up Bill.com:', e instanceof Error ? e.message : e);
   }
 
-  const { invoices, total, error } = await querySalesInvoiceList(supabase, orgId, connection.id, params, today, billcomEnabled);
+  const { invoices, total, page, error } = await querySalesInvoiceList(supabase, orgId, connection.id, params, today, billcomEnabled);
   if (error) {
     console.error('[invoices] list read failed:', error);
-    return { invoices: [], total: 0, billcomStatus: null, error: `Could not load invoices: ${error}` };
+    return { invoices: [], total: 0, page: 1, billcomStatus: null, error: `Could not load invoices: ${error}` };
   }
   const billcomStatus = billcomEnabled
     ? Object.fromEntries(
@@ -269,7 +271,7 @@ export async function getSalesInvoicesPageData(
           ]),
       )
     : null;
-  return { invoices, total, billcomStatus, error: null };
+  return { invoices, total, page, billcomStatus, error: null };
 }
 
 // No type re-exports here. A 'use server' module may only export async

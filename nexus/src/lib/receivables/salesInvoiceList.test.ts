@@ -23,6 +23,11 @@ describe('parseSalesInvoiceListParams', () => {
       .toEqual({ search: 'W-1', status: 'Paid', billcom: 'pastdue', from: '2026-01-01', to: '', page: 3 });
     expect(parseSalesInvoiceListParams({ status: 'Hacked', billcom: 'x', page: '-2' })).toMatchObject({ status: 'all', billcom: 'all', page: 1 });
   });
+  it('drops impossible dates and absurd page numbers (they would make the database refuse the query)', () => {
+    expect(parseSalesInvoiceListParams({ from: '2026-13-45', to: '2026-02-30' })).toMatchObject({ from: '', to: '' });
+    expect(parseSalesInvoiceListParams({ page: '1e30' }).page).toBe(1);
+    expect(parseSalesInvoiceListParams({ page: '999999999' }).page).toBe(1);
+  });
 });
 
 describe('salesInvoiceListSearch', () => {
@@ -45,6 +50,24 @@ describe('querySalesInvoiceList', () => {
     const page2 = await run(many, { page: 2 });
     expect(page2.invoices).toHaveLength(50);
     expect(new Set([...r.invoices, ...page2.invoices].map((i) => i.id)).size).toBe(150);
+  });
+
+  it('a page past the end (e.g. after invoices were paid) shows the last page instead of an error', async () => {
+    const r = await run(many, { page: 5 });
+    expect(r.error).toBeNull();
+    expect(r.page).toBe(2);
+    expect(r.invoices).toHaveLength(50);
+    expect(r.total).toBe(150);
+    const none = await run([], { page: 3, search: 'x' });
+    expect(none).toMatchObject({ error: null, page: 1, total: 0, invoices: [] });
+  });
+
+  it('invoices with the same date and number keep one order, so none repeat or vanish between pages', async () => {
+    const same = Array.from({ length: 120 }, (_, i) => row(i, { posting_date: '2026-11-01', bc_invoice_number: null, id: `id-${String(i).padStart(3, '0')}` }));
+    const a = await run(same);
+    const b = await run(same, { page: 2 });
+    expect(new Set([...a.invoices, ...b.invoices].map((i) => i.id)).size).toBe(120);
+    expect(a.invoices[0].id).toBe('id-000');
   });
 
   it('only this environment', async () => {
@@ -89,6 +112,6 @@ describe('querySalesInvoiceList', () => {
     const db = fakeSupabase({ sales_invoice_list: [row(1)] });
     db.failOn = () => 'boom';
     const r = await querySalesInvoiceList(db.client, 'org-1', 'conn-1', base, '2026-11-20', true);
-    expect(r).toEqual({ invoices: [], total: 0, error: 'boom' });
+    expect(r).toEqual({ invoices: [], total: 0, page: 1, error: 'boom' });
   });
 });

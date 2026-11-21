@@ -10,6 +10,8 @@ export const dynamic = 'force-dynamic';
 export default async function SalesInvoicesPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = parseSalesInvoiceListParams(await searchParams);
   const today = hawaiiToday();
-  const { invoices, total, billcomStatus, error } = await getSalesInvoicesPageData(params, today);
-  return <SalesInvoicesClient invoices={invoices} total={total} params={params} billcomStatus={billcomStatus} today={today} error={error} />;
+  const { invoices, total, page, billcomStatus, error } = await getSalesInvoicesPageData(params, today);
+  return (
+    <SalesInvoicesClient invoices={invoices} total={total} params={{ ...params, page }} billcomStatus={billcomStatus} today={today} error={error} />
+  );
 }

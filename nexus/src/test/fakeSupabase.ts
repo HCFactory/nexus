@@ -88,6 +88,10 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
         });
       }
       const count = counted ? out.length : null;
+      // Real PostgREST (with count) refuses an offset past the end: HTTP 416, PGRST103.
+      if (counted && range && range[0] > 0 && range[0] >= out.length) {
+        return { data: null, error: { message: 'Requested range not satisfiable', code: 'PGRST103' }, count: null };
+      }
       if (range) out = out.slice(range[0], range[1] + 1);
       if (limit !== null) out = out.slice(0, limit);
       return { data: out, error: null, count };

@@ -71,6 +71,6 @@ describe('getSalesInvoicesPageData', () => {
     mocks.resolveBillcom.mockResolvedValue(null);
     mocks.db.failOn = () => 'boom';
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await getSalesInvoicesPageData(base)).toEqual({ invoices: [], total: 0, billcomStatus: null, error: 'Could not load invoices: boom' });
+    expect(await getSalesInvoicesPageData(base)).toEqual({ invoices: [], total: 0, page: 1, billcomStatus: null, error: 'Could not load invoices: boom' });
   });
 });
