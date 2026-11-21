@@ -1378,7 +1378,9 @@ export type SyncEntityType =
   /** Progress of the Customer_Card_Excel fill (cursor = last customer number filled). */
   | 'customer_card'
   /** Bill.com payment status stored per invoice (cursor = Bill.com updatedTime). */
-  | 'billcom_invoice_status';
+  | 'billcom_invoice_status'
+  /** Bill.com payments received (cursor = Bill.com updatedTime). */
+  | 'billcom_received_payment';
 
 export interface BusinessCentralCustomer {
   id: string;
