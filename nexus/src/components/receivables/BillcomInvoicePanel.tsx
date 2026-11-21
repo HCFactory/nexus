@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
-import type { BillcomInvoiceStatus, BillcomPanel } from '@/lib/billcom/invoiceStatus';
-import { businessDate } from '@/lib/stripe/chargeInvoice';
+import type { BillcomPanel } from '@/lib/billcom/invoiceStatus';
+import { billcomPaymentDisplay, hawaiiToday } from '@/lib/billcom/paymentDisplay';
 import { formatMoney } from '@/lib/format';
 
 const MESSAGES: Record<Exclude<BillcomPanel['kind'], 'found' | 'error'>, string> = {
@@ -12,25 +12,15 @@ const MESSAGES: Record<Exclude<BillcomPanel['kind'], 'found' | 'error'>, string>
   mismatch: "A Bill.com invoice has this number, but its total or customer doesn't match — check it in Bill.com.",
 };
 
-/**
- * What to show for the payment status: Paid (green), Past due (red) when
- * something is still owed after the due date, otherwise Bill.com's own label.
- * `today` is the business date (YYYY-MM-DD, Hawaii).
- */
-function paymentStatus(s: BillcomInvoiceStatus, today: string): { label: string; className: string } {
-  if (s.status === 'PAID_IN_FULL') return { label: s.statusLabel, className: 'font-medium text-success' };
-  const owing = (s.dueAmount ?? 0) > 0;
-  const pastDue = s.status !== 'VOID' && owing && !!s.dueDate && s.dueDate.slice(0, 10) < today;
-  if (pastDue) return { label: 'Past due', className: 'font-medium text-destructive' };
-  return { label: s.statusLabel, className: '' };
-}
+const TONE_CLASS = { success: 'font-medium text-success', destructive: 'font-medium text-destructive', plain: '' } as const;
 
 /** The Bill.com side of an invoice: status and amount due, or why it can't be shown. */
-export function BillcomInvoicePanel({ panel, today = businessDate(new Date()) }: { panel: BillcomPanel; today?: string }) {
+export function BillcomInvoicePanel({ panel, today = hawaiiToday() }: { panel: BillcomPanel; today?: string }) {
   let body: ReactNode;
   if (panel.kind === 'found') {
     const s = panel.status;
-    const pay = paymentStatus(s, today);
+    const shown = billcomPaymentDisplay(s, today);
+    const pay = { label: shown.label, className: TONE_CLASS[shown.tone] };
     body = (
       <>
         <span className={pay.className}>{pay.label}</span>

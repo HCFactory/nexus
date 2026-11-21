@@ -2,7 +2,9 @@ import 'server-only';
 
 import { revalidatePath } from 'next/cache';
 
-import { queueChangedCustomers } from '@/lib/billcom/customerSyncHooks';
+import { createBillcomClientForConnection } from '@/lib/billcom/connection';
+import { queueChangedCustomers, resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
+import { syncBillcomInvoiceStatus, type BillcomListInvoice, type NexusInvoiceRef, type StoredRef } from '@/lib/billcom/invoiceStatusSync';
 import { buildArSyncAdapters } from '@/lib/businessCentral/arSyncAdapters';
 import { createBcClientForOrg, type BcClient } from '@/lib/businessCentral/client';
 import { createCustomerLedgerClientForOrg } from '@/lib/businessCentral/customerLedgerClient';
@@ -49,6 +51,11 @@ const CARD_BUDGET_MS = 30_000;
 // which left lines one batch per sync. Worst case for the whole sync stays well
 // under the function timeout (~60s AR + ~30s cards + ~40s lines + page fetches).
 const LINES_BUDGET_MS = 40_000;
+// The Bill.com payment status step gets its own window too; it continues next sync.
+const BILLCOM_STATUS_BUDGET_MS = 30_000;
+const BILLCOM_STATUS_CHECKPOINT = 'billcom_invoice_status';
+// Supabase returns at most this many rows per request.
+const ROW_CAP = 1000;
 // Sync checkpoint row that remembers where the card fill stopped.
 const CARD_CHECKPOINT = 'customer_card';
 
@@ -314,6 +321,10 @@ export async function runReceivablesSync(o: {
         LINES_BUDGET_MS
       );
       results.push(linesResult);
+
+      // Bill.com payment status for each invoice (only with a Bill.com connection picked).
+      const billcomStep = await runBillcomStatusStep(supabase, orgId, connection.id);
+      if (billcomStep) results.push(billcomStep);
     }
 
     const failures = results.filter((r) => r.error);
@@ -332,5 +343,88 @@ export async function runReceivablesSync(o: {
       last_error: error instanceof Error ? error.message : 'Receivables sync failed',
     });
     throw error;
+  }
+}
+
+/**
+ * Bill.com payment status: reads Bill.com invoices changed since the last run,
+ * matches them to this environment's invoices and stores the status. Null when
+ * the environment has no enabled Bill.com connection. Never throws.
+ */
+async function runBillcomStatusStep(supabase: SupabaseServiceClient, orgId: string, bcConnectionId: string): Promise<SyncEntityResult | null> {
+  try {
+    const conn = await resolveBillcomConnection(supabase, orgId, bcConnectionId);
+    if (!conn?.enabled) return null;
+    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase });
+    const checkpoints = checkpointStore(supabase, orgId);
+    const columns = 'bc_invoice_id, external_document_number, bc_invoice_number, customer_name, total_amount_including_tax';
+    return await syncBillcomInvoiceStatus(
+      {
+        async listChanged(since, page) {
+          const qs = new URLSearchParams({ max: '100', sort: 'updatedTime:asc' });
+          // A time must be quoted: its colons would otherwise break Bill.com's field:op:value filter.
+          if (since) qs.set('filters', `updatedTime:gte:"${since}"`);
+          if (page) qs.set('page', page);
+          return client.request<{ results: BillcomListInvoice[]; nextPage?: string }>(`/v3/invoices?${qs.toString()}`);
+        },
+        async findNexusInvoices(numbers) {
+          const read = async (column: 'external_document_number' | 'bc_invoice_number') => {
+            const { data, error } = await supabase
+              .from('business_central_sales_invoices')
+              .select(columns)
+              .eq('organization_id', orgId)
+              .eq('bc_connection_id', bcConnectionId)
+              .in(column, numbers)
+              .limit(ROW_CAP);
+            if (error) throw new Error(`Could not read invoices: ${error.message}`);
+            return (data ?? []) as NexusInvoiceRef[];
+          };
+          const [byExt, byNo] = await Promise.all([read('external_document_number'), read('bc_invoice_number')]);
+          const seen = new Map<string, NexusInvoiceRef>();
+          for (const r of [...byExt, ...byNo]) seen.set(r.bc_invoice_id, r);
+          // A very common number (e.g. "VERBAL") can hit the row cap: then the list may be incomplete.
+          return { invoices: [...seen.values()], truncated: byExt.length >= ROW_CAP || byNo.length >= ROW_CAP };
+        },
+        async readStored(bcInvoiceIds) {
+          const { data, error } = await supabase
+            .from('billcom_invoice_status')
+            .select('bc_invoice_id, match, billcom_invoice_id')
+            .eq('organization_id', orgId)
+            .eq('bc_connection_id', bcConnectionId)
+            .in('bc_invoice_id', bcInvoiceIds);
+          if (error) throw new Error(`Could not read stored Bill.com status: ${error.message}`);
+          return (data ?? []) as StoredRef[];
+        },
+        async removeByBillcomIds(ids) {
+          const { error } = await supabase
+            .from('billcom_invoice_status')
+            .delete()
+            .eq('organization_id', orgId)
+            .eq('bc_connection_id', bcConnectionId)
+            .in('billcom_invoice_id', ids);
+          if (error) throw new Error(`Could not clear archived Bill.com status: ${error.message}`);
+        },
+        async upsert(rows) {
+          const now = new Date().toISOString();
+          const { error } = await supabase.from('billcom_invoice_status').upsert(
+            rows.map((r) => ({ ...r, organization_id: orgId, bc_connection_id: bcConnectionId, billcom_connection_id: conn.id, checked_at: now })),
+            { onConflict: 'bc_connection_id,bc_invoice_id' },
+          );
+          if (error) throw new Error(`Could not save Bill.com status: ${error.message}`);
+        },
+        readCheckpoint: () => checkpoints.read(bcConnectionId, BILLCOM_STATUS_CHECKPOINT),
+        writeCheckpoint: (patch) => checkpoints.write(bcConnectionId, BILLCOM_STATUS_CHECKPOINT, patch),
+        nowMs: () => Date.now(),
+      },
+      BILLCOM_STATUS_BUDGET_MS,
+    );
+  } catch (e) {
+    return {
+      entityType: 'billcom_invoice_status',
+      recordsSynced: 0,
+      complete: false,
+      cursor: null,
+      error: `Bill.com payment status: ${e instanceof Error ? e.message : String(e)}`,
+    };
   }
 }

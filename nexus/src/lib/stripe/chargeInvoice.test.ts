@@ -198,7 +198,7 @@ describe('chargeInvoice', () => {
   it('charges the fresh Bill.com due amount when it matches what staff confirmed', async () => {
     const s = setup({ lookup: found({ dueAmount: 60 }) });
     const row = await chargeInvoice(s.deps, { ...ARGS, expectedAmountCents: 6000 });
-    expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null, bcTotal: 100, customerName: 'Aloha School' });
+    expect(s.findBillcomInvoice).toHaveBeenCalledWith({ customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null, bcTotal: 100, customerName: 'Aloha School', bcInvoiceId: INV });
     expect(s.create.mock.calls[0][0]).toMatchObject({ amount: 6000 });
     expect(row.amount).toBe(60);
   });
@@ -933,7 +933,7 @@ describe('connector mode safety check reaches the Bill.com lookup', () => {
     const s = setup();
     await invoiceChargeView(s.deps, INV);
     expect(s.findBillcomInvoice).toHaveBeenCalledWith({
-      customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null, bcTotal: 100, customerName: 'Aloha School',
+      customerNumber: 'C1', invoiceNumbers: ['W-100532', 'INV-100412'], billcomInvoiceId: null, bcTotal: 100, customerName: 'Aloha School', bcInvoiceId: INV,
     });
   });
 

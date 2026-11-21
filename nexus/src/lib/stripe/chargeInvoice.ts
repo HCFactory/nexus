@@ -459,6 +459,7 @@ async function assess(deps: ChargeDeps, bcInvoiceId: string) {
           billcomInvoiceId: invoice.billcomInvoiceId,
           bcTotal: invoice.bcTotal ?? null,
           customerName: invoice.customerName ?? null,
+          bcInvoiceId: invoice.bcInvoiceId,
         })
       : { kind: 'off' };
   const eligibility = chargeEligibility({ canCharge: deps.canCharge, invoice: status, stripe, card, billcom, today: businessDate(deps.now()) });

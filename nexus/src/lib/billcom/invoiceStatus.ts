@@ -25,6 +25,8 @@ type RawInvoice = {
   dueAmount?: unknown;
   dueDate?: string | null;
   customerId?: string | null;
+  /** Included by Bill.com in invoice lists (saves a customer lookup). */
+  customerName?: string | null;
 };
 
 const LABELS: Record<string, string> = {
@@ -99,8 +101,9 @@ export async function readBillcomInvoiceStatus(
   return ambiguous ? 'ambiguous' : null;
 }
 
-const toCents = (n: unknown) => Math.round(Number(n) * 100);
-const sameName = (a: string, b: string) => {
+export const toCents = (n: unknown) => Math.round(Number(n) * 100);
+/** Same customer name, ignoring case, spaces, punctuation and accents; never true for empty names. */
+export const sameName = (a: string, b: string) => {
   // Accents ignored ("Café" = "Cafe"), then only letters and digits compared.
   const norm = (s: string) => s.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '');
   return norm(a) !== '' && norm(a) === norm(b);
@@ -126,15 +129,22 @@ export async function findConnectorInvoice(
     // match may ignore case); exact equality only picks the one to use.
     const all = (res.results ?? []).filter((r) => (r.invoiceNumber ?? '').trim().toLowerCase() === n.toLowerCase());
     const hits = all.length > 1 ? all : all.filter((r) => (r.invoiceNumber ?? '').trim() === n);
+    let pool = hits;
     if (hits.length > 1) {
-      ambiguous = true;
-      continue;
+      // A partly invoiced order: several invoices share the number. Use the one
+      // with this invoice's total; still unclear (equal totals) = ambiguous.
+      pool = q.bcTotal === null ? [] : hits.filter((r) => toCents(r.totalAmount) === toCents(q.bcTotal));
+      if (pool.length !== 1) {
+        ambiguous = true;
+        continue;
+      }
     }
-    if (hits.length === 0) continue;
-    const inv = hits[0];
+    if (pool.length === 0) continue;
+    const inv = pool[0];
     if (q.bcTotal === null || toCents(inv.totalAmount) !== toCents(q.bcTotal) || !inv.customerId || !q.customerName) return { kind: 'mismatch' };
-    const customer = await client.request<{ name?: string }>(`/v3/customers/${encodeURIComponent(inv.customerId)}`);
-    if (!sameName(customer.name ?? '', q.customerName)) return { kind: 'mismatch' };
+    const name =
+      inv.customerName ?? (await client.request<{ name?: string }>(`/v3/customers/${encodeURIComponent(inv.customerId)}`)).name ?? '';
+    if (!sameName(name, q.customerName)) return { kind: 'mismatch' };
     return { kind: 'found', status: toStatus(inv) };
   }
   return { kind: ambiguous ? 'ambiguous' : 'not_found' };

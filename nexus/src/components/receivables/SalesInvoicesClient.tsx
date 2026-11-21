@@ -5,11 +5,27 @@ import Link from "next/link";
 import { FileText, Search, X } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
+import { billcomPaymentDisplay, hawaiiToday } from "@/lib/billcom/paymentDisplay";
 import { formatDate, formatMoney } from "@/lib/format";
 import { BusinessCentralSalesInvoice } from "@/types/database";
 
+/** Bill.com payment status stored for an invoice (by the sync or the invoice page). */
+export interface StoredBillcomStatus {
+  match: "found" | "mismatch";
+  status: string | null;
+  dueAmount: number | null;
+  dueDate: string | null;
+}
+
+type BillcomFilter = "all" | "paid" | "pastdue" | "open" | "unmatched";
+const TONE_CLASS = { success: "font-medium text-success", destructive: "font-medium text-destructive", plain: "text-foreground-muted" } as const;
+
 interface SalesInvoicesClientProps {
   invoices: BusinessCentralSalesInvoice[];
+  /** Stored Bill.com status by BC invoice id; omitted when this environment has no Bill.com. */
+  billcomStatus?: Record<string, StoredBillcomStatus> | null;
+  /** Business date for "Past due" (Hawaii); defaults to today. */
+  today?: string;
   /** Pre-fills the search box (e.g. from ?q= when linked from a sales order). */
   initialSearch?: string;
 }
@@ -20,7 +36,16 @@ const invoicePage = (invoice: BusinessCentralSalesInvoice) => `/receivables/invo
 const SELECT_CLASSNAME =
   "h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30";
 
-export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesClientProps) {
+export function SalesInvoicesClient({ invoices, initialSearch, billcomStatus = null, today = hawaiiToday() }: SalesInvoicesClientProps) {
+  const [billcomFilter, setBillcomFilter] = useState<BillcomFilter>("all");
+  /** What the Bill.com column shows, and the filter group it falls in. */
+  const billcomCell = (invoice: BusinessCentralSalesInvoice): { label: string; className: string; group: Exclude<BillcomFilter, "all"> } => {
+    const s = billcomStatus?.[invoice.bc_invoice_id];
+    if (!s) return { label: "—", className: "text-foreground-subtle", group: "unmatched" };
+    if (s.match === "mismatch") return { label: "Doesn't match", className: "text-foreground-muted", group: "unmatched" };
+    const shown = billcomPaymentDisplay(s, today);
+    return { label: shown.label, className: TONE_CLASS[shown.tone], group: shown.key === "paid" ? "paid" : shown.key === "pastdue" ? "pastdue" : "open" };
+  };
   const [search, setSearch] = useState(initialSearch ?? "");
   const [status, setStatus] = useState("all");
   const [fromDate, setFromDate] = useState("");
@@ -47,9 +72,12 @@ export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesCl
       if (status !== "all" && invoice.status !== status) return false;
       if (fromDate && (!invoice.posting_date || invoice.posting_date < fromDate)) return false;
       if (toDate && (!invoice.posting_date || invoice.posting_date > toDate)) return false;
+      if (billcomStatus && billcomFilter !== "all" && billcomCell(invoice).group !== billcomFilter) return false;
       return true;
     });
-  }, [invoices, search, status, fromDate, toDate]);
+    // billcomCell only reads billcomStatus and today.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [invoices, search, status, fromDate, toDate, billcomStatus, billcomFilter, today]);
 
   const isTruncated = invoices.length === 500;
 
@@ -125,6 +153,20 @@ export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesCl
                     </option>
                   ))}
                 </select>
+                {billcomStatus && (
+                  <select
+                    value={billcomFilter}
+                    onChange={(event) => setBillcomFilter(event.target.value as BillcomFilter)}
+                    className={SELECT_CLASSNAME}
+                    aria-label="Bill.com status"
+                  >
+                    <option value="all">All Bill.com</option>
+                    <option value="paid">Paid</option>
+                    <option value="pastdue">Past due</option>
+                    <option value="open">Open</option>
+                    <option value="unmatched">Not matched</option>
+                  </select>
+                )}
                 <label className="flex items-center gap-1.5 text-xs text-foreground-muted">
                   From
                   <Input
@@ -145,7 +187,7 @@ export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesCl
                 </label>
               </div>
               <div className="text-xs text-foreground-muted">
-                {search.trim() || status !== "all" || fromDate || toDate
+                {search.trim() || status !== "all" || fromDate || toDate || billcomFilter !== "all"
                   ? `Showing ${filtered.length} of ${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`
                   : `Showing ${invoices.length} invoice${invoices.length === 1 ? "" : "s"}`}
               </div>
@@ -167,6 +209,7 @@ export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesCl
                       <th className="px-4 py-2.5 font-medium">Currency</th>
                       <th className="px-4 py-2.5 text-right font-medium">Total incl. tax</th>
                       <th className="px-4 py-2.5 font-medium">Status</th>
+                      {billcomStatus && <th className="px-4 py-2.5 font-medium">Bill.com</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -215,6 +258,14 @@ export function SalesInvoicesClient({ invoices, initialSearch }: SalesInvoicesCl
                         <td className="px-4 py-2.5 text-foreground-muted">
                           {invoice.status ?? "—"}
                         </td>
+                        {billcomStatus && (() => {
+                          const cell = billcomCell(invoice);
+                          return (
+                            <td className="px-4 py-2.5">
+                              <span className={cell.className}>{cell.label}</span>
+                            </td>
+                          );
+                        })()}
                       </tr>
                     ))}
                   </tbody>

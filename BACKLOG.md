@@ -10,9 +10,31 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
    - BC production: check General Ledger Setup "Allow Posting From/To" covers today (and any User Setup line for the Nexus app user), and tick **Manual Nos.** on the sales order number series;
    - after the merge deploys: switch Nexus to the production BC connection, run Customer Sync, sync Shipment methods, invoice one real order in Nexus and check BC posted it and the connector copied it to Bill.com once.
    - Stripe stays off until its pre-live fixes are done (see #12) and Charge saved cards stays off for everyone.
-2. **Send invoice** (#5.3): a button that has Bill.com email the invoice to the customer. Small, low risk.
-3. **Stripe pre-live fixes** (#12): **built 2026-11-18** on branch `fix/stripe-prelive` (spec `docs/superpowers/specs/2026-11-18-stripe-prelive-fixes-design.md`; 1664 tests; reviewed). Covers the failed→charged duplicate-charge guard, Retry fixes (a)–(d), and Bill.com writes guarded by attempt.
-   - **Still to do — push and merge** `fix/stripe-prelive` (local only; not pushed). The user asked to do this later. Safe to merge any time: Stripe charging is off for everyone, and Production has no Stripe connection.
+2. **Bill.com payment status stored in Nexus (next, agreed 2026-11-20).** Status: design agreed, discovery done, not built.
+   - **Done and live (PR #21, 2026-11-20):** Bill.com connector mode, Stripe safety fixes (`fix/stripe-prelive`), Bill.com form tips, and the sales invoice page changes (notes block, migration 073, narrower layout, Paid/Past due colours, scrolling).
+   - **To do (user):** pick the production Bill.com connection on Production (keep the connector tick on), then check one invoice's Bill.com line. Charge saved cards stays off until one supervised test charge.
+   - **Design (user-approved):**
+     - Store per invoice: Bill.com status, total, amount due, due date, match result and last checked, in a separate table (migration 074) so the BC invoice sync can't overwrite it.
+     - Matching runs as a **step in Customers & Receivables** (every 2 h, plus Admin → Sync → Sync now), with its own time window and cursor. Opening an invoice page and Charge card also refresh the stored row.
+     - Sales invoices list gets a Bill.com column (Paid green, Past due red) and a filter; the invoice page shows "last checked".
+     - Only environments with a Bill.com connection picked.
+   - **Plan review points to include:**
+     1. Use the changed-since filter.
+     2. Take the customer name from the invoice (no per-customer lookups).
+     3. Handle the rate limit (BDC_1144): slow down and resume, never fail the whole sync.
+     4. A row that stops matching becomes "doesn't match" (no stale Paid).
+     5. When several invoices share a number (partly invoiced orders), pick by total and name; still refuse if that's unclear (e.g. equal totals).
+     6. Raise the full sync's worst-round estimate (now 160 s) so automatic runs stay under 270 s.
+   - **Discovery (production Bill.com, read-only, run by the user, 2026-11-20):**
+     - `GET /v3/invoices` works with `filters=updatedTime:gte:<value>` (also `gt`) only when the value is a **date only** (`2026-11-18`) or a **quoted time** (`"2026-11-18T03:35:57.745Z"`). An unquoted time gives 422 (the colons break the `field:op:value` format); epoch ms gives 400. Results were all changed since then, sortable by `updatedTime:asc`, 100 per page with `nextPage`.
+     - Each invoice includes `customerName`, `status`, `totalAmount`, `dueAmount`, `dueDate`, `updatedTime` and `payments`.
+     - Production Bill.com has 3,617 customers (37 pages).
+   - **Step 3 later: Bill.com webhook.** `invoice.created`, `invoice.updated`, `invoice.archived` and `invoice.restored` exist (Dec 2025). Docs don't say whether recording a payment fires `invoice.updated`, so test on TEST first.
+     - Signed with HMAC-SHA256 (`x-bill-sha-signature`, security key from the subscription; store it in Vault).
+     - Reply 200 fast (acknowledge, then match), or Bill.com retries and then disables the subscription; show the last webhook time in Admin → Sync.
+     - The sync stays the safety net.
+3. **Send invoice** (#5.3): a button that has Bill.com email the invoice to the customer. Small, low risk.
+4. **Stripe pre-live fixes** (#12): **merged and live 2026-11-20 (PR #21)**, built 2026-11-18 on branch `fix/stripe-prelive` (spec `docs/superpowers/specs/2026-11-18-stripe-prelive-fixes-design.md`; 1664 tests; reviewed). Covers the failed→charged duplicate-charge guard, Retry fixes (a)–(d), and Bill.com writes guarded by attempt.
    - **Still to do — live check in TEST** (Stripe test mode + Bill.com sandbox), the user asked to do it later:
      1. Switch to TEST and turn on Charge saved cards for the tester.
      2. Briefly disable the Bill.com sandbox connection.
@@ -30,8 +52,8 @@ A running list of things to do. Reference items by number, e.g. "do #2" or "add 
    - **Charging in Production:** Bill.com connector mode (branch `feat/billcom-connector-mode`) finds the connector's Bill.com invoices by number, so charging no longer needs Nexus-made invoices. Earlier note: Charge card needs a Nexus-made Bill.com invoice, and today Bill.com's own connector makes them. It also waits for the switch away from the connector (see the duplicate-customer note under customer sync go-live prep).
    - **Gap left (from review):** a Stripe charge that completes after the request that started it died is only noticed by Check status while the row is still processing. If the row was already marked not charged, nothing notices. A `payment_intent.succeeded` webhook would close this.
    - **Live Stripe connection added 2026-11-18** (live mode, webhook `checkout.session.completed`, snapshot). Left **disabled**, and Production → Stripe = None.
-4. **Payments** (#5.4): Bill.com payments into Nexus, reviewed, then recorded in BC. Big, high risk (writes to the general ledger); needs its own design, including the Bill.com rounding difference.
-5. Older items still open: item-editing permission (#8), BC edit-conflict warning for items (#9), database can't be rebuilt from migrations (#11).
+5. **Payments** (#5.4): Bill.com payments into Nexus, reviewed, then recorded in BC. Big, high risk (writes to the general ledger); needs its own design, including the Bill.com rounding difference.
+6. Older items still open: item-editing permission (#8), BC edit-conflict warning for items (#9), database can't be rebuilt from migrations (#11).
 
 ## To do
 

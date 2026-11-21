@@ -163,6 +163,12 @@ describe('findConnectorInvoice (Bill.com invoices copied by its BC connector)', 
     expect(await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], ...expectBc })).toEqual({ kind: 'ambiguous' });
   });
 
+  it('partly invoiced order: several invoices share the number, the one with the matching total is used', async () => {
+    const { client } = fakeClient(handler({ 'W-1': [{ ...RAW, id: '00eA', totalAmount: 20 }, { ...RAW, id: '00eB', totalAmount: 45.23 }] }));
+    const r = await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], ...expectBc });
+    expect(r).toMatchObject({ kind: 'found', status: { id: '00eB' } });
+  });
+
   it('accents do not make the same customer name a mismatch', async () => {
     const { client } = fakeClient(handler({ 'W-1': [RAW] }, 'Café Aloha'));
     expect((await findConnectorInvoice(client, { invoiceNumbers: ['W-1'], bcTotal: 45.23, customerName: 'Cafe Aloha' })).kind).toBe('found');
