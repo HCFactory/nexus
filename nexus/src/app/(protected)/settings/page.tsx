@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 
 import { getOrgOrderSettings, upsertOrgOrderSettings } from '@/app/actions/settings';
+import { ReceivablesNotificationsCard } from '@/components/settings/ReceivablesNotificationsCard';
 
 export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -102,6 +103,8 @@ export default function SettingsPage() {
               </button>
             </div>
           </div>
+
+          <ReceivablesNotificationsCard />
         </div>
     </main>
   );

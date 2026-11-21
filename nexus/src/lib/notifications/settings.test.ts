@@ -85,7 +85,7 @@ describe('saveNotificationSettingsRow', () => {
     await saveNotificationSettingsRow(db.client, 'org-1', 'u1', { backupChargeEmails: ['a@example.com'], cardSavedEmails: [] }, now);
     await saveNotificationSettingsRow(db.client, 'org-1', 'u2', { backupChargeEmails: ['b@example.com'], cardSavedEmails: ['c@example.com'] }, now);
     // (the fake adds an id column; the real table has none)
-    expect(db.tables.org_notification_settings.map(({ id: _id, ...r }) => r)).toEqual([
+    expect(db.tables.org_notification_settings.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => k !== 'id')))).toEqual([
       {
         organization_id: 'org-1',
         backup_charge_emails: ['b@example.com'],

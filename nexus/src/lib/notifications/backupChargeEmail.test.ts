@@ -32,7 +32,7 @@ function setup(opts: { payment?: Row; emails?: string[] | null; tables?: Record<
     users: [{ id: 'u1', organization_id: 'org-1', display_name: 'Lani', email: 'lani@example.com' }],
     ...opts.tables,
   });
-  const send = vi.fn(async (_m: { to: string[]; subject: string; text: string }) => {});
+  const send = vi.fn<(m: { to: string[]; subject: string; text: string }) => Promise<void>>(async () => {});
   const deps = { supabase: db.client, orgId: 'org-1', now: () => NOW, send, appUrl: 'https://nexus.example.com' };
   return { db, send, deps };
 }
