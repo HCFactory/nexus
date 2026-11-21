@@ -57,7 +57,7 @@ const LINES_BUDGET_MS = 40_000;
 // The Bill.com payment status step gets its own window too; it continues next sync.
 const BILLCOM_STATUS_BUDGET_MS = 30_000;
 const BILLCOM_STATUS_CHECKPOINT = 'billcom_invoice_status';
-const BILLCOM_PAYMENTS_BUDGET_MS = 30_000;
+const BILLCOM_PAYMENTS_BUDGET_MS = 20_000;
 const BILLCOM_PAYMENTS_CHECKPOINT = 'billcom_received_payment';
 // Supabase returns at most this many rows per request.
 const ROW_CAP = 1000;

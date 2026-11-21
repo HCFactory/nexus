@@ -9,12 +9,13 @@ import type { BusinessCentralConnection } from '@/types/database';
 // Called by Supabase pg_cron (every 15 min: light, every 2 h: full). Vercel
 // Hobby allows 300 s per call: stay under 270 s, and only start a round when a
 // worst-case round still fits (full ≈ 60 s receivables + 30 s cards + 40 s
-// lines + 30 s Bill.com status + page fetches and ship-tos; light ≈ 30 s cards + customers + ship-tos).
+// lines + 30 s Bill.com status + 20 s Bill.com payments + page fetches and
+// ship-tos; light ≈ 30 s cards + customers + ship-tos).
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 const LIMIT_MS = 270_000;
-// The Bill.com status step can run one request past its 30 s window (client timeout + retry).
-const WORST_ROUND_MS = { full: 225_000, light: 90_000 } as const;
+// Each Bill.com step can run one request past its window (client timeout + retry).
+const WORST_ROUND_MS = { full: 255_000, light: 90_000 } as const;
 
 function authorized(header: string | null, secret: string): boolean {
   const given = Buffer.from(header?.replace(/^Bearer\s+/i, '') ?? '');
