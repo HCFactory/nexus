@@ -117,7 +117,7 @@ export function CardChargePanel({ bcInvoiceId, invoiceNumber, eligibility, card,
 
   return (
     <div className="space-y-3">
-      <h3 className="text-sm font-semibold text-foreground">Card payment</h3>
+      <h3 className="text-sm font-semibold text-foreground">Backup Payment Method</h3>
 
       {eligibility.ok ? (
         canCharge && (
