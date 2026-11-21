@@ -51,8 +51,9 @@
   --border:            oklch(0.88 0.01 240 / 0.9);
   --input:             oklch(0.94 0.006 240);
   --ring:              var(--primary);
-  /* Form field outline: clearly darker than the white fill. */
-  --field-border:      oklch(0.62 0.02 240);
+  /* Form field outline: soft grey; a light shadow gives the glassy lift. */
+  --field-border:      oklch(0.84 0.012 240);
+  --field-shadow:      0 1px 2px rgb(15 23 42 / 0.07), 0 1px 1px rgb(15 23 42 / 0.04), inset 0 1px 0 rgb(255 255 255 / 0.9);
 
   /* Chart colors */
   --chart-1: var(--primary);
@@ -144,6 +145,7 @@
   --ring:              var(--primary);
   /* Form field outline: clearly lighter than the dark fill. */
   --field-border:      oklch(0.46 0.02 240);
+  --field-shadow:      none;
 
   --chart-1: var(--primary);
   --chart-2: var(--info);
@@ -461,6 +463,10 @@
 :is(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden],[type=submit],[type=button],[type=reset],[type=image]),select,textarea):not([data-plain-field]) {
   border-color: var(--field-border);
   background-color: var(--field);
+}
+/* Not while focused: the focus ring is drawn with box-shadow too. */
+:is(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden],[type=submit],[type=button],[type=reset],[type=image]),select,textarea):not([data-plain-field]):not(:focus-visible) {
+  box-shadow: var(--field-shadow);
 }
 :is(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden],[type=submit],[type=button],[type=reset],[type=image]),select,textarea):not([data-plain-field]):focus-visible {
   border-color: var(--ring);
