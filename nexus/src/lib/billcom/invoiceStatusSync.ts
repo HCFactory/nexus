@@ -84,12 +84,39 @@ export function matchBillcomInvoices(bills: BillcomListInvoice[], invoices: Nexu
   return rows;
 }
 
+export interface StoredRef {
+  bc_invoice_id: string;
+  match: 'found' | 'mismatch';
+  billcom_invoice_id: string | null;
+}
+
+/**
+ * A 'mismatch' never replaces a 'found' match that came from a different
+ * Bill.com invoice: another Bill.com invoice that merely shares the number (a
+ * duplicate, a void copy, another customer's PO) must not hide a good match.
+ */
+export function guardMismatches(rows: StoredStatusRow[], existing: StoredRef[]): StoredStatusRow[] {
+  const byInvoice = new Map(existing.map((e) => [e.bc_invoice_id, e]));
+  return rows.filter((r) => {
+    if (r.match === 'found') return true;
+    const prev = byInvoice.get(r.bc_invoice_id);
+    return !(prev && prev.match === 'found' && prev.billcom_invoice_id !== r.billcom_invoice_id);
+  });
+}
+
+/** Changes are re-read for this long, so an invoice that reached Nexus after its Bill.com copy changed still gets matched. */
+const LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
 export interface BillcomInvoiceStatusSyncDeps {
   /** Bill.com invoices changed at or after `since` (null = from the start), oldest first; `page` continues a listing. */
   listChanged(since: string | null, page: string | undefined): Promise<{ results: BillcomListInvoice[]; nextPage?: string }>;
-  /** Nexus invoices of this environment whose External Doc. No. or BC invoice no. is one of `numbers`. */
-  findNexusInvoices(numbers: string[]): Promise<NexusInvoiceRef[]>;
+  /** Nexus invoices of this environment whose External Doc. No. or BC invoice no. is one of `numbers`; truncated = cut off at the row cap. */
+  findNexusInvoices(numbers: string[]): Promise<{ invoices: NexusInvoiceRef[]; truncated: boolean }>;
+  /** What is stored now for these BC invoices. */
+  readStored(bcInvoiceIds: string[]): Promise<StoredRef[]>;
   upsert(rows: StoredStatusRow[]): Promise<void>;
+  /** Remove stored statuses that came from these Bill.com invoices (archived there). */
+  removeByBillcomIds(billcomInvoiceIds: string[]): Promise<void>;
   readCheckpoint(): Promise<{ cursor_value: string | null; records_synced: number } | null>;
   writeCheckpoint(patch: { cursor_value: string | null; records_synced: number; last_error: string | null; complete: boolean }): Promise<void>;
   nowMs(): number;
@@ -97,8 +124,9 @@ export interface BillcomInvoiceStatusSyncDeps {
 
 /**
  * The Customers & Receivables step that stores Bill.com payment status: reads
- * Bill.com invoices changed since the last run (the first run walks them all),
- * matches them and saves the result. Stops between pages when out of time or
+ * Bill.com invoices changed since the last run (the first run walks them all;
+ * every run re-reads the last day), matches them and saves the result. Checks
+ * the clock before each Bill.com request; stops when out of time or
  * rate-limited (progress kept; the next sync continues). Never throws.
  */
 export async function syncBillcomInvoiceStatus(deps: BillcomInvoiceStatusSyncDeps, budgetMs: number): Promise<SyncEntityResult> {
@@ -109,6 +137,12 @@ export async function syncBillcomInvoiceStatus(deps: BillcomInvoiceStatusSyncDep
   const result = (complete: boolean, error: string | null): SyncEntityResult => ({ entityType: 'billcom_invoice_status', recordsSynced: stored, complete, cursor, error });
   const checkpoint = (complete: boolean, error: string | null) =>
     deps.writeCheckpoint({ cursor_value: cursor, records_synced: (saved?.records_synced ?? 0) + stored, last_error: error, complete });
+  // Never further than a day ago: recent changes are read again next run.
+  const capped = (t: string) => {
+    const limit = deps.nowMs() - LOOKBACK_MS;
+    const at = Date.parse(t);
+    return Number.isFinite(at) && at > limit ? new Date(limit).toISOString() : t;
+  };
 
   try {
     saved = await deps.readCheckpoint();
@@ -116,23 +150,29 @@ export async function syncBillcomInvoiceStatus(deps: BillcomInvoiceStatusSyncDep
     const since = cursor;
     let page: string | undefined;
     for (;;) {
+      if (deps.nowMs() - started >= budgetMs) return result(false, null);
       const res = await deps.listChanged(since, page);
       const bills = res.results ?? [];
+      const archived = bills.filter((b) => b.archived).map((b) => b.id);
+      if (archived.length > 0) await deps.removeByBillcomIds(archived);
       const numbers = [...new Set(bills.map((b) => trim(b.invoiceNumber)).filter(Boolean))];
       if (numbers.length > 0) {
-        const rows = matchBillcomInvoices(bills, await deps.findNexusInvoices(numbers));
+        const found = await deps.findNexusInvoices(numbers);
+        let rows = matchBillcomInvoices(bills, found.invoices);
+        // A cut-off lookup may have left out the right invoice: only store matches then.
+        if (found.truncated) rows = rows.filter((r) => r.match === 'found');
+        if (rows.some((r) => r.match === 'mismatch')) rows = guardMismatches(rows, await deps.readStored(rows.map((r) => r.bc_invoice_id)));
         if (rows.length > 0) await deps.upsert(rows);
         stored += rows.length;
       }
       const last = bills.at(-1)?.updatedTime;
-      if (last) cursor = last;
+      if (last) cursor = capped(last);
       page = res.nextPage || undefined;
       if (!page) {
         await checkpoint(true, null);
         return result(true, null);
       }
       await checkpoint(false, null);
-      if (deps.nowMs() - started >= budgetMs) return result(false, null);
     }
   } catch (e) {
     if (e instanceof BillcomRateLimitError) {

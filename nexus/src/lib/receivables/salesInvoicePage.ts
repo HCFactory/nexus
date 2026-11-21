@@ -205,10 +205,10 @@ export async function findBillcomInvoiceForCharge(input: BillcomPanelInput): Pro
   });
   // Keep the invoice list's stored status current. Best effort: never blocks the page or a charge.
   const at = where as { ctx: Ctx; billcomConnectionId: string } | null;
-  if (at && input.bcInvoiceId && (found.kind === 'found' || found.kind === 'mismatch')) {
-    await storeBillcomStatus(at.ctx, at.billcomConnectionId, input.bcInvoiceId, found).catch((e) =>
-      console.error(`[invoice page] could not store the Bill.com status of ${input.bcInvoiceId}:`, e),
-    );
+  if (at && input.bcInvoiceId && (found.kind === 'found' || found.kind === 'mismatch' || found.kind === 'not_found')) {
+    const bcInvoiceId = input.bcInvoiceId;
+    const save = found.kind === 'not_found' ? clearBillcomStatus(at.ctx, bcInvoiceId) : storeBillcomStatus(at.ctx, at.billcomConnectionId, bcInvoiceId, found);
+    await save.catch((e) => console.error(`[invoice page] could not store the Bill.com status of ${bcInvoiceId}:`, e));
   }
   return found;
 }
@@ -238,7 +238,27 @@ async function storeBillcomStatus(ctx: Ctx, billcomConnectionId: string, bcInvoi
   const { error: insertError } = await ctx.supabase
     .from('billcom_invoice_status')
     .insert({ ...row, organization_id: ctx.orgId, bc_connection_id: ctx.connection.id, bc_invoice_id: bcInvoiceId });
-  if (insertError) throw new Error(insertError.message);
+  if (!insertError) return;
+  // The sync inserted the same row in the meantime: update it instead.
+  if (insertError.code !== '23505') throw new Error(insertError.message);
+  const { error: retryError } = await ctx.supabase
+    .from('billcom_invoice_status')
+    .update(row)
+    .eq('organization_id', ctx.orgId)
+    .eq('bc_connection_id', ctx.connection.id)
+    .eq('bc_invoice_id', bcInvoiceId);
+  if (retryError) throw new Error(retryError.message);
+}
+
+/** Bill.com no longer has the invoice: drop its stored status so the list doesn't show a stale one. */
+async function clearBillcomStatus(ctx: Ctx, bcInvoiceId: string): Promise<void> {
+  const { error } = await ctx.supabase
+    .from('billcom_invoice_status')
+    .delete()
+    .eq('organization_id', ctx.orgId)
+    .eq('bc_connection_id', ctx.connection.id)
+    .eq('bc_invoice_id', bcInvoiceId);
+  if (error) throw new Error(error.message);
 }
 
 async function lookupBillcomInvoice(input: BillcomPanelInput, resolved: (ctx: Ctx, billcomConnectionId: string) => void): Promise<BillcomLookup> {

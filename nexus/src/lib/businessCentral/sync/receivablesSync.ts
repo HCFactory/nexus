@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 
 import { createBillcomClientForConnection } from '@/lib/billcom/connection';
 import { queueChangedCustomers, resolveBillcomConnection } from '@/lib/billcom/customerSyncHooks';
-import { syncBillcomInvoiceStatus, type BillcomListInvoice, type NexusInvoiceRef } from '@/lib/billcom/invoiceStatusSync';
+import { syncBillcomInvoiceStatus, type BillcomListInvoice, type NexusInvoiceRef, type StoredRef } from '@/lib/billcom/invoiceStatusSync';
 import { buildArSyncAdapters } from '@/lib/businessCentral/arSyncAdapters';
 import { createBcClientForOrg, type BcClient } from '@/lib/businessCentral/client';
 import { createCustomerLedgerClientForOrg } from '@/lib/businessCentral/customerLedgerClient';
@@ -54,6 +54,8 @@ const LINES_BUDGET_MS = 40_000;
 // The Bill.com payment status step gets its own window too; it continues next sync.
 const BILLCOM_STATUS_BUDGET_MS = 30_000;
 const BILLCOM_STATUS_CHECKPOINT = 'billcom_invoice_status';
+// Supabase returns at most this many rows per request.
+const ROW_CAP = 1000;
 // Sync checkpoint row that remembers where the card fill stopped.
 const CARD_CHECKPOINT = 'customer_card';
 
@@ -372,14 +374,35 @@ async function runBillcomStatusStep(supabase: SupabaseServiceClient, orgId: stri
               .select(columns)
               .eq('organization_id', orgId)
               .eq('bc_connection_id', bcConnectionId)
-              .in(column, numbers);
+              .in(column, numbers)
+              .limit(ROW_CAP);
             if (error) throw new Error(`Could not read invoices: ${error.message}`);
             return (data ?? []) as NexusInvoiceRef[];
           };
           const [byExt, byNo] = await Promise.all([read('external_document_number'), read('bc_invoice_number')]);
           const seen = new Map<string, NexusInvoiceRef>();
           for (const r of [...byExt, ...byNo]) seen.set(r.bc_invoice_id, r);
-          return [...seen.values()];
+          // A very common number (e.g. "VERBAL") can hit the row cap: then the list may be incomplete.
+          return { invoices: [...seen.values()], truncated: byExt.length >= ROW_CAP || byNo.length >= ROW_CAP };
+        },
+        async readStored(bcInvoiceIds) {
+          const { data, error } = await supabase
+            .from('billcom_invoice_status')
+            .select('bc_invoice_id, match, billcom_invoice_id')
+            .eq('organization_id', orgId)
+            .eq('bc_connection_id', bcConnectionId)
+            .in('bc_invoice_id', bcInvoiceIds);
+          if (error) throw new Error(`Could not read stored Bill.com status: ${error.message}`);
+          return (data ?? []) as StoredRef[];
+        },
+        async removeByBillcomIds(ids) {
+          const { error } = await supabase
+            .from('billcom_invoice_status')
+            .delete()
+            .eq('organization_id', orgId)
+            .eq('bc_connection_id', bcConnectionId)
+            .in('billcom_invoice_id', ids);
+          if (error) throw new Error(`Could not clear archived Bill.com status: ${error.message}`);
         },
         async upsert(rows) {
           const now = new Date().toISOString();

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { BillcomRateLimitError } from './errors';
-import { matchBillcomInvoices, syncBillcomInvoiceStatus, type BillcomListInvoice, type NexusInvoiceRef } from './invoiceStatusSync';
+import { guardMismatches, matchBillcomInvoices, syncBillcomInvoiceStatus, type BillcomListInvoice, type NexusInvoiceRef } from './invoiceStatusSync';
 
 const bill = (over: Partial<BillcomListInvoice> = {}): BillcomListInvoice => ({
   id: '00e1', invoiceNumber: 'W-1', customerName: 'Aloha School', totalAmount: 100, dueAmount: 0, dueDate: '2026-11-01',
@@ -49,6 +49,9 @@ describe('matchBillcomInvoices', () => {
   });
 });
 
+/** Well after the test invoices' times, so the one-day look-back doesn't apply. */
+const LATER = Date.parse('2027-01-01T00:00:00.000Z');
+
 describe('syncBillcomInvoiceStatus', () => {
   function deps(pages: { results: BillcomListInvoice[]; nextPage?: string }[], opts: { cursor?: string | null; throwAt?: number; clock?: () => number } = {}) {
     let call = 0;
@@ -62,11 +65,13 @@ describe('syncBillcomInvoiceStatus', () => {
     const checkpoint: { cursor_value: string | null; complete: boolean }[] = [];
     return {
       listChanged,
-      findNexusInvoices: vi.fn(async (numbers: string[]) => [nexus()].filter((n) => numbers.includes(n.external_document_number ?? ''))),
+      findNexusInvoices: vi.fn(async (numbers: string[]) => ({ invoices: [nexus()].filter((n) => numbers.includes(n.external_document_number ?? '')), truncated: false })),
+      readStored: vi.fn(async () => [] as { bc_invoice_id: string; match: 'found' | 'mismatch'; billcom_invoice_id: string | null }[]),
       upsert: vi.fn(async () => {}),
+      removeByBillcomIds: vi.fn(async () => {}),
       readCheckpoint: vi.fn(async () => (opts.cursor === undefined ? null : { cursor_value: opts.cursor, records_synced: 0 })),
       writeCheckpoint: vi.fn(async (p: { cursor_value: string | null; complete: boolean }) => { checkpoint.push(p); }),
-      nowMs: opts.clock ?? (() => 0),
+      nowMs: opts.clock ?? (() => LATER),
       checkpoint,
     };
   }
@@ -87,8 +92,8 @@ describe('syncBillcomInvoiceStatus', () => {
   });
 
   it('out of time: stops between pages, keeps the cursor, incomplete', async () => {
-    let t = 0;
-    const d = deps([{ results: [bill()], nextPage: 'p2' }, { results: [] }], { clock: () => (t += 40_000) });
+    let t = LATER;
+    const d = deps([{ results: [bill()], nextPage: 'p2' }, { results: [] }], { clock: () => (t += 20_000) });
     const r = await syncBillcomInvoiceStatus(d, 30_000);
     expect(d.listChanged).toHaveBeenCalledTimes(1);
     expect(r).toMatchObject({ complete: false, error: null, cursor: '2026-11-20T10:00:00.000+00:00' });
@@ -105,5 +110,75 @@ describe('syncBillcomInvoiceStatus', () => {
     d.listChanged.mockRejectedValueOnce(new Error('Bill.com down'));
     const r = await syncBillcomInvoiceStatus(d, 30_000);
     expect(r).toMatchObject({ complete: false, error: 'Bill.com down' });
+  });
+});
+
+describe('guardMismatches', () => {
+  const mm = { bc_invoice_id: 'inv-1', match: 'mismatch' as const, billcom_invoice_id: 'b-other', status: null, total_amount: null, due_amount: null, due_date: null, billcom_updated_time: null };
+  it('a mismatch never replaces a found match that came from a different Bill.com invoice', () => {
+    expect(guardMismatches([mm], [{ bc_invoice_id: 'inv-1', match: 'found', billcom_invoice_id: 'b-right' }])).toEqual([]);
+  });
+  it('it may replace the same Bill.com invoice’s earlier match (it changed), or fill an empty slot', () => {
+    expect(guardMismatches([mm], [{ bc_invoice_id: 'inv-1', match: 'found', billcom_invoice_id: 'b-other' }])).toEqual([mm]);
+    expect(guardMismatches([mm], [])).toEqual([mm]);
+  });
+  it('found rows always go through', () => {
+    const found = { ...mm, match: 'found' as const };
+    expect(guardMismatches([found], [{ bc_invoice_id: 'inv-1', match: 'found', billcom_invoice_id: 'b-right' }])).toEqual([found]);
+  });
+});
+
+describe('syncBillcomInvoiceStatus safeguards', () => {
+  const NOW = Date.parse('2026-11-21T12:00:00.000Z');
+  function d(over: Record<string, unknown> = {}) {
+    const base = {
+      listChanged: vi.fn(async () => ({ results: [bill({ totalAmount: 1 })] })),
+      findNexusInvoices: vi.fn(async () => ({ invoices: [nexus()], truncated: false })),
+      readStored: vi.fn(async () => [{ bc_invoice_id: 'inv-1', match: 'found' as const, billcom_invoice_id: 'b-right' }]),
+      upsert: vi.fn(async () => {}),
+      removeByBillcomIds: vi.fn(async () => {}),
+      readCheckpoint: vi.fn(async () => null),
+      writeCheckpoint: vi.fn(async () => {}),
+      nowMs: () => NOW,
+    };
+    return { ...base, ...over } as typeof base;
+  }
+
+  it('does not let another Bill.com invoice with the same number turn a found match into a mismatch', async () => {
+    const deps = d();
+    await syncBillcomInvoiceStatus(deps, 30_000);
+    expect(deps.upsert).not.toHaveBeenCalled();
+  });
+
+  it('a cut-off Nexus lookup (row cap) never writes mismatches', async () => {
+    const deps = d({ readStored: vi.fn(async () => []), findNexusInvoices: vi.fn(async () => ({ invoices: [nexus()], truncated: true })) });
+    await syncBillcomInvoiceStatus(deps, 30_000);
+    expect(deps.upsert).not.toHaveBeenCalled();
+  });
+
+  it('archived Bill.com invoices remove the status they had stored', async () => {
+    const deps = d({ listChanged: vi.fn(async () => ({ results: [bill({ id: 'b-arch', archived: true })] })) });
+    await syncBillcomInvoiceStatus(deps, 30_000);
+    expect(deps.removeByBillcomIds).toHaveBeenCalledWith(['b-arch']);
+  });
+
+  it('re-reads the last day each run, so an invoice posted to Nexus later still gets matched', async () => {
+    const deps = d({ listChanged: vi.fn(async () => ({ results: [bill({ updatedTime: '2026-11-21T11:00:00.000+00:00' })] })) });
+    await syncBillcomInvoiceStatus(deps, 30_000);
+    expect(deps.writeCheckpoint).toHaveBeenLastCalledWith(expect.objectContaining({ cursor_value: '2026-11-20T12:00:00.000Z', complete: true }));
+  });
+
+  it('during the catch-up (older changes) the cursor follows the last invoice read', async () => {
+    const deps = d({ listChanged: vi.fn(async () => ({ results: [bill({ updatedTime: '2026-10-01T00:00:00.000+00:00' })] })) });
+    await syncBillcomInvoiceStatus(deps, 30_000);
+    expect(deps.writeCheckpoint).toHaveBeenLastCalledWith(expect.objectContaining({ cursor_value: '2026-10-01T00:00:00.000+00:00' }));
+  });
+
+  it('checks the clock before each Bill.com request (no request once out of time)', async () => {
+    let t = NOW;
+    const deps = d({ nowMs: () => (t += 40_000) });
+    const r = await syncBillcomInvoiceStatus(deps, 30_000);
+    expect(deps.listChanged).not.toHaveBeenCalled();
+    expect(r.complete).toBe(false);
   });
 });

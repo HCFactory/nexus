@@ -26,3 +26,18 @@ Status: approved 2026-11-20 ("i want bill.com payment status stored in the invoi
 
 - A "last checked" line on the invoice page; the page reads Bill.com live, so it is always current.
 - The Bill.com webhook (step 3; test whether payments fire `invoice.updated`).
+
+## After review (2026-11-20)
+
+- **Mismatch guard:** a `mismatch` never replaces a `found` match from a different Bill.com invoice (`guardMismatches`).
+- **Cut-off lookups:** if the Nexus lookup hits the 1,000-row cap (a very common number), only matches are stored.
+- **Stale rows:**
+  - archived Bill.com invoices remove their stored status;
+  - a live "not found" removes the invoice's stored status;
+  - ambiguous leaves it alone.
+- **Look-back:** every run re-reads the last 24 h of changes, so an invoice that reached Nexus after its Bill.com copy changed still gets matched.
+- **Time:** the clock is checked before each Bill.com request, and the automatic full round's worst case is now 225 s.
+- **Race:** the page's insert falls back to an update if the sync inserted the row meanwhile.
+- **Still open (low):**
+  - more than about 30 pages of invoices sharing one exact `updatedTime` would stall the cursor (fix: also store the last id);
+  - whether recording a payment changes Bill.com's `updatedTime` is untested (check on TEST with one Charge card payment). If it doesn't, stored Paid comes only from page visits until the webhook.

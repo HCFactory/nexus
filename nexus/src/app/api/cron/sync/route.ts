@@ -13,7 +13,8 @@ import type { BusinessCentralConnection } from '@/types/database';
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 const LIMIT_MS = 270_000;
-const WORST_ROUND_MS = { full: 190_000, light: 90_000 } as const;
+// The Bill.com status step can run one request past its 30 s window (client timeout + retry).
+const WORST_ROUND_MS = { full: 225_000, light: 90_000 } as const;
 
 function authorized(header: string | null, secret: string): boolean {
   const given = Buffer.from(header?.replace(/^Bearer\s+/i, '') ?? '');
