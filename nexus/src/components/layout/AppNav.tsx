@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { canOpenPath } from '@/lib/auth/pageAccess';
@@ -97,9 +98,13 @@ export function AppNav({
   onMenuClick,
   onNavigateStart,
 }: AppNavProps) {
+  const [hovered, setHovered] = useState(false);
   const pathname = usePathname();
   const access = resolveUserAccess(user);
   const isCollapsed = onCollapse ? collapsed : false;
+  // Desktop hover is a temporary presentation state; it never changes the
+  // user's explicit collapsed preference or the mobile drawer behavior.
+  const visuallyCollapsed = isCollapsed && !hovered;
   const navGroups = NAV_GROUPS.map((group) => ({
     ...group,
     // One rule for the sidebar and the pages themselves (see pageAccess).
@@ -122,6 +127,9 @@ export function AppNav({
         )}
         onClick={onMenuClick}
       />
+      {/* While the collapsed sidebar is hover-expanded it floats over the page;
+          this keeps its 64px slot so the page doesn't jump sideways. */}
+      {isCollapsed && hovered && <div aria-hidden className="hidden lg:block w-16 shrink-0" />}
       <aside
         className={cn(
           'flex flex-col h-full transition-all duration-300 ease-in-out',
@@ -129,8 +137,11 @@ export function AppNav({
           'shrink-0',
           // Mobile: fixed overlay, hidden when collapsed
           'max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:z-40',
-          isCollapsed ? 'max-lg:-translate-x-full w-16' : 'max-lg:translate-x-0 w-[200px]'
+          isCollapsed ? 'max-lg:-translate-x-full w-16 lg:w-16' : 'max-lg:translate-x-0 w-[200px]'
         )}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={isCollapsed && hovered ? { width: 200, position: 'fixed', insetBlock: 0, left: 0, zIndex: 50 } : undefined}
       >
       {/* Hamburger Menu */}
       <div className="flex items-center px-4 py-4 border-b border-sidebar-border shrink-0">
@@ -151,13 +162,13 @@ export function AppNav({
               <div className="h-6 flex items-center px-2 mb-1 relative">
                 <p className={cn(
                   'text-[10px] font-semibold uppercase tracking-widest text-foreground-subtle whitespace-nowrap transition-opacity duration-150',
-                  isCollapsed ? 'opacity-0' : 'opacity-100 delay-150'
+                  visuallyCollapsed ? 'opacity-0' : 'opacity-100 delay-150'
                 )}>
                   {group.title}
                 </p>
                 <div className={cn(
                   'absolute inset-x-2 top-1/2 -translate-y-1/2 border-t border-border transition-opacity duration-150',
-                  isCollapsed ? 'opacity-100 delay-150' : 'opacity-0'
+                  visuallyCollapsed ? 'opacity-100 delay-150' : 'opacity-0'
                 )} />
               </div>
             )}
@@ -169,7 +180,7 @@ export function AppNav({
                   <li key={item.href}>
                     <Link
                       href={item.href}
-                      title={isCollapsed ? item.label : undefined}
+                      title={visuallyCollapsed ? item.label : undefined}
                       onClick={() => onNavigateStart?.(item.href)}
                       className={cn(
                         'w-full flex items-center py-2 px-3.5 rounded-xl text-sm group relative',
@@ -186,13 +197,13 @@ export function AppNav({
                       </span>
                       <span className={cn(
                         'flex-1 text-left leading-none whitespace-nowrap overflow-hidden transition-[opacity,margin] duration-150',
-                        isCollapsed ? 'opacity-0 ml-0 w-0' : 'opacity-100 ml-2.5 delay-150'
+                        visuallyCollapsed ? 'opacity-0 ml-0 w-0' : 'opacity-100 ml-2.5 delay-150'
                       )}>
                         {item.label}
                       </span>
                       <span className={cn(
                         'overflow-hidden transition-[opacity,width] duration-150',
-                        isCollapsed ? 'opacity-0 w-0' : 'opacity-100 delay-150',
+                        visuallyCollapsed ? 'opacity-0 w-0' : 'opacity-100 delay-150',
                         item.badge === undefined && 'hidden'
                       )}>
                         <span className={cn(
@@ -207,7 +218,7 @@ export function AppNav({
                       {item.badge !== undefined && (
                         <span className={cn(
                           'absolute top-1 right-1 w-2 h-2 rounded-full bg-primary transition-opacity duration-150',
-                          isCollapsed ? 'opacity-100 delay-150' : 'opacity-0'
+                          visuallyCollapsed ? 'opacity-100 delay-150' : 'opacity-0'
                         )} />
                       )}
                     </Link>
@@ -221,7 +232,7 @@ export function AppNav({
 
       {/* Theme toggle */}
       <div className="border-t border-sidebar-border p-2 shrink-0">
-        <ThemeToggle collapsed={isCollapsed} />
+        <ThemeToggle collapsed={visuallyCollapsed} />
       </div>
 
       {/* Logo */}
@@ -235,7 +246,7 @@ export function AppNav({
           </div>
           <div className={cn(
             'whitespace-nowrap overflow-hidden transition-[opacity,margin,width] duration-150',
-            isCollapsed ? 'opacity-0 ml-0 w-0' : 'opacity-100 ml-2.5 delay-150'
+            visuallyCollapsed ? 'opacity-0 ml-0 w-0' : 'opacity-100 ml-2.5 delay-150'
           )}>
             <p className="text-sm font-semibold text-foreground leading-none">Nexus</p>
             <p className="text-[10px] text-foreground-muted mt-0.5 leading-none">Enterprise Suite</p>
