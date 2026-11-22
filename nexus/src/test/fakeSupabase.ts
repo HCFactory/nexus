@@ -6,7 +6,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type Row = Record<string, unknown>;
 type Result = { data: Row[] | null; error: { message: string; code?: string } | null; count?: number | null };
-type Op = 'select' | 'insert' | 'update' | 'delete';
+type Op = 'select' | 'insert' | 'update' | 'delete' | 'upsert';
 
 export interface FakeSupabase {
   client: SupabaseClient;
@@ -65,10 +65,22 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
     let limit: number | null = null;
     let range: [number, number] | null = null;
     let counted = false;
+    let conflict: string[] = [];
     const exec = (): Result => {
       const failure = fake.failOn?.(table, op, payload);
       if (op !== 'select') fake.writes.push([table, op, payload]);
       if (failure) return { data: null, error: typeof failure === 'string' ? { message: failure } : failure };
+      if (op === 'upsert') {
+        const list = Array.isArray(payload) ? payload : [payload];
+        const out = list.map((p) => {
+          const existing = tables[table].find((r) => conflict.length > 0 && conflict.every((k) => r[k] === p[k]));
+          if (existing) return Object.assign(existing, p);
+          const row = { id: `gen-${nextId++}`, ...p };
+          tables[table].push(row);
+          return row;
+        });
+        return { data: out.map((r) => ({ ...r })), error: null };
+      }
       if (op === 'insert') {
         const list = Array.isArray(payload) ? payload : [payload];
         const rows = list.map((p) => ({ id: `gen-${nextId++}`, ...p }));
@@ -100,6 +112,7 @@ export function fakeSupabase(tables: Record<string, Row[]> = {}): FakeSupabase {
       select: (_cols?: string, o?: { count?: string }) => { counted = o?.count === 'exact'; return b; },
       insert: (p: Row | Row[]) => { op = 'insert'; payload = p; return b; },
       update: (p: Row) => { op = 'update'; payload = p; return b; },
+      upsert: (p: Row | Row[], o?: { onConflict?: string }) => { op = 'upsert'; payload = p; conflict = (o?.onConflict ?? '').split(',').filter(Boolean); return b; },
       delete: () => { op = 'delete'; return b; },
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
       neq: (k: string, v: unknown) => { filters.push((r) => r[k] !== v); return b; },

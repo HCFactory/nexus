@@ -33,12 +33,14 @@ interface Props {
   notes?: ReactNode;
   /** The change log card (rendered by the page). */
   changes?: ReactNode;
+  /** The payments and activity cards (streamed in by the page). */
+  activity?: ReactNode;
   /** A finished change cancelled this invoice and posted this one instead. */
   replacedBy?: { id: string; number: string } | null;
 }
 
 /** A posted BC invoice as Nexus holds it: header, Bill.com side, lines and totals. */
-export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, cardCharge = null, notes = null, changes = null, replacedBy = null }: Props) {
+export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOrder, billcom, cardCharge = null, notes = null, changes = null, activity = null, replacedBy = null }: Props) {
   const cur = invoice.currency_code;
   const title = invoice.external_document_number || invoice.bc_invoice_number || '—';
   return (
@@ -95,6 +97,9 @@ export function SalesInvoiceDetail({ invoice, lines, linesError = false, salesOr
 
             {/* The card-charge slot draws its own card, so a hidden panel leaves no empty box. */}
             {cardCharge}
+
+            {/* Payments and the activity timeline (streamed in by the page). */}
+            {activity}
           </div>
 
           {notes && (

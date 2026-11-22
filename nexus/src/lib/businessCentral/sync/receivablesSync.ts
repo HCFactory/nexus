@@ -1,5 +1,7 @@
 import 'server-only';
 import { billcomListQuery } from '@/lib/billcom/listQuery';
+import { syncBillcomReceivedPayments, type BillcomReceivedPayment } from '@/lib/billcom/receivedPayments';
+import { saveReceivedPayments } from '@/lib/billcom/receivedPaymentsStore';
 
 import { revalidatePath } from 'next/cache';
 
@@ -55,6 +57,11 @@ const LINES_BUDGET_MS = 40_000;
 // The Bill.com payment status step gets its own window too; it continues next sync.
 const BILLCOM_STATUS_BUDGET_MS = 30_000;
 const BILLCOM_STATUS_CHECKPOINT = 'billcom_invoice_status';
+const BILLCOM_PAYMENTS_BUDGET_MS = 20_000;
+const BILLCOM_PAYMENTS_CHECKPOINT = 'billcom_received_payment';
+// Bill.com steps use a short per-request timeout, so one slow request (with
+// its retries) can't run a step far past its window: worst ≈ 10 + 1 + 10 + 2 + 10 s.
+const BILLCOM_SYNC_REQUEST_TIMEOUT_MS = 10_000;
 // Supabase returns at most this many rows per request.
 const ROW_CAP = 1000;
 // Sync checkpoint row that remembers where the card fill stopped.
@@ -326,6 +333,10 @@ export async function runReceivablesSync(o: {
       // Bill.com payment status for each invoice (only with a Bill.com connection picked).
       const billcomStep = await runBillcomStatusStep(supabase, orgId, connection.id);
       if (billcomStep) results.push(billcomStep);
+
+      // Bill.com payments received (type, reference, invoices paid).
+      const paymentsStep = await runBillcomPaymentsStep(supabase, orgId, connection.id);
+      if (paymentsStep) results.push(paymentsStep);
     }
 
     const failures = results.filter((r) => r.error);
@@ -356,7 +367,7 @@ async function runBillcomStatusStep(supabase: SupabaseServiceClient, orgId: stri
   try {
     const conn = await resolveBillcomConnection(supabase, orgId, bcConnectionId);
     if (!conn?.enabled) return null;
-    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase });
+    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase, timeoutMs: BILLCOM_SYNC_REQUEST_TIMEOUT_MS });
     const checkpoints = checkpointStore(supabase, orgId);
     const columns = 'bc_invoice_id, external_document_number, bc_invoice_number, customer_name, total_amount_including_tax';
     return await syncBillcomInvoiceStatus(
@@ -424,6 +435,42 @@ async function runBillcomStatusStep(supabase: SupabaseServiceClient, orgId: stri
       complete: false,
       cursor: null,
       error: `Bill.com payment status: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
+
+/**
+ * Bill.com payments received: reads payments changed since the last run and
+ * stores them with the invoices they paid. Null when the environment has no
+ * enabled Bill.com connection. Never throws.
+ */
+async function runBillcomPaymentsStep(supabase: SupabaseServiceClient, orgId: string, bcConnectionId: string): Promise<SyncEntityResult | null> {
+  try {
+    const conn = await resolveBillcomConnection(supabase, orgId, bcConnectionId);
+    if (!conn?.enabled) return null;
+    const client = await createBillcomClientForConnection(conn.id, orgId, { supabase, timeoutMs: BILLCOM_SYNC_REQUEST_TIMEOUT_MS });
+    const checkpoints = checkpointStore(supabase, orgId);
+    return await syncBillcomReceivedPayments(
+      {
+        listChanged(since, page) {
+          // A time must be quoted: its colons would otherwise break Bill.com's field:op:value filter.
+          const qs = billcomListQuery({ max: '100', sort: 'updatedTime:asc', filters: since ? `updatedTime:gte:"${since}"` : undefined }, page);
+          return client.request<{ results: BillcomReceivedPayment[]; nextPage?: string }>(`/v3/receivable-payments?${qs}`);
+        },
+        save: (rows) => saveReceivedPayments(supabase, orgId, conn.id, rows),
+        readCheckpoint: () => checkpoints.read(bcConnectionId, BILLCOM_PAYMENTS_CHECKPOINT),
+        writeCheckpoint: (patch) => checkpoints.write(bcConnectionId, BILLCOM_PAYMENTS_CHECKPOINT, patch),
+        nowMs: () => Date.now(),
+      },
+      BILLCOM_PAYMENTS_BUDGET_MS,
+    );
+  } catch (e) {
+    return {
+      entityType: 'billcom_received_payment',
+      recordsSynced: 0,
+      complete: false,
+      cursor: null,
+      error: `Bill.com payments: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
 }

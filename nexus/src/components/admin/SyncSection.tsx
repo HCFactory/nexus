@@ -21,7 +21,7 @@ const ROWS: { key: RowKey; name: string; what: string; schedule: string | null }
   {
     key: 'full',
     name: 'Customers & Receivables',
-    what: 'Customers, card fields, ship-to addresses, sales invoices and lines, customer ledger entries, price lists, Bill.com payment status',
+    what: 'Customers, card fields, ship-to addresses, sales invoices and lines, customer ledger entries, price lists, Bill.com payment status and payments received',
     schedule: 'every 2 hours',
   },
   {
