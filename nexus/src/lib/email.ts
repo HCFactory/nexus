@@ -184,8 +184,30 @@ const CARD_BRAND_NAMES: Record<string, string> = {
   unionpay: 'UnionPay',
 };
 
-/** Staff notice that a customer saved a card. Goes to CARD_SAVED_NOTIFY_EMAIL (default below). */
+/** "Visa", "American Express", or the brand capitalized. */
+export function cardBrandName(brand: string | null | undefined): string {
+  if (!brand) return 'Card';
+  return CARD_BRAND_NAMES[brand] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
+}
+
+/**
+ * A plain-text email to staff, from CUSTOMER_EMAIL_FROM. THROWS on missing
+ * config or a Resend error; callers that must not fail catch and log.
+ * Sends nothing when `to` is empty.
+ */
+export async function sendStaffEmail(p: { to: string[]; subject: string; text: string }): Promise<void> {
+  if (p.to.length === 0) return;
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) throw new Error('Email is not set up (RESEND_API_KEY is missing).');
+  const from = process.env.CUSTOMER_EMAIL_FROM;
+  if (!from) throw new Error('Email is not set up (CUSTOMER_EMAIL_FROM is missing).');
+  const { error } = await new Resend(apiKey).emails.send({ from, to: p.to, subject: p.subject, text: p.text });
+  if (error) throw new Error(`Could not send the email: ${error.message}`);
+}
+
+/** Staff notice that a customer saved a card, to the Settings > Receivables list. */
 export async function sendCardSavedNotification(p: {
+  to: string[];
   customerName: string;
   brand: string;
   last4: string;
@@ -193,13 +215,6 @@ export async function sendCardSavedNotification(p: {
   expYear: number;
   savedAt: Date;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) throw new Error('Email is not set up (RESEND_API_KEY is missing).');
-  const from = process.env.CUSTOMER_EMAIL_FROM;
-  if (!from) throw new Error('Email is not set up (CUSTOMER_EMAIL_FROM is missing).');
-  const to = process.env.CARD_SAVED_NOTIFY_EMAIL || 'fundraisers@hawaiicandyfactory.com';
-
-  const brand = CARD_BRAND_NAMES[p.brand] ?? p.brand.charAt(0).toUpperCase() + p.brand.slice(1);
   const exp = `${String(p.expMonth).padStart(2, '0')}/${String(p.expYear % 100).padStart(2, '0')}`;
   const date = p.savedAt.toLocaleDateString('en-US', {
     timeZone: 'Pacific/Honolulu',
@@ -207,13 +222,11 @@ export async function sendCardSavedNotification(p: {
     day: 'numeric',
     year: 'numeric',
   });
-  const { error } = await new Resend(apiKey).emails.send({
-    from,
-    to,
+  await sendStaffEmail({
+    to: p.to,
     subject: `${p.customerName} saved Payment Method [NEXUS]`,
     text: `${p.customerName}
-${brand} •••• ${p.last4}, exp ${exp}
+${cardBrandName(p.brand)} •••• ${p.last4}, exp ${exp}
 saved ${date}`,
   });
-  if (error) throw new Error(`Could not send the email: ${error.message}`);
 }

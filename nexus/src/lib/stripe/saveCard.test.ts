@@ -244,6 +244,32 @@ describe('card saved staff email', () => {
     );
   });
 
+  it('goes to the Settings > Receivables list', async () => {
+    vi.mocked(sendCardSavedNotification).mockClear();
+    const { fake, scope } = setup();
+    fake.tables.org_notification_settings = [
+      { organization_id: 'org-1', backup_charge_emails: [], card_saved_emails: ['cs@example.com', 'ar@example.com'] },
+    ];
+    await saveCardFromCheckoutSession(scope, 'cs_1');
+    expect(sendCardSavedNotification).toHaveBeenCalledWith(expect.objectContaining({ to: ['cs@example.com', 'ar@example.com'] }));
+  });
+
+  it('list never saved: the old address', async () => {
+    vi.mocked(sendCardSavedNotification).mockClear();
+    const { fake, scope } = setup();
+    fake.tables.org_notification_settings = [];
+    await saveCardFromCheckoutSession(scope, 'cs_1');
+    expect(sendCardSavedNotification).toHaveBeenCalledWith(expect.objectContaining({ to: ['fundraisers@hawaiicandyfactory.com'] }));
+  });
+
+  it('list saved empty: no email', async () => {
+    vi.mocked(sendCardSavedNotification).mockClear();
+    const { fake, scope } = setup();
+    fake.tables.org_notification_settings = [{ organization_id: 'org-1', backup_charge_emails: [], card_saved_emails: [] }];
+    await saveCardFromCheckoutSession(scope, 'cs_1');
+    expect(sendCardSavedNotification).not.toHaveBeenCalled();
+  });
+
   it('still saves the card when the staff email fails', async () => {
     vi.mocked(sendCardSavedNotification).mockClear().mockRejectedValueOnce(new Error('no domain'));
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});

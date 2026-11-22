@@ -3,6 +3,7 @@ import 'server-only';
 import type Stripe from 'stripe';
 
 import { sendCardSavedNotification } from '@/lib/email';
+import { cardSavedRecipients, readNotificationSettings } from '@/lib/notifications/settings';
 
 import type { StripeScope } from './connection';
 
@@ -232,6 +233,8 @@ async function notifyCardSaved(
   card: { brand: string; last4: string; exp_month: number; exp_year: number },
 ): Promise<void> {
   try {
+    const to = cardSavedRecipients(await readNotificationSettings(supabase, orgId));
+    if (to.length === 0) return;
     const { data: customer } = await supabase
       .from('business_central_customers')
       .select('display_name')
@@ -240,6 +243,7 @@ async function notifyCardSaved(
       .limit(1)
       .maybeSingle();
     await sendCardSavedNotification({
+      to,
       customerName: (customer as { display_name: string | null } | null)?.display_name || bcCustomerNumber,
       brand: card.brand,
       last4: card.last4,
