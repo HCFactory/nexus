@@ -1,5 +1,6 @@
 'use server';
 
+import { requireOrganizationContext } from '@/lib/auth/currentUserAccess';
 import { createClient } from '@/lib/supabase/server';
 
 const MAX_RECENT_COLORS = 15;
@@ -69,55 +70,34 @@ export async function addRecentCustomColor(hexColor: string): Promise<string[]> 
   return newColors;
 }
 
+/** Order Number Format (Settings). Admins only: returns null for everyone else, so the card is hidden. */
 export async function getOrgOrderSettings(): Promise<{ order_prefix: string; order_padding: number } | null> {
+  const { orgId, access } = await requireOrganizationContext();
+  if (!access.isAdmin) return null;
+
   const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-
-  const { data: userData } = await supabase
-    .from('users')
-    .select('organization_id')
-    .eq('id', user.id)
-    .single();
-
-  if (!userData?.organization_id) return null;
-
   const { data, error } = await supabase
     .from('org_order_settings')
     .select('order_prefix, order_padding')
-    .eq('organization_id', userData.organization_id)
-    .single();
+    .eq('organization_id', orgId)
+    .maybeSingle();
 
-  if (error) {
-    if (error.code === 'PGRST116') return { order_prefix: 'PO', order_padding: 5 };
-    throw error;
-  }
-
-  return data;
+  if (error) throw error;
+  return data ?? { order_prefix: 'PO', order_padding: 5 };
 }
 
 export async function upsertOrgOrderSettings(data: {
   order_prefix: string;
   order_padding: number;
 }): Promise<void> {
+  const { orgId, access } = await requireOrganizationContext();
+  if (!access.isAdmin) throw new Error('Only admins can change the order number format.');
+
   const supabase = await createClient();
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('Not authenticated');
-
-  const { data: userData } = await supabase
-    .from('users')
-    .select('organization_id')
-    .eq('id', user.id)
-    .single();
-
-  if (!userData?.organization_id) throw new Error('No organization');
-
   const { error } = await supabase
     .from('org_order_settings')
     .upsert({
-      organization_id: userData.organization_id,
+      organization_id: orgId,
       order_prefix: data.order_prefix.trim().toUpperCase(),
       order_padding: Math.max(1, Math.min(10, data.order_padding)),
       updated_at: new Date().toISOString(),
