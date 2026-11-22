@@ -35,7 +35,7 @@ export function ThemeToggle({ collapsed = false }: ThemeToggleProps) {
         aria-pressed={isDark}
         suppressHydrationWarning
         className={cn(
-          'flex h-9 w-9 items-center justify-center rounded-md mx-auto',
+          'flex h-7 w-9 items-center justify-center rounded-md mx-auto',
           'text-sidebar-foreground/70 hover:text-sidebar-foreground',
           'hover:bg-sidebar-accent transition-colors',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring'
